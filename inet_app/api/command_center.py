@@ -35,7 +35,13 @@ from frappe.utils import (
 )
 from inet_app.roles import ADMIN_ROLES, PM_LEVEL_ROLES, is_admin
 from inet_app.api.subcontractor_sync import (
+    ALLOC_JOIN_SQL,
+    ALLOC_SHARE_SQL,
     LAST_VISIT_SUBCONTRACTOR_SQL,
+    SUBCON_LOCKED,
+    assert_subcontractor_change_allowed,
+    dispatch_subcontractor_locks,
+    resync_dispatch_allocations,
     resync_dispatch_contract,
 )
 
@@ -6855,6 +6861,8 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
                 if _pd:
                     resync_dispatch_contract(
                         _pd, reason=f"plan {updates['plan_status'].lower()}")
+                    resync_dispatch_allocations(
+                        _pd, reason=f"plan {updates['plan_status'].lower()}")
 
     # When a Re-Visit plan's DE starts or completes, advance the source plan's
     # issue_status from 'Re-Planned' → 'In Execution'.
@@ -7548,6 +7556,46 @@ def update_execution(payload):
                     "You do not have permission to record execution here. Ask admin to enable it in IM Master.",
                     frappe.PermissionError,
                 )
+
+        # The IM recording a MULTI-TEAM plan means "this plan is done", not
+        # "the lead team did all of it". Without this it produced one
+        # execution, against the plan's primary team, carrying the WHOLE line
+        # quantity: measured on dev, every row where a team's achieved
+        # exceeded its assigned had achieved == the line qty, and 9 multi-team
+        # plans had fewer executions than teams. The split then read e.g.
+        # assigned 3 / achieved 5 for one team and 2 / 0 for the other.
+        #
+        # So the call fans out: one execution per team, each carrying ITS OWN
+        # assigned quantity. A team whose TL has already recorded something is
+        # left alone — the IM is filling gaps, not overruling the field.
+        if (
+            payload.get("via_im_bulk_record")
+            and not (payload.get("team") or "").strip()
+            and frappe.db.exists("DocType", "Rollout Plan Team")
+        ):
+            plan_teams = frappe.db.sql(
+                """SELECT team, IFNULL(assigned_qty, 0) AS assigned_qty
+                   FROM `tabRollout Plan Team`
+                   WHERE parent = %s AND IFNULL(team, '') <> ''""",
+                (rollout_plan,), as_dict=True,
+            ) or []
+            if len(plan_teams) > 1:
+                out = []
+                for t in plan_teams:
+                    if frappe.db.exists("Daily Execution",
+                                        {"rollout_plan": rollout_plan, "team": t["team"]}):
+                        continue
+                    leg = dict(payload)
+                    leg["team"] = t["team"]
+                    # That team's share, never the line total.
+                    leg["achieved_qty"] = flt(t["assigned_qty"])
+                    out.append(update_execution(leg))
+                if out:
+                    return out[0] if len(out) == 1 else {
+                        "names": [o.get("name") for o in out if isinstance(o, dict)],
+                        "status": "created",
+                        "teams": len(out),
+                    }
 
         # Multi-team upsert: key Daily Execution by (plan, team) so each
         # team's TL gets their own row. With single-team plans this
@@ -8482,6 +8530,9 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     # last live visit owns the line — see api/subcontractor_sync.
     if dispatch_name and frappe.db.exists("PO Dispatch", dispatch_name):
         resync_dispatch_contract(dispatch_name, reason="work done recorded", allow_clear=False)
+        # The per-subcontractor shares follow the same event. Derived, so this
+        # is a no-op on a single-supplier line and cannot drift from the plans.
+        resync_dispatch_allocations(dispatch_name, reason="work done recorded")
         frappe.db.commit()
 
     # Resolve all open issues for this dispatch — Work Done is the final signal.
@@ -10387,6 +10438,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         out = out[:lim]
     _enrich_with_project_fields(out)
     _apply_dummy_description(out)
+    # Who did how much, for the lines worked by more than one subcontractor.
+    # Batched in one query; a single-supplier line gets a one-entry list and
+    # the UI falls back to the plain value it already rendered.
+    from inet_app.api.subcontractor_sync import attach_allocations
+    attach_allocations(out, key="po_dispatch")
+
     return out
 
 
@@ -10877,8 +10934,32 @@ _REMAINING_ACTIONS = frozenset((
 # queue of lines still waiting on that call.
 
 
+def _closure_subcontractor(dispatch_name):
+    """Who this closure credits — the line's resolved subcontractor, or None.
+
+    Same precedence every other reader uses: the stamped ``pd.contract`` wins
+    (it is what a manual correction and the subcon PO both read), else the last
+    live visit's team. Resolved once per closure and STORED on the row, because
+    a closure is a historical event: re-deriving it later would move a supplier
+    that has already been paid when a team is reassigned, which is exactly the
+    drift that put 208 lines out of step with their executing team.
+
+    Returns None rather than "" so the Link field stays empty instead of
+    failing validation on a blank string.
+    """
+    if not dispatch_name:
+        return None
+    contract = cstr(frappe.db.get_value("PO Dispatch", dispatch_name, "contract") or "").strip()
+    if not contract:
+        from inet_app.api.subcontractor_sync import resolve_last_visit_subcontractor
+
+        contract = cstr(resolve_last_visit_subcontractor(dispatch_name) or "").strip()
+    return contract or None
+
+
 def _sync_work_done_closures(dispatch_name, confirmed_qty, confirmed_amount,
-                             *, source=None, milestone=None, remark=None, user=None):
+                             *, source=None, milestone=None, remark=None, user=None,
+                             subcontractor=None, allocation=None):
     """Record this confirmation as a closure event on the line's Work Done.
 
     Work Done stays ONE row per POID — 60 queries join it and 28 of those
@@ -10923,26 +11004,77 @@ def _sync_work_done_closures(dispatch_name, confirmed_qty, confirmed_amount,
     prior_amt = sum(flt(r.closed_amount) for r in (wd.get("closures") or []))
     delta_amt = round(recognised - prior_amt, 4)
 
-    wd.append("closures", {
-        "closed_qty": delta_qty,
-        "closed_amount": delta_amt,
-        "closed_on": now_datetime(),
-        "milestone": milestone or None,
-        "source": source or wd.get("source"),
-        "closed_by": user or frappe.session.user,
-        "remark": (str(remark)[:1000] if remark else None),
-    })
+    # One row per supplier when the IM allocated the confirmation across
+    # several, otherwise one row for the line. Each supplier's delta is its
+    # allocated quantity MINUS what the ledger already credits it, so a
+    # supplier settled by an earlier closure is left exactly as it was — the
+    # "allocations freeze once written" rule. Only the difference is appended,
+    # which is also how a remainder worked later by a third subcontractor adds
+    # itself without disturbing the first two.
+    legs = []
+    if allocation:
+        already = {}
+        for r in (wd.get("closures") or []):
+            key = cstr(r.subcontractor or "")
+            already[key] = already.get(key, 0.0) + flt(r.closed_qty)
+        for entry in allocation:
+            sub = cstr((entry or {}).get("subcontractor") or "")
+            want = flt((entry or {}).get("qty") or 0)
+            leg = round(want - already.get(sub, 0.0), 4)
+            if abs(leg) < 0.00005:
+                continue
+            legs.append((sub or None, leg))
+    if not legs:
+        legs = [(subcontractor or _closure_subcontractor(dispatch_name), delta_qty)]
+
+    # Value follows quantity. Splitting delta_amt by each leg's share of
+    # delta_qty keeps the ledger's amount total exactly delta_amt, which is
+    # what Work Done.before_save sums into revenue_sar — the last leg absorbs
+    # the rounding so the sum can never drift from the confirmed figure.
+    leg_qty_total = sum(q for _s, q in legs)
+    booked = 0.0
+    for idx, (sub, leg_qty) in enumerate(legs):
+        if idx == len(legs) - 1:
+            leg_amt = round(delta_amt - booked, 4)
+        else:
+            share = (leg_qty / leg_qty_total) if leg_qty_total else 0
+            leg_amt = round(delta_amt * share, 4)
+            booked = round(booked + leg_amt, 4)
+        wd.append("closures", {
+            "closed_qty": leg_qty,
+            "closed_amount": leg_amt,
+            "closed_on": now_datetime(),
+            "milestone": milestone or None,
+            # Who did this part of the work. Stored per closure, not derived
+            # later: the ledger is the record of what each subcontractor is
+            # owed, and a line can legitimately close in several events under
+            # different suppliers.
+            "subcontractor": sub,
+            "source": source or wd.get("source"),
+            "closed_by": user or frappe.session.user,
+            "remark": (str(remark)[:1000] if remark else None),
+        })
     wd.executed_qty = round(prior_qty + delta_qty, 4)
     wd.revenue_sar = round(prior_amt + delta_amt, 4)
     wd.billing_rate_sar = flt(wd.billing_rate_sar) or (
         round(wd.revenue_sar / wd.executed_qty, 4) if wd.executed_qty else 0
     )
     wd.save(ignore_permissions=True)
+
+    # The ledger is the most authoritative source of the per-supplier shares,
+    # so the allocation rows have to follow it HERE — this is the one place
+    # every closing route passes through. generate_work_done resyncs on the
+    # rollout path, but a Direct Close, a Backend close, a confirmation and a
+    # remainder close all end here instead: without this a line closed 2 to one
+    # supplier and 4 to another kept a single allocation, and the Subcon PO
+    # page, the payout summary and all four dashboards went on billing the
+    # whole line to whichever supplier `pd.contract` named.
+    resync_dispatch_allocations(dispatch_name, reason="closure ledger updated")
     return wd_name
 
 
 def _remainder_close(dispatch_name, *, route, qty=None, milestone=None, remark=None,
-                     user=None):
+                     user=None, subcontractor=None):
     """Close a line's OUTSTANDING quantity onto the Work Done it already has.
 
     A POID has one Work Done for its whole life — the comment on
@@ -10971,6 +11103,33 @@ def _remainder_close(dispatch_name, *, route, qty=None, milestone=None, remark=N
     ) or {}
     poid = pd.get("poid") or dispatch_name
     outstanding = flt(pd.get("remaining_qty") or 0)
+
+    # MS1 and MS2 of the same quantity always belong to the SAME subcontractor.
+    # A quantity closed on MS1 for supplier A has its MS2 go to A too; splitting
+    # one quantity's milestones between two suppliers is not allowed. What
+    # splits is QUANTITY — 5 units to one supplier and 1 to another — and each
+    # supplier then carries both of its own milestones.
+    #
+    # Enforced here rather than only in DirectCloseModal, because this is where
+    # every route converges and a direct API call must obey the rule too.
+    if subcontractor and milestone:
+        already = frappe.db.sql(
+            """SELECT DISTINCT IFNULL(c.subcontractor, '')
+               FROM `tabWork Done Closure` c
+               JOIN `tabWork Done` wd ON wd.name = c.parent
+               WHERE wd.system_id = %s AND IFNULL(c.subcontractor, '') <> ''""",
+            (dispatch_name,),
+        )
+        others = [a[0] for a in already if a[0] != cstr(subcontractor)]
+        if others and len(already) == 1:
+            return False, {
+                "po_dispatch": dispatch_name, "poid": poid,
+                "error": (
+                    f"This line's other milestone is already closed under "
+                    f"{others[0]}. Both milestones of the same quantity must go "
+                    f"to the same subcontractor."
+                ),
+            }
     if outstanding <= 0:
         return False, {"error": f"{poid}: nothing outstanding on this line."}
 
@@ -10996,6 +11155,7 @@ def _remainder_close(dispatch_name, *, route, qty=None, milestone=None, remark=N
     result = _apply_confirmed_qty(
         dispatch_name, new_total,
         remark=remark, milestone=milestone, source=route, user=user,
+        subcontractor=subcontractor,
     )
     return True, {
         "po_dispatch": dispatch_name, "poid": poid, "work_done": wd["name"],
@@ -11023,8 +11183,58 @@ def _outstanding_remainder(dispatch_name):
     return qty, (src or None)
 
 
+def _normalised_allocation(allocation, confirmed_qty, po_dispatch=None):
+    """Validate a per-subcontractor confirmation split. Returns a clean list or None.
+
+    ``None`` means "no split given" — the single-supplier case, which is most
+    lines and which behaves exactly as it always has.
+
+    Rejects rather than adjusts. A quantity that does not add up here becomes a
+    supplier paid the wrong amount, so the caller is told what is wrong instead
+    of having it silently rounded; the same stance ``_sync_plan_teams`` takes
+    when a team split exceeds the line.
+    """
+    if not allocation:
+        return None
+    if isinstance(allocation, str):
+        allocation = frappe.parse_json(allocation)
+    if not isinstance(allocation, (list, tuple)):
+        frappe.throw("allocation must be a list of {subcontractor, qty}")
+
+    clean, seen = [], set()
+    for entry in allocation:
+        if not isinstance(entry, dict):
+            continue
+        sub = cstr(entry.get("subcontractor") or "").strip()
+        qty = flt(entry.get("qty") or 0)
+        if qty <= 0:
+            continue
+        if sub and sub in seen:
+            frappe.throw(f"{sub} appears twice in the split — combine the quantities.")
+        if sub and not frappe.db.exists("Subcontract Master", sub):
+            frappe.throw(f"Unknown subcontractor: {sub}")
+        seen.add(sub)
+        clean.append({"subcontractor": sub, "qty": qty})
+
+    if not clean:
+        return None
+    total = round(sum(e["qty"] for e in clean), 4)
+    if abs(total - flt(confirmed_qty)) > 0.0001:
+        frappe.throw(
+            f"The split adds up to {total:g}, but the confirmed quantity is "
+            f"{flt(confirmed_qty):g}. They have to match — the split is what "
+            f"each subcontractor is paid on."
+        )
+    # An issued supplier PO outranks this split: it is a document the
+    # subcontractor already holds. Throws for a submitted PO, warns for a draft.
+    if po_dispatch:
+        assert_subcontractor_change_allowed(po_dispatch, clean)
+    return clean
+
+
 def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
-                         remark=None, milestone=None, source=None, user=None):
+                         remark=None, milestone=None, source=None, user=None,
+                         subcontractor=None, allocation=None):
     """Validate and store a confirmed quantity. Returns a summary dict.
 
     Raises rather than silently clamping: a wrong quantity here becomes a wrong
@@ -11052,6 +11262,12 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
             f"of {ordered:g}. Confirm at most what the PO carries."
         )
 
+    # The grid IS the confirmation: the IM types a quantity per subcontractor
+    # and their sum is what gets confirmed. Validated here rather than trusted,
+    # because a mismatch would put the ledger and the customer figure out of
+    # step — and the ledger is what each supplier is paid on.
+    allocation = _normalised_allocation(allocation, confirmed, dispatch_name)
+
     invoiced = flt(pd.get("ms1_invoiced") or 0) + flt(pd.get("ms2_invoiced") or 0)
     rate = flt(pd.get("rate") or 0)
     new_amount = (
@@ -11065,6 +11281,20 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
     # PIC has normally moved past the editable statuses. An increase can only
     # add value, never strand an invoice, so it stays allowed; the
     # already-invoiced guard below still protects the floor either way.
+    # Nor below what a supplier has already been ordered for. The remaining
+    # quantity is a separate matter and stays open — what is refused here is
+    # confirming LESS than an issued PO covers, which would leave that PO
+    # payable against work the system says was never done.
+    _issued = sum(flt(i["qty"]) for i in dispatch_subcontractor_locks(dispatch_name).values()
+                  if i["state"] == SUBCON_LOCKED)
+    if _issued and confirmed < _issued - 0.00005:
+        frappe.throw(
+            f"{poid}: supplier purchase orders have been issued for {_issued:g}, "
+            f"so the confirmed quantity cannot be set to {confirmed:g}. "
+            f"Cancel or amend those purchase orders first.",
+            title="Supplier PO already issued",
+        )
+
     previously_confirmed = flt(pd.get("confirmed_qty") or 0)
     is_reduction = previously_confirmed > 0 and confirmed < previously_confirmed - 0.00005
     if is_reduction or not previously_confirmed:
@@ -11140,6 +11370,7 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
     wd_name = _sync_work_done_closures(
         dispatch_name, confirmed, flt(doc.confirmed_amount),
         source=source, milestone=milestone, remark=remark, user=user,
+        subcontractor=subcontractor, allocation=allocation,
     )
 
     return {
@@ -11251,6 +11482,92 @@ def set_remaining_qty_action(po_dispatch, action, remark=None):
 
 
 @frappe.whitelist()
+def get_dispatch_subcontractor_breakdown(po_dispatch=None):
+    """Who worked this line, and for how much — the seed for the confirm grid.
+
+    One row per SUBCONTRACTOR (not per team: two teams of the same supplier are
+    one payable party), summing their ``Rollout Plan Team.assigned_qty`` across
+    every live plan on the line, with ``achieved_qty`` alongside so the IM sees
+    the variance while deciding.
+
+    ``assigned`` is what the IM committed at planning and is what seeds the
+    grid; ``achieved`` is what the TLs reported and is shown, never used as the
+    payout basis — a team may do one unit one day and the rest another, which
+    is between the TL and the IM. The IM's confirmation is what INET stands
+    behind towards the subcontractor.
+
+    ``closed`` is what the closure ledger already credits each supplier, so the
+    grid can show a part-closed line and refuse to move quantity that is
+    already settled.
+
+    Cancelled plans are excluded, matching LAST_VISIT_SUBCONTRACTOR_SQL.
+    Teams with no subcontractor are folded under an empty key so the row still
+    appears and the IM can see the quantity exists.
+    """
+    po_dispatch = cstr(po_dispatch or "").strip()
+    if not po_dispatch:
+        frappe.throw("po_dispatch is required")
+    if not frappe.db.exists("PO Dispatch", po_dispatch):
+        frappe.throw(f"PO Dispatch not found: {po_dispatch}")
+
+    rows = frappe.db.sql(
+        """
+        SELECT IFNULL(it.subcontractor, '')            AS subcontractor,
+               IFNULL(sm.type, '')                     AS contract_type,
+               ROUND(SUM(IFNULL(rpt.assigned_qty, 0)), 4) AS assigned,
+               ROUND(SUM(IFNULL(rpt.achieved_qty, 0)), 4) AS achieved,
+               GROUP_CONCAT(DISTINCT IFNULL(it.team_name, rpt.team)
+                            ORDER BY it.team_name SEPARATOR ', ') AS teams
+        FROM `tabRollout Plan` rp
+        JOIN `tabRollout Plan Team` rpt ON rpt.parent = rp.name
+        LEFT JOIN `tabINET Team` it ON it.name = rpt.team
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = it.subcontractor
+        WHERE rp.po_dispatch = %s
+          AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+        GROUP BY IFNULL(it.subcontractor, ''), IFNULL(sm.type, '')
+        ORDER BY assigned DESC
+        """,
+        (po_dispatch,), as_dict=True,
+    ) or []
+
+    closed = dict(frappe.db.sql(
+        """
+        SELECT IFNULL(c.subcontractor, ''), ROUND(SUM(IFNULL(c.closed_qty, 0)), 4)
+        FROM `tabWork Done Closure` c
+        JOIN `tabWork Done` wd ON wd.name = c.parent
+        WHERE wd.system_id = %s
+        GROUP BY IFNULL(c.subcontractor, '')
+        """,
+        (po_dispatch,),
+    ) or [])
+
+    for r in rows:
+        r["closed"] = flt(closed.pop(r["subcontractor"], 0))
+
+    # A supplier credited by a closure but absent from the plans — a direct
+    # close, a backend assignment, or an admin correction. It still has to show
+    # or the grid would silently drop quantity the line has already paid for.
+    for sub, qty in closed.items():
+        rows.append({
+            "subcontractor": sub, "contract_type": frappe.db.get_value(
+                "Subcontract Master", sub, "type") if sub else "",
+            "assigned": 0.0, "achieved": 0.0, "teams": None, "closed": flt(qty),
+        })
+
+    pd = frappe.db.get_value(
+        "PO Dispatch", po_dispatch,
+        ["qty", "rate", "confirmed_qty", "remaining_qty"], as_dict=True) or {}
+    return {
+        "po_dispatch": po_dispatch,
+        "ordered_qty": flt(pd.get("qty")),
+        "rate": flt(pd.get("rate")),
+        "confirmed_qty": flt(pd.get("confirmed_qty")),
+        "remaining_qty": flt(pd.get("remaining_qty")),
+        "rows": rows,
+    }
+
+
+@frappe.whitelist()
 def list_undecided_remainders(limit=500):
     """Confirmed-short lines whose leftover quantity still has no decision.
 
@@ -11292,7 +11609,7 @@ def list_undecided_remainders(limit=500):
 
 @frappe.whitelist()
 def confirm_line_qty(po_dispatch, confirmed_qty, remaining_action=None, remark=None,
-                     milestone=None):
+                     milestone=None, allocation=None):
     """IM confirms the quantity actually delivered on a PO line.
 
     Permission: PM / admin, or the IM the line is assigned to.
@@ -11308,7 +11625,7 @@ def confirm_line_qty(po_dispatch, confirmed_qty, remaining_action=None, remark=N
             frappe.throw("Not permitted", frappe.PermissionError)
     result = _apply_confirmed_qty(
         name, confirmed_qty, remaining_action=remaining_action,
-        remark=remark, milestone=milestone,
+        remark=remark, milestone=milestone, allocation=allocation,
     )
     frappe.db.commit()
     return result
@@ -11316,7 +11633,8 @@ def confirm_line_qty(po_dispatch, confirmed_qty, remaining_action=None, remark=N
 
 @frappe.whitelist()
 def update_work_done_submission(name, submission_status, note=None,
-                                confirmed_qty=None, remaining_action=None):
+                                confirmed_qty=None, remaining_action=None,
+                                allocation=None):
     """IM sets Work Done submission status: 'Ready for Confirmation' or
     'Confirmation Done'. Optional note saved to PO Dispatch.im_confirmation_note.
 
@@ -11401,6 +11719,7 @@ def update_work_done_submission(name, submission_status, note=None,
             po_dispatch, confirmed_qty,
             remaining_action=remaining_action, remark=note,
             source=frappe.db.get_value("Work Done", name, "source") or None,
+            allocation=allocation,
         )
 
     pic_warning = None
@@ -13302,28 +13621,44 @@ def get_commercial_dashboard(etag=None):
     # The alias is `sub_key`, NOT `contract` — `PO Dispatch` has a real
     # `contract` column, so `GROUP BY contract` binds to that column instead
     # of the SELECT alias and silently splits one subcontractor into two rows.
+    # A split line arrives here as one row per supplier through ALLOC_JOIN_SQL,
+    # each weighted by ALLOC_SHARE_SQL — so 5 units to Mabran and 1 to INET file
+    # five sixths of the money under Mabran rather than all of it under one. A
+    # line with no allocation rows yields share 1 and is unchanged.
+    #
+    # `line_count` counts rows, so a split line counts once FOR EACH of its
+    # suppliers. That is the right answer for a per-supplier table — the column
+    # means "lines this supplier is on" — but it is why the column does not sum
+    # to the dispatch count.
+    _alloc_sub = ("COALESCE(NULLIF(alloc.subcontractor, ''), pd.contract, "
+                  "plan_contract.subcontractor, sc_team.subcontractor)")
+    _alloc_payout = "COALESCE(sm_alloc.sub_payout_pct, sm.sub_payout_pct, 0)"
+    _alloc_margin = "COALESCE(sm_alloc.inet_margin_pct, sm.inet_margin_pct, 100)"
     per_subcontract = frappe.db.sql(
         f"""
         SELECT
-          COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor) AS sub_key,
-          MAX(COALESCE(sm.subcontractor_name,
-                       pd.contract, plan_contract.subcontractor, sc_team.subcontractor)) AS subcontractor_name,
-          MAX(COALESCE(sm.type, 'SUB')) AS type,
-          MAX(COALESCE(sm.sub_payout_pct, 0)) AS payout_pct,
-          MAX(COALESCE(sm.inet_margin_pct, 100)) AS margin_pct,
+          {_alloc_sub} AS sub_key,
+          MAX(COALESCE(sm_alloc.subcontractor_name, sm.subcontractor_name,
+                       {_alloc_sub})) AS subcontractor_name,
+          MAX(COALESCE(sm_alloc.type, sm.type, 'SUB')) AS type,
+          MAX({_alloc_payout}) AS payout_pct,
+          MAX({_alloc_margin}) AS margin_pct,
           COUNT(*) AS line_count,
-          COALESCE(SUM({_INVOICED_VALUE_SQL}), 0) AS invoiced,
-          COALESCE(SUM({_BACKLOG_VALUE_SQL}), 0) AS backlog,
-          COALESCE(SUM({_INVOICED_VALUE_SQL} * COALESCE(sm.sub_payout_pct, 0) / 100), 0) AS payout,
-          COALESCE(SUM({_INVOICED_VALUE_SQL} * COALESCE(sm.inet_margin_pct, 100) / 100), 0) AS inet_margin
+          COALESCE(SUM({_INVOICED_VALUE_SQL} * ({ALLOC_SHARE_SQL})), 0) AS invoiced,
+          COALESCE(SUM({_BACKLOG_VALUE_SQL} * ({ALLOC_SHARE_SQL})), 0) AS backlog,
+          COALESCE(SUM({_INVOICED_VALUE_SQL} * ({ALLOC_SHARE_SQL})
+                       * {_alloc_payout} / 100), 0) AS payout,
+          COALESCE(SUM({_INVOICED_VALUE_SQL} * ({ALLOC_SHARE_SQL})
+                       * {_alloc_margin} / 100), 0) AS inet_margin
         FROM `tabPO Dispatch` pd
         LEFT JOIN (
 {LAST_VISIT_SUBCONTRACTOR_SQL}        ) plan_contract ON plan_contract.po_dispatch = pd.name
         LEFT JOIN `tabINET Team` sc_team ON sc_team.name = pd.backend_team
+        {ALLOC_JOIN_SQL}
         LEFT JOIN `tabSubcontract Master` sm
                ON sm.name = COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor)
         WHERE {_REPORTING_SCOPE_SQL}
-          AND COALESCE(pd.contract, plan_contract.subcontractor, sc_team.subcontractor) IS NOT NULL
+          AND {_alloc_sub} IS NOT NULL
         GROUP BY sub_key
         ORDER BY invoiced DESC
         LIMIT 12
@@ -13408,6 +13743,38 @@ def _inhouse_contract_names():
         as_dict=True,
     ) or []
     return [r.name for r in rows if r.name]
+
+
+# Realized Work Done revenue, ONE ROW PER SUPPLIER.
+#
+# A line split across subcontractors has one closure-ledger row per supplier,
+# each carrying that supplier's own share of the revenue — the ledger is the
+# only place that records which supplier earned which part. A Work Done with no
+# ledger rows (every record written before the ledger existed) yields exactly
+# one leg carrying the whole `revenue_sar` under the line's own contract, which
+# is today's figure unchanged.
+#
+# Dating is deliberately NOT taken from the closure's own `closed_on`: that
+# would move money between months for lines closed in two events, which is a
+# different change from splitting it between suppliers. Callers keep dating by
+# the execution / the Work Done's creation exactly as before.
+WORK_DONE_SUPPLIER_LEG_SQL = """
+    SELECT wd.name AS work_done,
+           wd.system_id AS po_dispatch,
+           IFNULL(wd.source, '') AS source,
+           IFNULL(wd.execution, '') AS execution,
+           DATE(wd.creation) AS created_on,
+           pd.project_code AS project_code,
+           COALESCE(NULLIF(c.subcontractor, ''), pd.contract) AS subcontractor,
+           CASE WHEN c.name IS NOT NULL THEN IFNULL(c.closed_amount, 0)
+                ELSE IFNULL(wd.revenue_sar, 0) END AS revenue
+    FROM `tabWork Done` wd
+    LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+    LEFT JOIN `tabWork Done Closure` c
+           ON c.parent = wd.name
+          AND c.parenttype = 'Work Done'
+          AND c.parentfield = 'closures'
+"""
 
 
 def _subcontracted_contract_names():
@@ -13738,14 +14105,21 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # already counted once via inet_margin_sub. Checked live: 3 such lines,
     # SAR 1,744 gross, were being counted here at full value AND again as
     # margin — this is what "how is Total Revenue calculated" turned up.
+    #
+    # A split line contributes only its INET-allocated share: the allocation
+    # join turns it into one row per supplier, each weighted by its quantity,
+    # and the payout test then drops the subcontracted legs. A line with no
+    # allocations yields share 1 against pd.contract — exactly as before.
     inet_achieved_rows = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(pd.line_amount), 0) AS total
+        f"""
+        SELECT COALESCE(SUM(pd.line_amount * ({ALLOC_SHARE_SQL})), 0) AS total
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabINET Team` it ON it.name = exe.team
         JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+        {ALLOC_JOIN_SQL}
+        LEFT JOIN `tabSubcontract Master` sm
+               ON sm.name = COALESCE(NULLIF(alloc.subcontractor, ''), pd.contract)
         WHERE it.team_type = 'INET'
         AND IFNULL(it.team_category, '') != 'Backend Team'
         AND IFNULL(sm.sub_payout_pct, 0) = 0
@@ -13787,17 +14161,16 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Dated by the execution where there is one and by wd.creation otherwise,
     # so a direct-closed subcontracted line is not silently dropped.
     _sub_rev_rows = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
-               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS expense,
-               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.inet_margin_pct, 0) / 100.0), 0) AS margin,
-               COUNT(DISTINCT pd.contract) AS contracts
-        FROM `tabWork Done` wd
-        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-        JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
-        LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+        f"""
+        SELECT COALESCE(SUM(leg.revenue), 0) AS revenue,
+               COALESCE(SUM(leg.revenue * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS expense,
+               COALESCE(SUM(leg.revenue * IFNULL(sm.inet_margin_pct, 0) / 100.0), 0) AS margin,
+               COUNT(DISTINCT leg.subcontractor) AS contracts
+        FROM ({WORK_DONE_SUPPLIER_LEG_SQL}) leg
+        JOIN `tabSubcontract Master` sm ON sm.name = leg.subcontractor
+        LEFT JOIN `tabDaily Execution` de ON de.name = leg.execution
         WHERE IFNULL(sm.sub_payout_pct, 0) > 0
-          AND COALESCE(de.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
+          AND COALESCE(de.execution_date, leg.created_on) BETWEEN %s AND %s
         """,
         (first_day, last_day), as_dict=True,
     )
@@ -13968,19 +14341,25 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Telecom contracts carry payout 0). Deliberately NOT on Work Done's
     # subcontractor / subcontract_cost columns — those per-row cost figures
     # are not reportable.
+    #
+    # Per SUPPLIER leg, so a teamless close split between a subcontractor and
+    # an INET crew lands partly on each side instead of wholly on whichever
+    # one `pd.contract` names. `lines_count` counts distinct Work Done rows, so
+    # a split line counts once on each side it actually has work on — which is
+    # what the tile's label ("lines") means, and why the two sides can sum to
+    # more than the line total.
     _dc_who_rows = frappe.db.sql(
-        """
-        SELECT IFNULL(wd.source, '') AS source,
+        f"""
+        SELECT leg.source AS source,
                CASE WHEN IFNULL(sm.sub_payout_pct, 0) > 0
                     THEN 'SUB' ELSE 'INET' END AS side,
-               COUNT(*) AS lines_count,
-               COALESCE(SUM(wd.revenue_sar), 0) AS revenue
-        FROM `tabWork Done` wd
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
-        WHERE IFNULL(wd.execution, '') = ''
-          AND IFNULL(wd.source, '') IN ('Direct Close', 'Backend')
-          AND DATE(wd.creation) BETWEEN %s AND %s
+               COUNT(DISTINCT leg.work_done) AS lines_count,
+               COALESCE(SUM(leg.revenue), 0) AS revenue
+        FROM ({WORK_DONE_SUPPLIER_LEG_SQL}) leg
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = leg.subcontractor
+        WHERE leg.execution = ''
+          AND leg.source IN ('Direct Close', 'Backend')
+          AND leg.created_on BETWEEN %s AND %s
         GROUP BY source, side
         """,
         (first_day, last_day), as_dict=True,
@@ -18689,10 +19068,16 @@ def _duid_overview_acceptance(dispatch_names):
 def _duid_overview_subcon(dispatch_names):
     """Supplier side of the same lines: who owes what, and against which PO.
 
-    The subcontract is RESOLVED, not stored — pd.contract wins, else the plan
-    team's subcontractor, else the backend team's. Same COALESCE precedence
-    as subcon_po._SUBCON_FROM_JOIN, so this page and the Subcon PO page can
-    never name different suppliers for one line.
+    **One row per (line, subcontractor).** A line worked 0.5 by one supplier
+    and 0.5 by another is two rows here, each carrying its own share of the
+    quantity and the milestone money — because that is two separate payouts
+    and, in time, two separate Purchase Orders.
+
+    Shares come from ``PO Subcontract Allocation``, the same table the Subcon
+    PO page reads, so the two can never name different suppliers for one line.
+    A line with no allocation rows falls back to the single resolved
+    subcontractor, which is what every line looked like before allocations
+    existed.
     """
     if not dispatch_names:
         return []
@@ -18728,6 +19113,44 @@ def _duid_overview_subcon(dispatch_names):
         tuple(dispatch_names),
         as_dict=True,
     ) or []
+
+    # Fan each line out into one row per subcontractor. The milestone money is
+    # divided by that supplier's share of the quantity — MS1/MS2 percentages
+    # ride on top of the allocation, never beside it, which is what keeps a
+    # quantity's two milestones with the same supplier.
+    from inet_app.api.subcontractor_sync import batch_dispatch_allocations
+
+    allocs = batch_dispatch_allocations([r["po_dispatch"] for r in rows])
+    if allocs:
+        fanned = []
+        for r in rows:
+            mine = [a for a in (allocs.get(r["po_dispatch"]) or []) if a.get("subcontractor")]
+            if len(mine) < 2:
+                fanned.append(r)
+                continue
+            line_qty = flt(frappe.db.get_value("PO Dispatch", r["po_dispatch"], "qty") or 0)
+            for a in mine:
+                share = (flt(a.get("qty")) / line_qty) if line_qty else 0
+                leg = dict(r)
+                leg["subcontract"] = a["subcontractor"]
+                leg["subcontractor_name"] = frappe.db.get_value(
+                    "Subcontract Master", a["subcontractor"], "subcontractor_name") or a["subcontractor"]
+                leg["supplier"] = frappe.db.get_value(
+                    "Subcontract Master", a["subcontractor"], "supplier")
+                leg["contract_model"] = frappe.db.get_value(
+                    "Subcontract Master", a["subcontractor"], "contract_model")
+                pct = flt(frappe.db.get_value(
+                    "Subcontract Master", a["subcontractor"], "sub_payout_pct") or 0)
+                leg["payout_pct"] = pct
+                leg["alloc_qty"] = flt(a.get("qty"))
+                leg["alloc_count"] = len(mine)
+                for n in (1, 2):
+                    ms_amt = round(flt(r.get(f"ms{n}_amount")) * share, 2)
+                    leg[f"ms{n}_amount"] = ms_amt
+                    leg[f"ms{n}_payout"] = round(ms_amt * pct / 100, 2)
+                    leg[f"sub_po_status_ms{n}"] = a.get(f"sub_po_status_ms{n}")
+                fanned.append(leg)
+        rows = fanned
 
     linked = {}
     try:
@@ -22516,7 +22939,8 @@ def get_subcontractors_by_type(close_type):
 
 @frappe.whitelist()
 def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None, milestone=None,
-                             huawei_im=None, project_domain=None, closed_on=None):
+                             huawei_im=None, project_domain=None, closed_on=None,
+                             close_qty=None):
     """Request a Direct Close. Kept as the entry point every caller already uses.
 
     A Direct Close no longer writes revenue straight away. It writes a PO
@@ -22533,6 +22957,7 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
         po_dispatches, close_type, subcontractor, closed_on,
         milestone=milestone, note=note, reason=note,
         huawei_im=huawei_im, project_domain=project_domain,
+        close_qty=close_qty,
     )
     result.setdefault("updated", [])
     result.setdefault("errors", result.get("blocked") or [])
@@ -22563,7 +22988,7 @@ def _closer_im(im_doc, dispatch_name=None):
 
 
 def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontractor, note, milestone=None,
-                       huawei_im=None, project_domain=None, closed_dt=None):
+                       huawei_im=None, project_domain=None, closed_dt=None, close_qty=None):
     """Create Work Done + complete one PO Dispatch directly. Returns (ok, info).
 
     milestone: None = full close; "MS1"/"MS2" = partial milestone close on single WD.
@@ -22775,6 +23200,10 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
             ok, info = _remainder_close(
                 name, route="Direct Close", milestone=milestone, remark=note,
                 user=im_doc or frappe.session.user,
+                # Close only what was asked for, and credit it to the supplier
+                # named on THIS close. Closing 2 today and 4 in two days, to a
+                # different subcontractor, is two passes through here.
+                qty=close_qty, subcontractor=subcontractor,
             )
             if ok:
                 frappe.db.commit()
@@ -22824,6 +23253,23 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
 
     wd.insert(ignore_permissions=True)
     frappe.db.commit()
+
+    # A PARTIAL close: record it as a confirmation of only that quantity, so
+    # the rest stays outstanding and can be closed later — to this supplier or
+    # another. _apply_confirmed_qty writes the closure ledger row, which is
+    # what credits this subcontractor with its share, and leaves
+    # remaining_qty > 0 so _remainder_close can finish the line.
+    #
+    # Only when strictly less than the line: a close_qty equal to the whole
+    # line is the ordinary full close, and must not be turned into a
+    # confirmation that then reads as short.
+    _partial = flt(close_qty or 0)
+    if _partial > 0 and _partial < flt(pd.get("qty") or 0) - 0.00005:
+        _apply_confirmed_qty(
+            name, _partial, remark=note, milestone=milestone,
+            source="Direct Close", user=im_doc or frappe.session.user,
+            subcontractor=subcontractor,
+        )
 
     # Update PO Dispatch
     pd_updates = {}
@@ -26265,7 +26711,7 @@ def _direct_close_params_or_throw(close_type, subcontractor, closed_on, mileston
 @frappe.whitelist()
 def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
                          milestone=None, note=None, reason=None,
-                         huawei_im=None, project_domain=None):
+                         huawei_im=None, project_domain=None, close_qty=None):
     """Raise a Direct Close request for one or many POIDs.
 
     Every direct close goes through here, whoever raises it, so each one leaves
@@ -26368,6 +26814,12 @@ def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
             "item_code": pd.get("item_code"),
             "item_description": (pd.get("item_description") or "")[:140],
             "qty": flt(pd.get("qty") or 0),
+            # How much of the line this close covers. Blank means all of it —
+            # the normal case, and what every caller sent before partial
+            # closing existed. A partial close leaves the rest outstanding, so
+            # the line can be closed again later, to the same subcontractor or
+            # a different one.
+            "close_qty": (flt(close_qty) if close_qty not in (None, "", 0) else None),
             "line_amount": flt(pd.get("line_amount") or 0),
             "line_status": "Pending",
             "line_note": pd.get("_warning"),
@@ -26502,6 +26954,7 @@ def admin_decide_direct_close_request(request, action, remark=None):
             huawei_im=cstr(doc.huawei_im or "").strip(),
             project_domain=cstr(doc.project_domain or "").strip(),
             closed_dt=closed_dt,
+            close_qty=flt(line.get("close_qty") or 0) or None,
         )
         if ok:
             line.line_status = "Closed"
@@ -26594,8 +27047,8 @@ def list_direct_close_requests(status=None, limit=200):
         "PO Direct Close Request Line",
         filters={"parent": ["in", [r["name"] for r in rows]]},
         fields=["parent", "po_dispatch", "poid", "po_no", "site_code", "project_code",
-                "item_code", "item_description", "qty", "line_amount", "line_status",
-                "work_done", "line_note"],
+                "item_code", "item_description", "qty", "close_qty", "line_amount",
+                "line_status", "work_done", "line_note"],
         order_by="idx asc", limit_page_length=0,
     ) or []:
         line_map.setdefault(ln["parent"], []).append(ln)
@@ -26866,6 +27319,7 @@ def pm_decide_cancel_plan(rollout_plan, action, remark=None):
         # line is back to unassigned, and leaving the cancelled team's
         # subcontractor on it is what put wrong names on the reports.
         resync_dispatch_contract(po_dispatch_name, reason="rollout plan cancelled")
+        resync_dispatch_allocations(po_dispatch_name, reason="rollout plan cancelled")
 
     frappe.db.commit()
 

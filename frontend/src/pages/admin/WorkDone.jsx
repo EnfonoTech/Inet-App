@@ -20,7 +20,8 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge } from "../pic/picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
+         SubcontractorSplitTable } from "../pic/picShared";
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -383,6 +384,8 @@ export default function WorkDone() {
   // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
   // leftover is decided separately, later — from the highlighted row itself.
   const [confirmQty, setConfirmQty] = useState("");
+  // Per-subcontractor split of the confirmation — see ConfirmedQtyFields.
+  const [confirmAlloc, setConfirmAlloc] = useState(null);
   const [decideFor, setDecideFor] = useState(null);
   const [closeRemainderFor, setCloseRemainderFor] = useState(null);
   const [decideBusy, setDecideBusy] = useState(false);
@@ -485,6 +488,7 @@ export default function WorkDone() {
     setImNote("");
     const already = Number(r.confirmed_qty) || 0;
     setConfirmQty(already > 0 ? String(already) : (r.ordered_qty != null ? String(r.ordered_qty) : ""));
+    setConfirmAlloc(null);
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -562,7 +566,8 @@ export default function WorkDone() {
         if (!submissionFor.name) throw new Error("Missing Work Done name");
         res = await pmApi.updateWorkDoneSubmission(
           submissionFor.name, submissionPick, imNote || undefined,
-          sendQty ? enteredQty : undefined,
+          sendQty ? enteredQty : undefined, undefined,
+          sendQty ? confirmAlloc : undefined,
         );
       }
       setSubmissionFor(null);
@@ -1398,7 +1403,7 @@ export default function WorkDone() {
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                       <td>{row.team_name || row.team || "—"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{row.subcontractor || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}><SubcontractorCell rows={row.subcontract_allocations} fallback={row.subcontractor} /></td>
                       <td style={{ fontSize: "0.82rem" }}>{row.contract_model || "—"}</td>
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
@@ -1766,6 +1771,9 @@ export default function WorkDone() {
                 orderedQty={submissionFor.ordered_qty}
                 qty={confirmQty}
                 onQtyChange={setConfirmQty}
+                poDispatch={submissionFor.po_dispatch || submissionFor.system_id}
+                allocation={confirmAlloc}
+                onAllocationChange={setConfirmAlloc}
                 rate={submissionFor.rate}
                 disabled={submissionBusy}
                 lockedReason={qtyLockReason(submissionFor.pic_status, submissionFor.pic_status_ms2, submissionFor.confirmed_qty)}
@@ -1927,6 +1935,10 @@ export default function WorkDone() {
               ]}
             />
             <IMNoteCallout note={detailRow.manager_remark} />
+            {/* Who is owed what on this line. Renders nothing unless more
+                than one subcontractor worked it, so the popup is unchanged
+                for the 20,430 single-supplier lines. */}
+            <SubcontractorSplitTable rows={detailRow.subcontract_allocations} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
             <DispatchVisitHistory
               poDispatch={detailRow.po_dispatch}

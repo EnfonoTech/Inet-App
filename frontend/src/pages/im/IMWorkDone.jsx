@@ -21,7 +21,8 @@ import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } 
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge } from "../pic/picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
+         SubcontractorSplitTable } from "../pic/picShared";
 
 /* Money is never rounded to whole SAR: ms2_amount alone is fractional on
    1,550 of 1,983 dispatches, so a milestone split of an odd line amount
@@ -426,6 +427,9 @@ export default function IMWorkDone() {
   // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
   // leftover is decided separately, later — from the row itself or the banner.
   const [confirmQty, setConfirmQty] = useState("");
+  // Per-subcontractor split of the confirmation. Null until the modal learns
+  // the line was worked by more than one; see ConfirmedQtyFields.
+  const [confirmAlloc, setConfirmAlloc] = useState(null);
   const [decideFor, setDecideFor] = useState(null);
   const [closeRemainderFor, setCloseRemainderFor] = useState(null);
   const [decideBusy, setDecideBusy] = useState(false);
@@ -758,6 +762,7 @@ export default function IMWorkDone() {
     setImNote("");
     const already = Number(r.confirmed_qty) || 0;
     setConfirmQty(already > 0 ? String(already) : (r.ordered_qty != null ? String(r.ordered_qty) : ""));
+    setConfirmAlloc(null);
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -840,7 +845,8 @@ export default function IMWorkDone() {
       } else {
         res = await pmApi.updateWorkDoneSubmission(
           submissionFor.name, submissionPick, imNote || undefined,
-          sendQty ? enteredQty : undefined,
+          sendQty ? enteredQty : undefined, undefined,
+          sendQty ? confirmAlloc : undefined,
         );
       }
       window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
@@ -1408,7 +1414,7 @@ export default function IMWorkDone() {
                     <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{fmtTimestamp(r.planning_timestamp)}</td>
                     <td>{r.plan_date || "—"}</td>
                     <td>{r.team_name || r.team || "—"}</td>
-                    <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}><SubcontractorCell rows={r.subcontract_allocations} fallback={r.subcontractor} /></td>
                     <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td><PoStatusBadge value={r.dispatch_status} /></td>
                     <td>{r.execution_date || "—"}</td>
@@ -1545,6 +1551,10 @@ export default function IMWorkDone() {
               </div>
             )}
             <IMNoteCallout note={detailRow.manager_remark} />
+            {/* Who is owed what on this line. Renders nothing unless more
+                than one subcontractor worked it, so the popup is unchanged
+                for the 20,430 single-supplier lines. */}
+            <SubcontractorSplitTable rows={detailRow.subcontract_allocations} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
             <DispatchVisitHistory
               poDispatch={detailRow.po_dispatch}
@@ -1986,6 +1996,9 @@ export default function IMWorkDone() {
                 orderedQty={submissionFor.ordered_qty}
                 qty={confirmQty}
                 onQtyChange={setConfirmQty}
+                poDispatch={submissionFor.po_dispatch || submissionFor.system_id}
+                allocation={confirmAlloc}
+                onAllocationChange={setConfirmAlloc}
                 rate={submissionFor.rate}
                 disabled={submissionBusy}
                 lockedReason={qtyLockReason(submissionFor.pic_status, submissionFor.pic_status_ms2, submissionFor.confirmed_qty)}

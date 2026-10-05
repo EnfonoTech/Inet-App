@@ -67,6 +67,18 @@ def is_admin(user=None):
     return bool(roles_of(user) & ADMIN_ROLES)
 
 
+def is_superuser(user=None):
+    """True ONLY for the real ``Administrator`` login.
+
+    Deliberately NOT ``is_admin``: INET Admin and System Manager are admins of
+    the portal, and this is for the handful of actions that correct the
+    system's own record of what happened — reconciling a line's subcontractor
+    after the fact, which rewrites who gets paid. The client asked for that to
+    be the Administrator alone, for now.
+    """
+    return (user or frappe.session.user) == "Administrator"
+
+
 def is_pm_only(user=None):
     """True for a PM who is not an admin — the ones an approval is for.
 

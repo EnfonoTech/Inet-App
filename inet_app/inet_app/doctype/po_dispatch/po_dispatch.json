@@ -71,6 +71,7 @@
   "remaining_qty_remark",
   "section_pic",
   "contract",
+  "subcontract_allocations",
   "sqc_status",
   "pat_status",
   "im_rejection_remark",
@@ -538,6 +539,12 @@
    "fieldtype": "Link",
    "label": "Subcontractor (Archive)",
    "options": "Subcontract Master"
+  },
+  {
+   "fieldname": "subcontract_allocations",
+   "fieldtype": "Table",
+   "options": "PO Subcontract Allocation",
+   "label": "Subcontract Allocations"
   },
   {
    "fieldname": "sqc_status",

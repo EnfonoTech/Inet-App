@@ -1229,7 +1229,35 @@ export default function SubconPO() {
                   <td><SubPoStatusBadge value={r.sub_po_status} /></td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtQty.format(r.qty) : "—"}</td>
+                  {/* THIS subcontractor's share, not the line's quantity. A line
+                      split 0.5 / 0.5 showed "1" here while the money beside it was
+                      already halved, which read as a rounding bug. The line total
+                      stays visible beside it so the share has something to mean. */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {(() => {
+                      const split = Number(r.alloc_count || 0) > 1 && r.alloc_qty != null;
+                      const shown = split ? Number(r.alloc_qty) : r.qty;
+                      if (shown == null) return "—";
+                      return (
+                        <>
+                          {fmtQty.format(shown)}
+                          {split && (
+                            <span
+                              title={`This line is split across ${r.alloc_count} subcontractors — ${fmtQty.format(r.alloc_qty)} of ${fmtQty.format(r.qty)} is theirs`}
+                              style={{
+                                marginLeft: 5, padding: "0 5px", borderRadius: 999,
+                                background: "#f1f5f9", border: "1px solid #e2e8f0",
+                                color: "#475569", fontSize: "0.64rem", fontWeight: 700,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              of {fmtQty.format(r.qty)}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                   <td><PoStatusBadge value={r.dispatch_status} /></td>

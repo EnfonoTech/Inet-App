@@ -197,6 +197,7 @@ doc_events = {
 	# submitted by Accounts, so the status has to follow the document rather
 	# than a button click — see inet_app/api/subcon_po.py.
 	"Purchase Order": {
+		"before_submit": "inet_app.api.subcon_po.before_purchase_order_submit",
 		"on_submit": "inet_app.api.subcon_po.on_purchase_order_submit",
 		"on_cancel": "inet_app.api.subcon_po.on_purchase_order_cancel",
 		# Without on_trash a deleted draft PO would leave its PIC line stuck

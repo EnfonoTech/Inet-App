@@ -55,6 +55,9 @@ export default function PlanTeamsBreakdown({ rolloutPlan, compact = false }) {
                   : status.includes("progress") ? "#1d4ed8"
                   : "#64748b";
                 const remark = (t.team_lead_remark || "").trim();
+                const assigned = Number(t.assigned_qty ?? 0);
+                const achieved = Number(t.achieved_qty ?? 0);
+                const variance = achieved > 0 && Math.abs(achieved - assigned) > 0.00005;
                 return (
                   <Fragment key={i}>
                     <tr style={{ borderTop: i === 0 ? "none" : "1px solid #f1f5f9" }}>
@@ -67,8 +70,26 @@ export default function PlanTeamsBreakdown({ rolloutPlan, compact = false }) {
                       <td style={{ padding: cellPad, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>
                         {Number(t.assigned_pct ?? 0).toFixed(1)}%
                       </td>
-                      <td style={{ padding: cellPad, textAlign: "right", fontVariantNumeric: "tabular-nums", color: Number(t.achieved_qty ?? 0) > 0 ? "#047857" : "#94a3b8" }}>
-                        {Number(t.achieved_qty ?? 0)}
+                      <td
+                        style={{
+                          padding: cellPad, textAlign: "right", fontVariantNumeric: "tabular-nums",
+                          // Achieved is the team leads' number; assigned is the
+                          // IM's and is what the subcontractor is paid on. Any
+                          // gap between them is worth seeing here, because this
+                          // table is where a wrong achieved first shows up.
+                          color: variance ? "#b45309" : (achieved > 0 ? "#047857" : "#94a3b8"),
+                          fontWeight: variance ? 700 : 400,
+                        }}
+                        title={variance
+                          ? `Team leads reported ${achieved}, the IM assigned ${assigned} — the assigned figure is what the subcontractor is paid on`
+                          : undefined}
+                      >
+                        {achieved}
+                        {variance && (
+                          <span style={{ marginLeft: 4, fontSize: "0.68rem", fontWeight: 700 }}>
+                            ({achieved > assigned ? "+" : ""}{Math.round((achieved - assigned) * 10000) / 10000})
+                          </span>
+                        )}
                       </td>
                       <td style={{ padding: cellPad, color: statusColor, fontWeight: 600 }}>
                         {t.tl_status || "—"}

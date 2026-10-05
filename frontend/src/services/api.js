@@ -137,10 +137,42 @@ export function getCsrf() {
   return match ? decodeURIComponent(match[1]) : "fetch";
 }
 
+/** The messages Frappe sent back, newest-style objects, never throwing. */
+function _serverMessages(json) {
+  if (!json || !json._server_messages) return [];
+  try {
+    const raw = JSON.parse(json._server_messages);
+    if (!Array.isArray(raw)) return [];
+    return raw.map((m) => {
+      try { return JSON.parse(m); } catch { return { message: String(m) }; }
+    }).filter(Boolean);
+  } catch { return []; }
+}
+
+/** True for a message that merely narrates, rather than explains a failure.
+ *
+ *  Frappe pushes informational toasts down the same channel as real errors.
+ *  ERPNext's "Item Price added for X in Price List - Standard Buying" is sent
+ *  with `alert=True` while a Purchase Order saves; it is not a reason anything
+ *  failed. Taking _server_messages[0] blindly put that sentence in the modal's
+ *  red box and hid whatever actually went wrong underneath it.
+ */
+function _isInformational(m) {
+  if (!m) return true;
+  if (m.raise_exception) return false;
+  return Boolean(m.alert) || !m.message;
+}
+
 function _parseApiError(json) {
-  let msg = json._server_messages
-    ? (() => { try { return JSON.parse(JSON.parse(json._server_messages)[0]).message; } catch { return null; } })()
-    : null;
+  const msgs = _serverMessages(json);
+  // A thrown message first; then the last message that is not a passing
+  // alert. If everything Frappe sent was informational, fall through to the
+  // exception below rather than reporting a toast as the failure.
+  let msg = (
+    msgs.find((m) => m && m.raise_exception)
+    || msgs.filter((m) => !_isInformational(m)).pop()
+    || {}
+  ).message || null;
   if (!msg && json.exception) msg = String(json.exception);
   if (!msg && json.exc) {
     try {
@@ -584,7 +616,7 @@ export const pmApi = {
   assignIMTargetMonth: (payload) => call("inet_app.api.command_center.assign_im_target_month", { payload: JSON.stringify(payload || {}) }),
   // confirmed_qty / remaining_action carry the quantity actually delivered.
   // Omitted (undefined) means "no change" — only a short delivery needs them.
-  updateWorkDoneSubmission: (name, submission_status, note, confirmed_qty, remaining_action) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note, confirmed_qty, remaining_action }),
+  updateWorkDoneSubmission: (name, submission_status, note, confirmed_qty, remaining_action, allocation) => call("inet_app.api.command_center.update_work_done_submission", { name, submission_status, note, confirmed_qty, remaining_action, ...(allocation && allocation.length ? { allocation: JSON.stringify(allocation) } : {}) }),
   submitMilestoneToPic: (work_done, milestone) => call("inet_app.api.command_center.submit_milestone_to_pic", { work_done, milestone }),
   // "Resubmit to PIC" tab — legacy lines whose work (and often original PIC
   // submission) already happened historically outside this system, so
@@ -602,7 +634,21 @@ export const pmApi = {
   bulkResubmitLegacyMilestonesToPic: (payload) => call("inet_app.api.command_center.bulk_resubmit_legacy_milestones_to_pic", { payload: JSON.stringify(payload) }),
   updateWorkDoneIssue: (name, issue_flag) => call("inet_app.api.command_center.update_work_done_issue", { name, issue_flag }),
   updateSubconSubmission: (po_dispatch, submission_status, note, confirmed_qty, remaining_action) => call("inet_app.api.command_center.update_subcon_submission", { po_dispatch, submission_status, note, confirmed_qty, remaining_action }),
-  confirmLineQty: (po_dispatch, confirmed_qty, remaining_action, remark) => call("inet_app.api.command_center.confirm_line_qty", { po_dispatch, confirmed_qty, remaining_action, remark }),
+  confirmLineQty: (po_dispatch, confirmed_qty, remaining_action, remark, allocation) => call("inet_app.api.command_center.confirm_line_qty", { po_dispatch, confirmed_qty, remaining_action, remark, ...(allocation && allocation.length ? { allocation: JSON.stringify(allocation) } : {}) }),
+  // Who worked a line and for how much — seeds the per-subcontractor grid on
+  // the confirmation modal. Returns one row per SUBCONTRACTOR with assigned /
+  // achieved / already-closed quantities.
+  getDispatchSubcontractorBreakdown: (po_dispatch) => call("inet_app.api.command_center.get_dispatch_subcontractor_breakdown", { po_dispatch }),
+
+  // Subcontractor reconcile — Administrator only; the server enforces that,
+  // the sidebar entry only keeps it out of everyone else's way.
+  getSubcontractorReconcile: (poid) =>
+    call("inet_app.api.subcon_reconcile.get_subcontractor_reconcile", { poid }),
+  setSubcontractorAllocation: (po_dispatch, allocation, remark) =>
+    call("inet_app.api.subcon_reconcile.set_subcontractor_allocation",
+         { po_dispatch, allocation, remark }),
+  clearSubcontractorOverride: (po_dispatch) =>
+    call("inet_app.api.subcon_reconcile.clear_subcontractor_override", { po_dispatch }),
   // What becomes of a short-confirmed line's leftover, answered whenever the
   // IM finds out — deliberately not asked at confirmation time.
   setRemainingQtyAction: (po_dispatch, action, remark) => call("inet_app.api.command_center.set_remaining_qty_action", { po_dispatch, action, remark }),
@@ -1059,6 +1105,9 @@ export const pmApi = {
     huawei_im: overrides?.huawei_im || "",
     project_domain: overrides?.project_domain || "",
     closed_on: overrides?.closed_on || "",
+    // Blank = close the whole line, which is every call that predates partial
+    // closing. A number closes only that much and leaves the rest outstanding.
+    close_qty: overrides?.close_qty ?? "",
   }),
   // Direct Close approval. directCloseDispatches above now RAISES a request
   // rather than closing — the backend endpoint it calls delegates to

@@ -164,6 +164,9 @@ const adminNav = [
   { to: "/overview",   label: "Search / Overview", icon: "search" },
   { to: "/im-material-request", label: "Material Management", icon: "package" },
   { to: "/masters",    label: "Masters",     icon: "settings" },
+  // Administrator only — filtered out below for everyone else, including
+  // INET Admin and System Manager. This screen rewrites who gets paid.
+  { to: "/subcon-reconcile", label: "Subcon Reconcile", icon: "shieldCheck", superuser: true },
 ];
 
 const imNav = [
@@ -225,6 +228,7 @@ export default function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, role, isPm, logout } = useAuth();
+  const isSuperuser = user?.email === "Administrator";
   // Desk is only part of the job for the admin (housekeeping), the PIC
   // (invoicing) and the warehouse (stock entries). An IM or field user works
   // entirely in the portal, so the link is noise for them.
@@ -339,9 +343,13 @@ export default function AppShell() {
     if (role === "warehouse") return warehouseNav;
     // INET PM runs the admin portal without Masters — reference data is the
     // admin's to curate, not the PM's.
-    if (isPm) return adminNav.filter((n) => n.to !== "/masters");
-    return adminNav;
-  }, [role, isPm, imCanBackend]);
+    // The superuser entries are for the real Administrator login only — not
+    // INET Admin, not System Manager. Hiding them is a convenience; the server
+    // is what actually refuses everyone else.
+    const base = isSuperuser ? adminNav : adminNav.filter((n) => !n.superuser);
+    if (isPm) return base.filter((n) => n.to !== "/masters");
+    return base;
+  }, [role, isPm, imCanBackend, isSuperuser]);
 
   /* Current page title for topbar */
   const current = useMemo(

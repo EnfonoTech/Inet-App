@@ -25,6 +25,7 @@ const AdminTimesheets     = lazy(() => import("./pages/admin/Timesheets"));
 const PODump              = lazy(() => import("./pages/admin/PODump"));
 const TeamAllocationApprovals = lazy(() => import("./pages/admin/TeamAllocationApprovals"));
 const AdminTeams              = lazy(() => import("./pages/admin/Teams"));
+const SubconReconcile         = lazy(() => import("./pages/admin/SubconReconcile"));
 const CEODashboard        = lazy(() => import("./pages/admin/CEODashboard"));
 const CommercialDashboard = lazy(() => import("./pages/admin/CommercialDashboard"));
 const PMDashboard         = lazy(() => import("./pages/admin/PMDashboard"));
@@ -147,6 +148,10 @@ function AppContent() {
               <Route path="/teams" element={<AdminTeams />} />
               <Route path="/expenses" element={<IMExpense isAdmin={true} />} />
               {!isPm && <Route path="/masters" element={<Masters />} />}
+              {/* Administrator only — the page says so and the server enforces
+                  it; the route stays mounted so a direct link explains itself
+                  rather than 404-ing. */}
+              <Route path="/subcon-reconcile" element={<SubconReconcile />} />
               <Route path="/overview" element={<OperationsOverview />} />
               <Route path="/im-material-request" element={<IMMaterialRequest />} />
             </>

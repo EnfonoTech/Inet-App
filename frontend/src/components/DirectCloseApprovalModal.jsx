@@ -131,7 +131,13 @@ export default function DirectCloseApprovalModal({ request, canDecide, onClose, 
                   <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>
                     {l.item_code || "—"}
                   </td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.qty ?? "—"}</td>
+                  {/* A partial close reads "2 of 6": the admin is approving a
+                      quantity, not the line, and the rest stays outstanding. */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {Number(l.close_qty) > 0 && Number(l.close_qty) < Number(l.qty || 0)
+                      ? (<><strong>{l.close_qty}</strong><span style={{ color: "#64748b" }}> of {l.qty}</span></>)
+                      : (l.qty ?? "—")}
+                  </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(l.line_amount || 0)}</td>
                   <td style={{ fontSize: "0.76rem" }}>{l.line_status || "Pending"}</td>
                   <td style={{ fontSize: "0.74rem", color: l.issue_severity === "hard" ? "#b91c1c" : l.issue ? "#b45309" : "#64748b" }}

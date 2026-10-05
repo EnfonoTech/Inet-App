@@ -160,3 +160,106 @@ export function IMStatusBadge({ value }) {
   else { bg = "#f1f5f9"; fg = "#475569"; bd = "#e2e8f0"; }
   return <StatusBadge value={v} bg={bg} fg={fg} bd={bd} />;
 }
+
+// ---------------------------------------------------------------------------
+// A line worked by more than one subcontractor
+//
+// Most lines have one. 20,430 of 20,439 on the production copy, in fact — so
+// tables are NOT restructured for the handful that do. The cell keeps showing
+// one name exactly as it always has, with a small marker when there is more,
+// and the full breakdown lives in the row's View popup, which has the room.
+//
+// `rows` is PO Dispatch.subcontract_allocations: one entry per subcontractor,
+// carrying that supplier's share of the quantity and value.
+
+/** The single name a table cell should show — the largest share. */
+export function primarySubcontractor(rows, fallback) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && r.subcontractor) : [];
+  if (!list.length) return fallback || "";
+  return list.reduce(
+    (best, r) => (Number(r.qty) > Number(best.qty) ? r : best), list[0],
+  ).subcontractor;
+}
+
+/** Table cell: today's value, plus a muted marker when the line is split. */
+export function SubcontractorCell({ rows, fallback }) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && r.subcontractor) : [];
+  const name = primarySubcontractor(list, fallback);
+  if (!name) return <span style={{ color: "#94a3b8" }}>—</span>;
+  const extra = list.length - 1;
+  return (
+    <span style={{ whiteSpace: "nowrap" }}>
+      <span title={name}>{name}</span>
+      {extra > 0 && (
+        <span
+          title={`${list.length} subcontractors worked this line — open View for the split`}
+          style={{
+            marginLeft: 5, padding: "0 5px", borderRadius: 999,
+            background: "#f1f5f9", border: "1px solid #e2e8f0", color: "#475569",
+            fontSize: "0.66rem", fontWeight: 700, verticalAlign: "middle",
+          }}
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Popup breakdown: who did how much, and where their PO stands. */
+export function SubcontractorSplitTable({ rows, rate, compact = false }) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && r.subcontractor) : [];
+  if (list.length < 2) return null;
+  const pad = compact ? "4px 8px" : "6px 10px";
+  const money = (v) => (v == null || v === "" ? "—"
+    : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const totalQty = list.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  const totalAmt = list.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", marginBottom: 6, letterSpacing: 0.4 }}>
+        SUBCONTRACTORS ({list.length})
+      </div>
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", color: "#475569", fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <th style={{ textAlign: "left", padding: pad }}>Subcontractor</th>
+              <th style={{ textAlign: "right", padding: pad }}>Qty</th>
+              <th style={{ textAlign: "right", padding: pad }}>Amount</th>
+              <th style={{ textAlign: "left", padding: pad }}>MS1</th>
+              <th style={{ textAlign: "left", padding: pad }}>MS2</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((r, i) => (
+              <tr key={r.subcontractor} style={{ borderTop: i === 0 ? "none" : "1px solid #f1f5f9" }}>
+                <td style={{ padding: pad, fontWeight: 600, color: "#0f172a" }}>{r.subcontractor}</td>
+                <td style={{ padding: pad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                  {Number(r.qty ?? 0)}
+                </td>
+                <td style={{ padding: pad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                  {money(r.amount)}
+                </td>
+                <td style={{ padding: pad }}><SubPoStatusBadge value={r.sub_po_status_ms1} /></td>
+                <td style={{ padding: pad }}><SubPoStatusBadge value={r.sub_po_status_ms2} /></td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{ background: "#f8fafc", fontWeight: 700, borderTop: "1px solid #e2e8f0" }}>
+              <td style={{ padding: pad }}>Total</td>
+              <td style={{ padding: pad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {Math.round(totalQty * 10000) / 10000}
+              </td>
+              <td style={{ padding: pad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {money(totalAmt)}
+              </td>
+              <td /><td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
