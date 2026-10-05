@@ -3117,11 +3117,29 @@ def before_sales_invoice_submit(doc, method):
                 f"POID '{poid_label}' has no {milestone} amount set."
             )
 
-        # Already-submitted invoices for this POID and milestone. Needed before
-        # the amount check, because what a line may legitimately be invoiced for
-        # depends on what has already gone out.
+        # What has already been invoiced on this milestone, from BOTH records of
+        # it — whichever says more.
+        #
+        # `_calc_invoiced_from_submitted` counts submitted Sales Invoices, which
+        # is the only source this check used to have. On this deployment that is
+        # almost never the whole picture: invoicing is overwhelmingly recorded by
+        # moving PIC status, which stamps `ms{1,2}_invoiced` without ever raising
+        # a Sales Invoice — measured, 14,748 lines of 20,439 are in that state.
+        #
+        # Reading only the Sales Invoices made `already` 0 on such a line, so the
+        # balance branch below never engaged and the only amount accepted was the
+        # whole milestone. A line confirmed short, topped up later and billed in
+        # two parts could not be invoiced at all: 14 lines, SAR 5,320 of balance,
+        # were stuck behind exactly this — the report was "invoice amount 63.00
+        # should be 189.00" on a line already carrying 126.00.
+        #
+        # Taking the larger of the two can only ever tighten the cumulative
+        # ceiling further down, never loosen it, so this cannot let anyone
+        # over-bill a milestone.
         ms1_already, ms2_already = _calc_invoiced_from_submitted(pd_name, excluding_invoice=doc.name)
-        already = ms1_already if milestone == "MS1" else ms2_already
+        from_invoices = ms1_already if milestone == "MS1" else ms2_already
+        on_the_line = flt(pd.ms1_invoiced if milestone == "MS1" else pd.ms2_invoiced)
+        already = max(flt(from_invoices), on_the_line)
         outstanding = round(target_amt - already, 2)
 
         # The amount must be the whole milestone, or exactly what is left of it.
