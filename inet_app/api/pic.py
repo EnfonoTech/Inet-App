@@ -1661,13 +1661,39 @@ def update_pic_row(po_dispatch, fields):
     # the milestone is done. Force the invoiced amount to match on a
     # genuine transition so status and money can't drift apart; ms1_unbilled/
     # ms2_unbilled then self-correct via _compute_ms_amounts() in
-    # doc.save() below. ms1_invoiced/ms2_invoiced aren't in _PIC_WRITABLE, so
-    # there's no legitimate partial-invoice value in `fields` this could
-    # clobber.
-    if ms1_touched and new_ms1 in _PIC_MS_RESOLVED_FOR_CLOSE and old_ms1 != new_ms1:
-        doc.ms1_invoiced = flt(doc.ms1_amount or 0)
-    if ms2_touched and new_ms2 in _PIC_MS_RESOLVED_FOR_CLOSE and old_ms2 != new_ms2:
-        doc.ms2_invoiced = flt(doc.ms2_amount or 0)
+    # doc.save() below.
+    #
+    # The stamp runs BOTH WAYS, and neither direction may destroy a partial.
+    #
+    # Going in, it no longer overwrites a figure that is already there. A line
+    # billed 126.00 of 189.00 and then marked Submitted used to have the 126.00
+    # replaced by 189.00 — wiping the only record that 63.00 was still owed, on
+    # a line whose remaining quantity is invoiced separately.
+    #
+    # Coming out, it undoes itself the same way it was made: only a figure that
+    # IS exactly the milestone (so it looks like this stamp and nothing else),
+    # and only when no submitted Sales Invoice stands behind it. Without this
+    # the money stayed while the status went back — three POIDs were reported
+    # as "showing invoiced but in actual we didn't invoice" for exactly that,
+    # and moving the status back in the UI did not clear them. A partial is
+    # left alone in both directions.
+    for n, touched, old_ms, new_ms in (
+        (1, ms1_touched, old_ms1, new_ms1),
+        (2, ms2_touched, old_ms2, new_ms2),
+    ):
+        if not touched or old_ms == new_ms:
+            continue
+        amount = flt(doc.get(f"ms{n}_amount") or 0)
+        invoiced = flt(doc.get(f"ms{n}_invoiced") or 0)
+        if new_ms in _PIC_MS_RESOLVED_FOR_CLOSE:
+            if not invoiced:
+                doc.set(f"ms{n}_invoiced", amount)
+        elif old_ms in _PIC_MS_RESOLVED_FOR_CLOSE:
+            looks_like_the_stamp = amount > 0 and abs(invoiced - amount) < 0.01
+            if looks_like_the_stamp and not flt(
+                _calc_invoiced_from_submitted(doc.name)[n - 1]
+            ):
+                doc.set(f"ms{n}_invoiced", 0)
 
     billing = None
     if new_ms1 == submitted or new_ms2 == submitted:
