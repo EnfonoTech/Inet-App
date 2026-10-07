@@ -7,6 +7,7 @@ import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import useFeatureFlags from "../../hooks/useFeatureFlags";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -17,11 +18,12 @@ import { EXECUTION_STATUS_OPTIONS } from "../../constants/executionStatuses";
 import RemarksCell from "../../components/RemarksCell";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import CloseRemainderModal from "../../components/CloseRemainderModal";
-import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
+import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge, remainderActionFor } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge } from "../pic/picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
+         SubcontractorSplitTable } from "../pic/picShared";
 
 /* Money is never rounded to whole SAR: ms2_amount alone is fractional on
    1,550 of 1,983 dispatches, so a milestone split of an odd line amount
@@ -426,8 +428,12 @@ export default function IMWorkDone() {
   // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
   // leftover is decided separately, later — from the row itself or the banner.
   const [confirmQty, setConfirmQty] = useState("");
+  // Per-subcontractor split of the confirmation. Null until the modal learns
+  // the line was worked by more than one; see ConfirmedQtyFields.
+  const [confirmAlloc, setConfirmAlloc] = useState(null);
   const [decideFor, setDecideFor] = useState(null);
   const [closeRemainderFor, setCloseRemainderFor] = useState(null);
+  const { enabled: featureOn } = useFeatureFlags();
   const [decideBusy, setDecideBusy] = useState(false);
   const [decideErr, setDecideErr] = useState(null);
 
@@ -442,8 +448,14 @@ export default function IMWorkDone() {
     try {
       await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
       setDecideFor(null);
-      loadData();
-      if (openAfter) setCloseRemainderFor(openAfter);
+      if (openAfter) {
+        // Straight into the closing form. Reloading first only flashed the
+        // whole table behind the dialog for no gain — nothing the user can see
+        // has changed yet, and the close itself reloads when it finishes.
+        setCloseRemainderFor(openAfter);
+      } else {
+        loadData();
+      }
     } catch (e) {
       setDecideErr(e?.message || "Failed to save");
     } finally {
@@ -758,6 +770,7 @@ export default function IMWorkDone() {
     setImNote("");
     const already = Number(r.confirmed_qty) || 0;
     setConfirmQty(already > 0 ? String(already) : (r.ordered_qty != null ? String(r.ordered_qty) : ""));
+    setConfirmAlloc(null);
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -840,7 +853,8 @@ export default function IMWorkDone() {
       } else {
         res = await pmApi.updateWorkDoneSubmission(
           submissionFor.name, submissionPick, imNote || undefined,
-          sendQty ? enteredQty : undefined,
+          sendQty ? enteredQty : undefined, undefined,
+          sendQty ? confirmAlloc : undefined,
         );
       }
       window.dispatchEvent(new CustomEvent("inet:notifications-changed"));
@@ -856,6 +870,15 @@ export default function IMWorkDone() {
 
   const [refreshKey, setRefreshKey] = useState(0);
   const loadData = () => setRefreshKey((k) => k + 1);
+  // A reload the skip-refetch guard cannot sit out. `loadData` bumps
+  // refreshKey, which is normally enough — but after a close the row's own
+  // numbers have changed while every filter stayed identical, and that is
+  // exactly the shape the guard is built to skip. Clearing the cache first
+  // makes the refetch unconditional.
+  const forceReload = () => {
+    lastFetchRef.current = { signature: null, limit: null, rows: [], refreshKey: null };
+    setRefreshKey((k) => k + 1);
+  };
 
   async function submitBulk() {
     setBulkBusy(true);
@@ -1361,11 +1384,22 @@ export default function IMWorkDone() {
                     // stands out until someone answers it. Tint only; the row
                     // click still toggles selection, and the Confirmed Qty cell
                     // is the thing that opens the chooser.
-                    style={Number(r.remaining_qty) > 0 && !r.remaining_qty_action
-                      ? { background: "#fffbeb", boxShadow: "inset 3px 0 0 #f59e0b" }
-                      : undefined}
                     onClick={() => setSelectedRows((prev) => { const next = new Set(prev); next.has(r.name) ? next.delete(r.name) : next.add(r.name); return next; })}
-                    style={idx >= displayedCount ? { display: "none" } : { cursor: "pointer", ...(r.is_dummy_po ? { background: "#fffbeb" } : {}) }}
+                    // One style, not two: a second `style` attribute silently
+                    // replaces the first in JSX, so the undecided-remainder
+                    // tint above was never rendered at all. The row-limit
+                    // `display: none` must stay LAST — it is what hides rows
+                    // past the limit without unmounting them.
+                    style={idx >= displayedCount ? { display: "none" } : {
+                      cursor: "pointer",
+                      ...(r.is_dummy_po ? { background: "#fffbeb" } : {}),
+                      // Indigo, NOT the amber above: that is the dummy-PO
+                      // tint, and two different meanings in one colour is no
+                      // signal at all.
+                      ...(Number(r.remaining_qty) > 0 && !r.remaining_qty_action
+                        ? { background: "#eef2ff", boxShadow: "inset 3px 0 0 #6366f1" }
+                        : {}),
+                    }}
                   >
                     <td style={{ width: 36, padding: "6px 4px", textAlign: "center", boxSizing: "border-box" }} onClick={(e) => e.stopPropagation()}>
                       <input
@@ -1408,7 +1442,7 @@ export default function IMWorkDone() {
                     <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{fmtTimestamp(r.planning_timestamp)}</td>
                     <td>{r.plan_date || "—"}</td>
                     <td>{r.team_name || r.team || "—"}</td>
-                    <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}><SubcontractorCell rows={r.subcontract_allocations} fallback={r.subcontractor} /></td>
                     <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                     <td><PoStatusBadge value={r.dispatch_status} /></td>
                     <td>{r.execution_date || "—"}</td>
@@ -1545,6 +1579,10 @@ export default function IMWorkDone() {
               </div>
             )}
             <IMNoteCallout note={detailRow.manager_remark} />
+            {/* Who is owed what on this line. Renders nothing unless more
+                than one subcontractor worked it, so the popup is unchanged
+                for the 20,430 single-supplier lines. */}
+            <SubcontractorSplitTable rows={detailRow.subcontract_allocations} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
             <DispatchVisitHistory
               poDispatch={detailRow.po_dispatch}
@@ -1906,7 +1944,7 @@ export default function IMWorkDone() {
         <CloseRemainderModal
           row={closeRemainderFor}
           onClose={() => setCloseRemainderFor(null)}
-          onDone={loadData}
+          onDone={forceReload}
         />
       )}
 
@@ -1924,7 +1962,12 @@ export default function IMWorkDone() {
             </div>
             {decideErr && <div className="notice error" style={{ marginBottom: 10 }}>{decideErr}</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {REMAINING_ACTIONS.filter((a) => !a.hidden).map((a) => (
+              {REMAINING_ACTIONS.filter((a) => !a.hidden
+                && (!a.routes || a.routes.includes((decideFor.source || "").trim()))
+                // A route the business has switched off is not offered: the
+                // form behind it would only be refused by the endpoint.
+                && (!a.feature || featureOn(a.feature(decideFor.source)))
+              ).map((a0) => remainderActionFor(a0, decideFor.source)).map((a) => (
                 <button key={a.value} type="button" disabled={decideBusy}
                         onClick={() => decideRemaining(a.value)}
                         style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", cursor: decideBusy ? "default" : "pointer", width: "100%" }}>
@@ -1986,6 +2029,9 @@ export default function IMWorkDone() {
                 orderedQty={submissionFor.ordered_qty}
                 qty={confirmQty}
                 onQtyChange={setConfirmQty}
+                poDispatch={submissionFor.po_dispatch || submissionFor.system_id}
+                allocation={confirmAlloc}
+                onAllocationChange={setConfirmAlloc}
                 rate={submissionFor.rate}
                 disabled={submissionBusy}
                 lockedReason={qtyLockReason(submissionFor.pic_status, submissionFor.pic_status_ms2, submissionFor.confirmed_qty)}

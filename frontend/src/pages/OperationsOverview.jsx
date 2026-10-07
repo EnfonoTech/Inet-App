@@ -114,7 +114,7 @@ export default function OperationsOverview() {
                             <td>{d.po_no}</td>
                             <td>{d.site_code}</td>
                             <td>{d.item_code}</td>
-                            <td>{d.im || "—"}</td>
+                            <td>{d.im_full_name || d.im || "—"}</td>
                             <td>{d.dispatch_status}</td>
                           </tr>
                         ))}
@@ -249,6 +249,7 @@ export default function OperationsOverview() {
                         <tr>
                           <th>POID</th>
                           <th>Subcontractor</th>
+                          <th style={{ textAlign: "right" }}>Qty</th>
                           <th>Contract Model</th>
                           <th style={{ textAlign: "right" }}>Payout %</th>
                           <th style={{ textAlign: "right" }}>MS1 Payout</th>
@@ -261,7 +262,24 @@ export default function OperationsOverview() {
                         {data.subcon.map((r) => (
                           <tr key={r.po_dispatch}>
                             <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid}</td>
-                            <td>{r.subcontractor_name || r.subcontract || "—"}</td>
+                            <td>
+                              {r.subcontractor_name || r.subcontract || "—"}
+                              {Number(r.alloc_count || 0) > 1 && (
+                                <span
+                                  title="This line is split across subcontractors — one row each"
+                                  style={{
+                                    marginLeft: 5, padding: "0 5px", borderRadius: 999,
+                                    background: "#f1f5f9", border: "1px solid #e2e8f0",
+                                    color: "#475569", fontSize: "0.66rem", fontWeight: 700,
+                                  }}
+                                >
+                                  split
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                              {r.alloc_qty != null ? Number(r.alloc_qty) : "—"}
+                            </td>
                             <td>{r.contract_model || "—"}</td>
                             <td style={{ textAlign: "right" }}>{r.payout_pct ? `${r.payout_pct}%` : "—"}</td>
                             <td style={{ textAlign: "right" }}>{fmtMoney(r.ms1_payout)}</td>

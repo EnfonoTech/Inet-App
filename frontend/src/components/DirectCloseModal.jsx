@@ -4,6 +4,7 @@ import { pmApi } from "../services/api";
 import { missingImRows, imRequiredMessage } from "../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../utils/requiredFields";
 import { money } from "../utils/numberFormat";
+import useFeatureFlags from "../hooks/useFeatureFlags";
 
 /**
  * Close lines directly, with or without a milestone scope.
@@ -21,10 +22,16 @@ export default function DirectCloseModal({
   open, rows = [], huaweiIms = [], projectDomains = [],
   onClose, onDone,
 }) {
+  const { enabled } = useFeatureFlags();
   const [dcNote, setDcNote] = useState("");
   const [dcType, setDcType] = useState("INET");
   const [dcSubcontractor, setDcSubcontractor] = useState("");
   const [dcMilestone, setDcMilestone] = useState("full");
+  // Blank closes the whole line. A number closes part of it, leaving the rest
+  // outstanding so it can be closed again later — same subcontractor or
+  // another. Offered only on a single line: a partial quantity means nothing
+  // applied across a bulk selection of different lines.
+  const [dcQty, setDcQty] = useState("");
   const [dcClosedOn, setDcClosedOn] = useState(todayDate());
   const [dcHuaweiIm, setDcHuaweiIm] = useState("");
   const [dcProjectDomain, setDcProjectDomain] = useState("");
@@ -43,6 +50,16 @@ export default function DirectCloseModal({
   // whole form before being told. The preflight re-runs on the milestone
   // choice because "MS1 already closed" depends on it.
   const [dcPreflight, setDcPreflight] = useState(null);
+  // A partial quantity only means something on ONE line — across a mixed
+  // selection "close 2" has no shared referent.
+  const singleRow = rows.length === 1 ? rows[0] : null;
+  // `??` was wrong here: `remaining_qty` is a real field that is 0 on a line
+  // with nothing outstanding, which is most of them — and `0 ?? qty` keeps the
+  // 0, so the quantity box silently vanished on any caller that passes the
+  // field through. Only a POSITIVE outstanding quantity should win; otherwise
+  // the ordered quantity is what can be closed.
+  const outstanding = Number(singleRow?.remaining_qty) || 0;
+  const fullQty = outstanding > 0 ? outstanding : (Number(singleRow?.qty) || 0);
   useEffect(() => {
     if (!open || rows.length === 0) { setDcPreflight(null); return; }
     let cancelled = false;
@@ -89,6 +106,10 @@ export default function DirectCloseModal({
     setDcType("INET");
     setDcSubcontractor("");
     setDcMilestone("full");
+    const _out = Number(rows[0]?.remaining_qty) || 0;
+    setDcQty(rows.length === 1
+      ? String((_out > 0 ? _out : Number(rows[0]?.qty)) || "")
+      : "");
     setDcClosedOn(todayDate());
     // Pre-fill only where every row agrees, so a mixed batch is not silently
     // unified under one row's value.
@@ -116,6 +137,11 @@ export default function DirectCloseModal({
       setDcError(missingFieldsMessage(missing, "direct close"));
       return;
     }
+    const partial = closeQtyToSend();
+    if (partial === false) {
+      setDcError(`Quantity to close must be more than 0 and no more than ${fullQty}.`);
+      return;
+    }
     setDcBusy(true);
     setDcError(null);
     try {
@@ -125,6 +151,7 @@ export default function DirectCloseModal({
           huawei_im: dcHuaweiIm || undefined,
           project_domain: dcProjectDomain || undefined,
           closed_on: dcClosedOn,
+          close_qty: partial ?? undefined,
         });
       // A Direct Close is now a REQUEST an admin decides, so "0 closed" is the
       // normal, successful outcome for everyone but an admin — the old message
@@ -157,6 +184,20 @@ export default function DirectCloseModal({
     } finally {
       setDcBusy(false);
     }
+  }
+
+  // What to send as close_qty: `null` for the whole line (every call that
+  // predates partial closing), a number for a partial close, `false` when what
+  // was typed is not a usable quantity. Closing the full amount sends nothing,
+  // so the common path stays byte-identical to before.
+  function closeQtyToSend() {
+    if (!enabled("enable_partial_close")) return null;
+    if (!singleRow || dcQty === "") return null;
+    const n = Number(dcQty);
+    if (!Number.isFinite(n) || n <= 0) return false;
+    if (fullQty > 0 && n > fullQty + 0.00005) return false;
+    if (fullQty > 0 && n >= fullQty - 0.00005) return null;
+    return n;
   }
 
   // Named here, not inline in the JSX, so the banner and the button cannot
@@ -215,7 +256,6 @@ export default function DirectCloseModal({
               </div>
             </div>
             {(() => {
-              const singleRow = rows.length === 1 ? rows[0] : null;
               const subLocked = dcMilestone !== "full" && singleRow?.wd_subcontractor &&
                 (dcMilestone === "MS1" ? singleRow?.ms2_closed : singleRow?.ms1_closed);
               return (
@@ -232,7 +272,6 @@ export default function DirectCloseModal({
               );
             })()}
             {canMilestoneClose && (() => {
-              const singleRow = rows.length === 1 ? rows[0] : null;
               const msOpts = [
                 { id: "full",  label: "Full Close",  color: "#0369a1" },
                 { id: "MS1",   label: "MS1 Only",    color: "#7c3aed" },
@@ -311,16 +350,42 @@ export default function DirectCloseModal({
                 />
               </div>
             </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Closing Date *</label>
-              <input
-                type="date"
-                value={dcClosedOn}
-                max={todayDate()}
-                onChange={(e) => setDcClosedOn(e.target.value)}
-                disabled={dcBusy}
-                style={{ width: "100%" }}
-              />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
+              {singleRow && fullQty > 0 && enabled("enable_partial_close") && (() => {
+                const partial = closeQtyToSend();
+                const left = typeof partial === "number" ? fullQty - partial : 0;
+                return (
+                  <div className="form-group" style={{ marginBottom: 10 }}>
+                    <label>Quantity to close</label>
+                    <input
+                      type="number" step="0.01" min="0" max={fullQty}
+                      value={dcQty}
+                      onChange={(e) => setDcQty(e.target.value)}
+                      disabled={dcBusy}
+                      style={{ width: "100%", boxSizing: "border-box" }}
+                    />
+                    <div style={{ marginTop: 4, fontSize: "0.74rem",
+                                  color: left > 0 ? "#b45309" : "#64748b" }}>
+                      {partial === false
+                        ? `Enter 0–${fullQty}.`
+                        : left > 0
+                          ? `${partial} of ${fullQty} · ${Number(left.toFixed(4))} left open`
+                          : "Whole line"}
+                    </div>
+                  </div>
+                );
+              })()}
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Closing Date *</label>
+                <input
+                  type="date"
+                  value={dcClosedOn}
+                  max={todayDate()}
+                  onChange={(e) => setDcClosedOn(e.target.value)}
+                  disabled={dcBusy}
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>

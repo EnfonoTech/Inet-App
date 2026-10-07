@@ -77,7 +77,9 @@ export default function DirectCloseApprovalModal({ request, canDecide, onClose, 
             ["Huawei IM", request.huawei_im],
             ["Project domain", request.project_domain],
             ["Requested by", request.requested_by],
-            ["IM", request.im],
+            // IM Master is named by its code ("456"), which means nothing to
+            // the approver — the backend resolves full_name alongside it.
+            ["IM", request.im_full_name || request.im],
           ].map(([label, value]) => (
             <div key={label} style={{ background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 8, padding: "8px 11px" }}>
               <div style={{ fontSize: "0.63rem", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
@@ -131,8 +133,20 @@ export default function DirectCloseApprovalModal({ request, canDecide, onClose, 
                   <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>
                     {l.item_code || "—"}
                   </td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{l.qty ?? "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(l.line_amount || 0)}</td>
+                  {/* A partial close reads "2 of 6": the admin is approving a
+                      quantity, not the line, and the rest stays outstanding. */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {Number(l.close_qty) > 0 && Number(l.close_qty) < Number(l.qty || 0)
+                      ? (<><strong>{l.close_qty}</strong><span style={{ color: "#64748b" }}> of {l.qty}</span></>)
+                      : (l.qty ?? "—")}
+                  </td>
+                  {/* What this close is worth, pro-rated on a partial — the
+                      whole line's value would overstate what is being approved. */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                      title={Number(l.close_amount) !== Number(l.line_amount)
+                        ? `Line value ${money.format(l.line_amount || 0)}` : undefined}>
+                    {money.format(l.close_amount ?? l.line_amount ?? 0)}
+                  </td>
                   <td style={{ fontSize: "0.76rem" }}>{l.line_status || "Pending"}</td>
                   <td style={{ fontSize: "0.74rem", color: l.issue_severity === "hard" ? "#b91c1c" : l.issue ? "#b45309" : "#64748b" }}
                       title={l.issue_detail || l.line_note || ""}>

@@ -339,6 +339,10 @@ export default function AppShell() {
     if (role === "warehouse") return warehouseNav;
     // INET PM runs the admin portal without Masters — reference data is the
     // admin's to curate, not the PM's.
+    // No superuser entries in the sidebar: /subcon-reconcile is reached by
+    // typing the URL. It is Administrator-only and rarely used, so a permanent
+    // entry would be noise for everyone who can see it and a tease for
+    // everyone who cannot.
     if (isPm) return adminNav.filter((n) => n.to !== "/masters");
     return adminNav;
   }, [role, isPm, imCanBackend]);

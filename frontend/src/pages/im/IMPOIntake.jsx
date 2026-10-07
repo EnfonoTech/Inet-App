@@ -12,6 +12,7 @@ import { missingFields, missingFieldsMessage } from "../../utils/requiredFields"
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import DirectCloseModal from "../../components/DirectCloseModal";
+import useFeatureFlags from "../../hooks/useFeatureFlags";
 import DirectCloseApprovalModal from "../../components/DirectCloseApprovalModal";
 import BackendAssignModal from "../../components/BackendAssignModal";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -363,6 +364,9 @@ export default function IMPOIntake() {
 
   // ── Direct Close (intake tab) ────────────────────────────────────────
   const [canDirectClose, setCanDirectClose] = useState(false);
+  // Two separate gates: `canDirectClose` is whether THIS user may, the switch
+  // is whether the business wants the route available at all.
+  const { enabled: featureOn } = useFeatureFlags();
   const [canMilestoneClose, setCanMilestoneClose] = useState(false);
   const [showDcModal, setShowDcModal] = useState(false);
 
@@ -1437,12 +1441,12 @@ export default function IMPOIntake() {
             <button type="button" className="btn-primary" disabled={selected.size === 0} onClick={openAssignModal}>
               Dispatch ({selected.size})
             </button>
-            {canBackend && (
+            {canBackend && featureOn("enable_backend_assign") && (
               <button type="button" className="btn-secondary" disabled={selected.size < 1} onClick={openBackendModal} style={{ borderColor: "#a78bfa", color: "#7c3aed" }}>
                 Assign to Backend ({selected.size})
               </button>
             )}
-            {canDirectClose && (
+            {canDirectClose && featureOn("enable_direct_close") && (
               <button type="button" className="btn-secondary" disabled={selected.size < 1} onClick={openDcModal} style={{ borderColor: "#0284c7", color: "#0369a1" }}>
                 Direct Close ({selected.size})
               </button>

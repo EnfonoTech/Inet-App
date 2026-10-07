@@ -11,7 +11,11 @@ import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 from inet_app.api.notifications import _make_notification, _notify_role
 from frappe.model.meta import get_field_precision
-from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
+from inet_app.api.subcontractor_sync import (
+    ALLOC_JOIN_SQL,
+    ALLOC_SHARE_SQL,
+    LAST_VISIT_SUBCONTRACTOR_SQL,
+)
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 from inet_app.api.command_center import (
@@ -606,6 +610,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
             r["linked_invoices_csv"] = inv_map.get(r["po_dispatch"])
+        # The per-subcontractor split, so the Subcontract column can show the
+        # "+1" marker and the detail popup the full breakdown. A line with one
+        # supplier gets a one-entry list and renders exactly as before; a line
+        # with none gets no list at all. One batched query for the page.
+        from inet_app.api.subcontractor_sync import attach_allocations
+        attach_allocations(rows, key="po_dispatch")
     return {
         "rows": rows,
         "total_count": total_count,
@@ -2389,34 +2399,47 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     monthly = _monthly_invoicing_rows(fd, td, order="DESC", limit=36)
 
     # ── INET vs Subcon split — filtered by invoice month when date range set.
+    #
+    # A line split across subcontractors comes through ALLOC_JOIN_SQL as one
+    # row PER SUPPLIER, each carrying its own payout and margin percentages
+    # against its own share of the milestone. Without this a line worked half
+    # by an INET crew and half by a subcontractor landed entirely on one side
+    # of this chart, at the other side's percentages.
     vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
+    # The allocation's own master first, then the line stamp, then the plan —
+    # the same precedence the allocation itself was derived with. 100% margin /
+    # 0% payout is the INET default for a line with no subcontract at all.
+    _inet_pct = "COALESCE(sm_alloc.inet_margin_pct, sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100)"
+    _sub_pct = "IFNULL(COALESCE(sm_alloc.sub_payout_pct, sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0)"
+
+    def _ms_share(n):
+        """Milestone n's amount for THIS allocation, not the whole line."""
+        return f"IFNULL(pd.ms{n}_amount, 0) * ({ALLOC_SHARE_SQL})"
+
+    _ms1_invoiced = (f"({_PIC_INITIAL_RULE_SQL}) IN "
+                     "('Commercial Invoice Closed','Commercial Invoice Submitted')")
+    _ms2_invoiced = ("IFNULL(pd.pic_status_ms2,'') IN "
+                     "('Commercial Invoice Closed','Commercial Invoice Submitted')")
+
+    def _leg(n, pct, vat=False):
+        cond = _ms1_invoiced if n == 1 else _ms2_invoiced
+        extra = split_ms1_cond if n == 1 else split_ms2_cond
+        tail = f" * ({vat_frac})" if vat else ""
+        return (f"SUM(CASE WHEN {cond} {extra} "
+                f"THEN {_ms_share(n)} * {pct} / 100{tail} ELSE 0 END)")
+
     _split_sql = f"""
         SELECT
-          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms1_cond}
-              THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms1,
-          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms1_cond}
-              THEN IFNULL(pd.ms1_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms1,
-          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 ELSE 0 END) AS inet_ms2,
-          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 ELSE 0 END) AS subcon_ms2,
-          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms1_cond}
-              THEN IFNULL(pd.ms1_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({vat_frac}) ELSE 0 END) AS inet_ms1_vat,
-          SUM(CASE WHEN ({_PIC_INITIAL_RULE_SQL}) IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms1_cond}
-              THEN IFNULL(pd.ms1_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 * ({vat_frac}) ELSE 0 END) AS subcon_ms1_vat,
-          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({vat_frac}) ELSE 0 END) AS inet_ms2_vat,
-          SUM(CASE WHEN IFNULL(pd.pic_status_ms2,'') IN ('Commercial Invoice Closed','Commercial Invoice Submitted')
-              {split_ms2_cond}
-              THEN IFNULL(pd.ms2_amount, 0) * IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0) / 100 * ({vat_frac}) ELSE 0 END) AS subcon_ms2_vat
+          {_leg(1, _inet_pct)} AS inet_ms1,
+          {_leg(1, _sub_pct)} AS subcon_ms1,
+          {_leg(2, _inet_pct)} AS inet_ms2,
+          {_leg(2, _sub_pct)} AS subcon_ms2,
+          {_leg(1, _inet_pct, vat=True)} AS inet_ms1_vat,
+          {_leg(1, _sub_pct, vat=True)} AS subcon_ms1_vat,
+          {_leg(2, _inet_pct, vat=True)} AS inet_ms2_vat,
+          {_leg(2, _sub_pct, vat=True)} AS subcon_ms2_vat
         {_PIC_FROM_JOIN_LEAN}
+        {ALLOC_JOIN_SQL}
         WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
           AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
         """

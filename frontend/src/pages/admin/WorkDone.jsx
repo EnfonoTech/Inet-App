@@ -4,6 +4,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { pmApi } from "../../services/api";
+import useFeatureFlags from "../../hooks/useFeatureFlags";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -11,7 +12,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import CloseRemainderModal from "../../components/CloseRemainderModal";
-import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
+import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge, remainderActionFor } from "../../components/ConfirmedQtyFields";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import RemarksCell from "../../components/RemarksCell";
@@ -20,7 +21,8 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge } from "../pic/picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
+         SubcontractorSplitTable } from "../pic/picShared";
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -383,8 +385,11 @@ export default function WorkDone() {
   // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
   // leftover is decided separately, later — from the highlighted row itself.
   const [confirmQty, setConfirmQty] = useState("");
+  // Per-subcontractor split of the confirmation — see ConfirmedQtyFields.
+  const [confirmAlloc, setConfirmAlloc] = useState(null);
   const [decideFor, setDecideFor] = useState(null);
   const [closeRemainderFor, setCloseRemainderFor] = useState(null);
+  const { enabled: featureOn } = useFeatureFlags();
   const [decideBusy, setDecideBusy] = useState(false);
   const [decideErr, setDecideErr] = useState(null);
 
@@ -399,8 +404,13 @@ export default function WorkDone() {
     try {
       await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
       setDecideFor(null);
-      loadData();
-      if (openAfter) setCloseRemainderFor(openAfter);
+      if (openAfter) {
+        // Straight into the closing form — reloading first only flashed the
+        // table behind the dialog, and the close reloads when it finishes.
+        setCloseRemainderFor(openAfter);
+      } else {
+        loadData();
+      }
     } catch (e) {
       setDecideErr(e?.message || "Failed to save");
     } finally {
@@ -485,6 +495,7 @@ export default function WorkDone() {
     setImNote("");
     const already = Number(r.confirmed_qty) || 0;
     setConfirmQty(already > 0 ? String(already) : (r.ordered_qty != null ? String(r.ordered_qty) : ""));
+    setConfirmAlloc(null);
     setExistingAttachments([]);
     setSubmissionFor(r);
     const po_dispatch = r.po_dispatch || r.poid;
@@ -562,7 +573,8 @@ export default function WorkDone() {
         if (!submissionFor.name) throw new Error("Missing Work Done name");
         res = await pmApi.updateWorkDoneSubmission(
           submissionFor.name, submissionPick, imNote || undefined,
-          sendQty ? enteredQty : undefined,
+          sendQty ? enteredQty : undefined, undefined,
+          sendQty ? confirmAlloc : undefined,
         );
       }
       setSubmissionFor(null);
@@ -577,6 +589,13 @@ export default function WorkDone() {
 
   const [refreshKey, setRefreshKey] = useState(0);
   const loadData = useCallback(() => setRefreshKey((k) => k + 1), []);
+  // A reload the skip-refetch guard cannot sit out: after a close the row's
+  // numbers change while every filter stays identical, which is exactly the
+  // shape the guard skips. Clearing the cache makes the refetch unconditional.
+  const forceReload = useCallback(() => {
+    lastFetchRef.current = { signature: null, limit: null, rows: [] };
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   async function submitBulk() {
     setBulkBusy(true);
@@ -1365,9 +1384,11 @@ export default function WorkDone() {
                       style={idx >= displayLimit ? { display: "none" } : {
                         ...(row.is_dummy_po ? { background: "#fffbeb" } : {}),
                         // Confirmed short with no decision on the leftover —
-                        // stands out until someone answers it.
+                        // stands out until someone answers it. Indigo, NOT the
+                        // amber above: that is the dummy-PO tint, and two
+                        // meanings in one colour is no signal at all.
                         ...(Number(row.remaining_qty) > 0 && !row.remaining_qty_action
-                          ? { background: "#fffbeb", boxShadow: "inset 3px 0 0 #f59e0b" }
+                          ? { background: "#eef2ff", boxShadow: "inset 3px 0 0 #6366f1" }
                           : {}),
                         cursor: "pointer",
                       }}
@@ -1398,7 +1419,7 @@ export default function WorkDone() {
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
                       <td>{row.team_name || row.team || "—"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{row.subcontractor || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}><SubcontractorCell rows={row.subcontract_allocations} fallback={row.subcontractor} /></td>
                       <td style={{ fontSize: "0.82rem" }}>{row.contract_model || "—"}</td>
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
@@ -1691,7 +1712,7 @@ export default function WorkDone() {
         <CloseRemainderModal
           row={closeRemainderFor}
           onClose={() => setCloseRemainderFor(null)}
-          onDone={loadData}
+          onDone={forceReload}
         />
       )}
 
@@ -1709,7 +1730,12 @@ export default function WorkDone() {
             </div>
             {decideErr && <div className="notice error" style={{ marginBottom: 10 }}>{decideErr}</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {REMAINING_ACTIONS.filter((a) => !a.hidden).map((a) => (
+              {REMAINING_ACTIONS.filter((a) => !a.hidden
+                && (!a.routes || a.routes.includes((decideFor.source || "").trim()))
+                // A route the business has switched off is not offered: the
+                // form behind it would only be refused by the endpoint.
+                && (!a.feature || featureOn(a.feature(decideFor.source)))
+              ).map((a0) => remainderActionFor(a0, decideFor.source)).map((a) => (
                 <button key={a.value} type="button" disabled={decideBusy}
                         onClick={() => decideRemaining(a.value)}
                         style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", cursor: decideBusy ? "default" : "pointer", width: "100%" }}>
@@ -1766,6 +1792,9 @@ export default function WorkDone() {
                 orderedQty={submissionFor.ordered_qty}
                 qty={confirmQty}
                 onQtyChange={setConfirmQty}
+                poDispatch={submissionFor.po_dispatch || submissionFor.system_id}
+                allocation={confirmAlloc}
+                onAllocationChange={setConfirmAlloc}
                 rate={submissionFor.rate}
                 disabled={submissionBusy}
                 lockedReason={qtyLockReason(submissionFor.pic_status, submissionFor.pic_status_ms2, submissionFor.confirmed_qty)}
@@ -1927,6 +1956,10 @@ export default function WorkDone() {
               ]}
             />
             <IMNoteCallout note={detailRow.manager_remark} />
+            {/* Who is owed what on this line. Renders nothing unless more
+                than one subcontractor worked it, so the popup is unchanged
+                for the 20,430 single-supplier lines. */}
+            <SubcontractorSplitTable rows={detailRow.subcontract_allocations} />
             <PlanTeamsBreakdown rolloutPlan={detailRow.rollout_plan} />
             <DispatchVisitHistory
               poDispatch={detailRow.po_dispatch}

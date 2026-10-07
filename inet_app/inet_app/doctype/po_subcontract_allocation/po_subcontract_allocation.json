@@ -1,0 +1,145 @@
+{
+ "actions": [],
+ "creation": "2026-10-05 00:00:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "subcontractor",
+  "qty",
+  "amount",
+  "source",
+  "col_ms1",
+  "sub_po_status_ms1",
+  "sub_po_pct_ms1",
+  "sub_po_amount_ms1",
+  "sub_po_date_ms1",
+  "sub_paid_date_ms1",
+  "sub_po_remark_ms1",
+  "col_ms2",
+  "sub_po_status_ms2",
+  "sub_po_pct_ms2",
+  "sub_po_amount_ms2",
+  "sub_po_date_ms2",
+  "sub_paid_date_ms2",
+  "sub_po_remark_ms2"
+ ],
+ "fields": [
+  {
+   "fieldname": "subcontractor",
+   "fieldtype": "Link",
+   "options": "Subcontract Master",
+   "label": "Subcontractor",
+   "in_list_view": 1,
+   "columns": 3,
+   "reqd": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Qty",
+   "precision": "4",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount (SAR)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Data",
+   "label": "Derived From",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_ms1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sub_po_status_ms1",
+   "fieldtype": "Select",
+   "options": "\nReady to Order\nPO Created\nPO Submitted\nInvoice Received\nPurchase Invoice Submitted\nClosed",
+   "label": "Subcon PO Status (MS1)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "sub_po_pct_ms1",
+   "fieldtype": "Percent",
+   "label": "Subcon Payout % (MS1)"
+  },
+  {
+   "fieldname": "sub_po_amount_ms1",
+   "fieldtype": "Currency",
+   "label": "Subcon PO Amount (MS1)"
+  },
+  {
+   "fieldname": "sub_po_date_ms1",
+   "fieldtype": "Date",
+   "label": "Subcon PO Date (MS1)"
+  },
+  {
+   "fieldname": "sub_paid_date_ms1",
+   "fieldtype": "Date",
+   "label": "Subcon Payment Closed Date (MS1)"
+  },
+  {
+   "fieldname": "sub_po_remark_ms1",
+   "fieldtype": "Small Text",
+   "label": "Subcon PO Remark (MS1)"
+  },
+  {
+   "fieldname": "col_ms2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sub_po_status_ms2",
+   "fieldtype": "Select",
+   "options": "\nReady to Order\nPO Created\nPO Submitted\nInvoice Received\nPurchase Invoice Submitted\nClosed",
+   "label": "Subcon PO Status (MS2)",
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "sub_po_pct_ms2",
+   "fieldtype": "Percent",
+   "label": "Subcon Payout % (MS2)"
+  },
+  {
+   "fieldname": "sub_po_amount_ms2",
+   "fieldtype": "Currency",
+   "label": "Subcon PO Amount (MS2)"
+  },
+  {
+   "fieldname": "sub_po_date_ms2",
+   "fieldtype": "Date",
+   "label": "Subcon PO Date (MS2)"
+  },
+  {
+   "fieldname": "sub_paid_date_ms2",
+   "fieldtype": "Date",
+   "label": "Subcon Payment Closed Date (MS2)"
+  },
+  {
+   "fieldname": "sub_po_remark_ms2",
+   "fieldtype": "Small Text",
+   "label": "Subcon PO Remark (MS2)"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-05 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Subcontract Allocation",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "idx",
+ "sort_order": "ASC",
+ "states": []
+}

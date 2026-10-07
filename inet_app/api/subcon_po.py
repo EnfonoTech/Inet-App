@@ -25,8 +25,12 @@ Key differences from the sales side, all deliberate:
 
 from inet_app.roles import ADMIN_NOTIFY_ROLES, PM_LEVEL_ROLES
 import frappe
-from frappe.utils import add_days, cint, flt, getdate, nowdate
-from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
+from frappe.utils import add_days, cint, cstr, flt, getdate, nowdate
+from inet_app.api.subcontractor_sync import (
+    ALLOC_SHARE_SQL,
+    ALLOC_TOTALS_JOIN_SQL,
+    LAST_VISIT_SUBCONTRACTOR_SQL,
+)
 
 from inet_app.api.command_center import (
     _ensure_list,
@@ -288,10 +292,29 @@ LEFT JOIN `tabProject Control Center` proj ON proj.name = pd.project_code
 LEFT JOIN (
 {LAST_VISIT_SUBCONTRACTOR_SQL}) plan_sub ON plan_sub.po_dispatch = pd.name
 LEFT JOIN `tabINET Team` bt ON bt.name = pd.backend_team
+LEFT JOIN `tabPO Subcontract Allocation` alloc
+       ON alloc.parent = pd.name
+      AND alloc.parenttype = 'PO Dispatch'
+      AND alloc.parentfield = 'subcontract_allocations'
 LEFT JOIN `tabSubcontract Master` sm
-       ON sm.name = COALESCE(NULLIF(pd.contract, ''), plan_sub.subcontractor, bt.subcontractor)
+       ON sm.name = COALESCE(
+            NULLIF(alloc.subcontractor, ''),
+            NULLIF(pd.contract, ''), plan_sub.subcontractor, bt.subcontractor)
 LEFT JOIN `tabSupplier` sup ON sup.name = sm.supplier
+{ALLOC_TOTALS_JOIN_SQL}
 """
+
+# A line split across subcontractors produces ONE ROW PER SUPPLIER through the
+# join above, and each row must carry only that supplier's share of the money —
+# otherwise two rows worth the whole line would double the payout in every
+# total built on this join. Shared with pic.py and command_center.py so the
+# four reports that split INET from SUB money all divide it the same way.
+_ALLOC_SHARE_SQL = ALLOC_SHARE_SQL
+
+
+def _ms_amount_sql(n):
+    """Milestone ``n``'s amount for THIS allocation, not the whole line."""
+    return f"ROUND(IFNULL(pd.ms{n}_amount, 0) * {_ALLOC_SHARE_SQL}, 4)"
 
 # Only SUB-type contracts get a supplier PO. INET-type contracts are INET's
 # own crews (100% margin / 0% payout) and never produce one, which is why
@@ -318,7 +341,7 @@ def _expected_payout_sql(n):
     ordered ones, and so a later edit to ``sub_payout_pct`` can never appear
     to rewrite an issued PO.
     """
-    return f"ROUND(IFNULL(pd.ms{n}_amount, 0) * IFNULL(sm.sub_payout_pct, 0) / 100, 2)"
+    return f"ROUND({_ms_amount_sql(n)} * IFNULL(sm.sub_payout_pct, 0) / 100, 2)"
 
 
 def _payout_shown_sql(n):
@@ -334,7 +357,7 @@ def _inet_amount_sql(n):
     (ms_amount x inet_margin_pct / 100), so the customer-side and supplier-side
     reports state INET's margin identically instead of two near-miss formulas.
     """
-    return (f"ROUND(IFNULL(pd.ms{n}_amount, 0) * "
+    return (f"ROUND({_ms_amount_sql(n)} * "
             f"COALESCE(sm.inet_margin_pct, 0) / 100, 2)")
 
 
@@ -479,12 +502,20 @@ def _batch_linked_purchase_docs(po_dispatch_names):
 
 
 def _existing_purchase_orders_by_milestone(poids, include_submitted=True):
-    """Return {(poid, "MS1"|"MS2"): "PO-0001 (Draft)"} for live Purchase Orders.
+    """Return {(poid, "MS1"|"MS2", subcontract): "PO-0001 (Draft)"} for live POs.
 
     The duplicate guard for PO creation. A legacy/hand-made line with no
     ``milestone`` tag can't be attributed to one milestone, so it
     conservatively blocks BOTH — same reasoning as
     ``_batch_draft_invoices_by_milestone`` on the sales side.
+
+    Keyed by SUBCONTRACT as well as milestone. A line worked by two
+    subcontractors needs one PO each, and keying on (poid, milestone) alone
+    made the first PO block the second — the one hard blocker that stopped a
+    split line being ordered at all. A row whose ``subcontract`` is blank
+    (legacy, or a PO raised before the field existed) blocks every supplier on
+    that milestone, which is the same conservative stance the blank-milestone
+    case already takes.
     """
     names = list({n for n in (poids or []) if n})
     out = {}
@@ -496,6 +527,7 @@ def _existing_purchase_orders_by_milestone(poids, include_submitted=True):
         rows = frappe.db.sql(
             f"""
             SELECT poi.poid AS poid, UPPER(IFNULL(poi.milestone, '')) AS milestone,
+                   IFNULL(poi.subcontract, '') AS subcontract,
                    po.name AS po_name, po.docstatus AS docstatus
             FROM `tabPurchase Order Item` poi
             JOIN `tabPurchase Order` po ON po.name = poi.parent
@@ -507,9 +539,25 @@ def _existing_purchase_orders_by_milestone(poids, include_submitted=True):
         for r in rows:
             label = f"{r['po_name']} ({'Submitted' if cint(r['docstatus']) == 1 else 'Draft'})"
             ms = r["milestone"]
+            # "" is the wildcard: a PO line that never recorded its
+            # subcontract blocks all of them, since there is no way to tell
+            # which supplier it already covers.
+            sub = r["subcontract"]
             for key in ((ms,) if ms in ("MS1", "MS2") else ("MS1", "MS2")):
-                out.setdefault((r["poid"], key), label)
+                out.setdefault((r["poid"], key, sub), label)
     return out
+
+
+def _po_exists_for(dupes, po_dispatch, milestone, subcontract):
+    """True when ``dupes`` already covers this line + milestone + supplier.
+
+    A blank-subcontract PO line blocks every supplier, so both the exact key
+    and the wildcard are checked.
+    """
+    return (
+        (po_dispatch, milestone, cstr(subcontract or "")) in dupes
+        or (po_dispatch, milestone, "") in dupes
+    )
 
 
 def _chunk(items, size=800):
@@ -553,9 +601,22 @@ def _batch_resolve_subcontracts(po_dispatch_names):
                    pd.pic_status, pd.pic_status_ms2,
                    pd.sub_po_amount_ms1, pd.sub_po_amount_ms2,
                    sm.name AS subcontract, sm.type AS contract_type,
-                   sm.supplier, sm.sub_payout_pct, sm.contract_model, sm.status AS contract_status
+                   sm.supplier, sm.sub_payout_pct, sm.contract_model, sm.status AS contract_status,
+                   -- The supplier's OWN share of the line. Without it the PO
+                   -- was raised for the whole line quantity: 121 units ordered
+                   -- from a subcontractor who did 50 of them.
+                   alloc.qty AS alloc_qty,
+                   (SELECT COUNT(*) FROM `tabPO Subcontract Allocation` a2
+                     WHERE a2.parent = pd.name AND a2.parenttype = 'PO Dispatch') AS alloc_count
             {_SUBCON_FROM_JOIN}
             WHERE pd.name IN ({ph})
+            -- A split line yields one row per supplier here, and only one of
+            -- them survives into the dict below. Ordering puts the PAYABLE one
+            -- last so it wins: an INET contract never gets a supplier PO, so
+            -- letting row order decide meant the PO sometimes resolved to the
+            -- in-house leg and the line was skipped as "INET-type contract".
+            ORDER BY CASE WHEN IFNULL(sm.type,'') = 'SUB' THEN 1 ELSE 0 END,
+                     IFNULL(alloc.qty, 0)
             """,
             tuple(chunk),
             as_dict=True,
@@ -706,9 +767,17 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         "site_name": "IFNULL(pd.site_name,'')",
         "item": "IFNULL(pd.item_code,'')",
         "description": "IFNULL(pd.item_description,'')",
-        "qty": "CAST(pd.qty AS CHAR)",
+        # These two columns render THIS SUPPLIER'S share, not the line's, so
+        # the filter has to offer the same numbers. Offering 121 for a cell
+        # that reads 50 is the "filter must match what the cell renders" trap:
+        # picking the only value on offer returned nothing the user could see.
+        # Trailing zeros trimmed so the dropdown reads "50", the way the cell
+        # does. ROUND(...,4) alone offered "50.0000" against a cell showing
+        # "50" — the filter worked, but the user has to recognise the value.
+        "qty": ("TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM "
+                f"CAST(ROUND(IFNULL(pd.qty,0) * ({ALLOC_SHARE_SQL}), 4) AS CHAR)))"),
         "unit_price": "CAST(pd.rate AS CHAR)",
-        "line_amount": "CAST(pd.line_amount AS CHAR)",
+        "line_amount": f"CAST(ROUND(IFNULL(pd.line_amount,0) * ({ALLOC_SHARE_SQL}), 2) AS CHAR)",
         "subcontract": "IFNULL(sm.subcontractor_name,'')",
         "contract_model": "IFNULL(sm.contract_model,'')",
         "supplier": "IFNULL(sm.supplier,'')",
@@ -872,14 +941,25 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
           COALESCE(NULLIF(pd.poid,''), pd.name) AS poid,
           pd.po_no, pd.po_line_no,
           pd.item_code, pd.item_description,
-          pd.qty, pd.rate, pd.line_amount, pd.tax_rate,
+          pd.qty, pd.rate, pd.tax_rate,
+          -- This supplier's share of the line. Every other money column on
+          -- this row is already share-weighted (ms1_amount, ms2_amount), so a
+          -- full-line 968.00 sitting beside a share of 400.00 read as a
+          -- contradiction. `full_line_amount` keeps the whole figure for the
+          -- popup, which is where the comparison belongs.
+          ROUND(IFNULL(pd.line_amount, 0) * ({ALLOC_SHARE_SQL}), 2) AS line_amount,
+          IFNULL(pd.line_amount, 0) AS full_line_amount,
           pd.project_code, proj.project_name,
           pd.site_code, pd.site_name, pd.center_area, pd.region_type,
           pd.im, imm.full_name AS im_full_name,
           pd.dispatch_status,
           pd.pic_status AS pic_status_ms1, pd.pic_status_ms2,
           pd.ms1_pct, pd.ms2_pct,
-          pd.ms1_amount, pd.ms2_amount,
+          {_ms_amount_sql(1)} AS ms1_amount, {_ms_amount_sql(2)} AS ms2_amount,
+          alloc.subcontractor AS alloc_subcontractor,
+          alloc.qty AS alloc_qty,
+          (SELECT COUNT(*) FROM `tabPO Subcontract Allocation` a2
+            WHERE a2.parent = pd.name AND a2.parenttype = 'PO Dispatch') AS alloc_count,
           pd.ms1_invoiced, pd.ms2_invoiced,
           pd.ms1_applied_date, pd.ms2_applied_date,
           pd.ms1_invoice_month, pd.ms2_invoice_month,
@@ -935,8 +1015,8 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
                COALESCE(SUM({_vat_sql(2)}), 0) AS vat_ms2,
                COALESCE(SUM(pd.sub_po_amount_ms1), 0) AS ordered_ms1,
                COALESCE(SUM(pd.sub_po_amount_ms2), 0) AS ordered_ms2,
-               COALESCE(SUM(pd.ms1_amount), 0) AS ms1_amount,
-               COALESCE(SUM(pd.ms2_amount), 0) AS ms2_amount,
+               COALESCE(SUM({_ms_amount_sql(1)}), 0) AS ms1_amount,
+               COALESCE(SUM({_ms_amount_sql(2)}), 0) AS ms2_amount,
                SUM(IFNULL(sm.supplier,'') = '') AS missing_supplier
         {_SUBCON_FROM_JOIN}
         WHERE {where_sql}
@@ -952,6 +1032,12 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
             r["purchase_orders_csv"] = docs.get("po")
             r["purchase_invoices_csv"] = docs.get("pi")
             r["supplier_missing"] = 1 if not (r.get("supplier") or "").strip() else 0
+        # The whole line's split, including the legs this page does not show.
+        # A row here is one PAYABLE supplier, so a line shared with an INET
+        # crew appears as a single row with nothing to say it is a share — the
+        # marker and the View popup need the other legs to say so.
+        from inet_app.api.subcontractor_sync import attach_allocations
+        attach_allocations(rows, key="po_dispatch")
 
     return {
         "rows": rows,
@@ -1053,7 +1139,11 @@ def _po_item_pricing(pd_row, milestone, payout_pct, precision):
     """
     n = _ms_num(milestone)
     ms_pct = flt(pd_row.get(f"ms{n}_pct") or 0)
-    full_qty = flt(pd_row.get("qty") or 1) or 1
+    # THIS SUPPLIER'S quantity, not the line's. On a line split 71 INET / 50
+    # Jareesh, the supplier PO must be for 50 — it used to be raised for all
+    # 121, ordering a subcontractor more than twice the work they did.
+    # Milestone scaling then applies on top, as it always has.
+    full_qty = flt(pd_row.get("alloc_qty") or 0) or flt(pd_row.get("qty") or 1) or 1
     full_rate = flt(pd_row.get("rate") or 0)
 
     qty = round(full_qty * ms_pct / 100.0, 6) if ms_pct > 0 else full_qty
@@ -1191,13 +1281,20 @@ def create_purchase_order_from_pic(po_dispatch=None, milestone=None):
             msg += " " + "; ".join(skipped[:10]) + ("…" if len(skipped) > 10 else "")
         frappe.throw(msg)
 
-    # ── Duplicate guard: a live PO already covering this POID+milestone ──
+    # ── Duplicate guard: a live PO already covering this POID+milestone+supplier ──
+    # Supplier is part of the key: a line split between two subcontractors
+    # needs one PO each, and keying on (poid, milestone) alone made the first
+    # one block the second.
     dupes = _existing_purchase_orders_by_milestone([l["po_dispatch"] for l, _ms, _a in resolved])
-    conflicts = [
-        f"{line.get('poid') or line['po_dispatch']} ({ms}) → {dupes[(line['po_dispatch'], ms)]}"
-        for line, ms, _amt in resolved
-        if (line["po_dispatch"], ms) in dupes
-    ]
+    conflicts = []
+    for line, ms, _amt in resolved:
+        sub = cstr(line.get("subcontract") or "")
+        if _po_exists_for(dupes, line["po_dispatch"], ms, sub):
+            label = (dupes.get((line["po_dispatch"], ms, sub))
+                     or dupes.get((line["po_dispatch"], ms, "")))
+            who = f" / {sub}" if sub else ""
+            conflicts.append(
+                f"{line.get('poid') or line['po_dispatch']} ({ms}{who}) → {label}")
     if conflicts:
         frappe.throw(
             "Can't create — a Purchase Order already exists for: "
@@ -1761,7 +1858,8 @@ def _purchase_doc_lines(doc):
         yield pd_name, ms
 
 
-def _set_status(pd_name, milestone, new_status, only_when=None, extra=None):
+def _set_status(pd_name, milestone, new_status, only_when=None, extra=None,
+                subcontract=None):
     """Move one milestone to ``new_status``, optionally only from a given set.
 
     ``only_when`` guards against a hook stamping over a status PIC has since
@@ -1776,14 +1874,57 @@ def _set_status(pd_name, milestone, new_status, only_when=None, extra=None):
     if extra:
         updates.update(extra)
     frappe.db.set_value("PO Dispatch", pd_name, updates, update_modified=True)
+    # Mirror onto the supplier's OWN allocation row. On a split line the line
+    # level can only hold one answer, so without this the second supplier's PO
+    # is invisible — and the lock that stops a re-derivation contradicting an
+    # issued PO reads these columns. `subcontract` is the Subcontract Master
+    # the PO was raised against; with none given (a hook that cannot tell), the
+    # line has one allocation or none, and a single row is stamped.
+    _mirror_status_to_allocation(pd_name, milestone, new_status, extra, subcontract)
     _sync_overall_status(pd_name)
     return True
+
+
+def _mirror_status_to_allocation(pd_name, milestone, new_status, extra, subcontract):
+    """Copy a milestone's PO status onto the allocation row it belongs to."""
+    if not frappe.db.exists("DocType", "PO Subcontract Allocation"):
+        return
+    rows = frappe.get_all(
+        "PO Subcontract Allocation",
+        filters={"parent": pd_name, "parenttype": "PO Dispatch",
+                 "parentfield": "subcontract_allocations"},
+        fields=["name", "subcontractor"])
+    if not rows:
+        return
+    sub = cstr(subcontract or "").strip()
+    targets = [r for r in rows if cstr(r.subcontractor or "") == sub] if sub else \
+        (rows if len(rows) == 1 else [])
+    if not targets:
+        return
+    field = "sub_po_status_ms1" if _ms_num(milestone) == 1 else "sub_po_status_ms2"
+    payload = {field: new_status}
+    for k, v in (extra or {}).items():
+        if k.endswith(("_ms1", "_ms2")) and frappe.db.has_column(
+                "PO Subcontract Allocation", k):
+            payload[k] = v
+    for r in targets:
+        frappe.db.set_value("PO Subcontract Allocation", r.name, payload,
+                            update_modified=False)
 
 
 def _advance_from_purchase_doc(doc, new_status, only_when=None, extra_by_ms=None,
                                dry_run=False):
     touched = []
     seen = set()
+    # Which Subcontract Master each line on this document was ordered against,
+    # so the status lands on that supplier's allocation row and not on a
+    # sibling supplier's.
+    subs = {}
+    for i in (doc.get("items") or []):
+        key = cstr(i.get("poid") or "").strip()
+        sub = cstr(i.get("subcontract") or "").strip()
+        if key and sub:
+            subs.setdefault(key, sub)
     for pd_name, ms in _purchase_doc_lines(doc):
         if (pd_name, ms) in seen:
             continue
@@ -1792,9 +1933,55 @@ def _advance_from_purchase_doc(doc, new_status, only_when=None, extra_by_ms=None
             touched.append({"po_dispatch": pd_name, "milestone": ms})
             continue
         extra = (extra_by_ms or {}).get(ms) or {}
-        if _set_status(pd_name, ms, new_status, only_when=only_when, extra=extra):
+        if _set_status(pd_name, ms, new_status, only_when=only_when, extra=extra,
+                       subcontract=subs.get(pd_name)):
             touched.append({"po_dispatch": pd_name, "milestone": ms})
     return touched
+
+
+def before_purchase_order_submit(doc, method=None):
+    """Refuse to submit a supplier PO whose line no longer names that supplier.
+
+    A PO can sit in draft for days. In between, the line can be re-confirmed,
+    re-planned or reconciled onto a different subcontractor — and submitting
+    the stale draft would issue a real purchase order to someone the system no
+    longer says did the work. Checked at submit rather than at creation because
+    submit is the moment the document becomes real.
+
+    Only the lines this PO actually carries are checked, so ordinary buying on
+    the rest of the bench is untouched.
+    """
+    stale = []
+    for pd_name, _ms in _purchase_doc_lines(doc):
+        item_subs = {cstr(i.get("subcontract") or "").strip()
+                     for i in (doc.get("items") or [])
+                     if cstr(i.get("poid") or "").strip() == pd_name}
+        item_subs.discard("")
+        if not item_subs:
+            continue
+        allocated = {cstr(r.subcontractor or "").strip() for r in frappe.get_all(
+            "PO Subcontract Allocation",
+            filters={"parent": pd_name, "parenttype": "PO Dispatch",
+                     "parentfield": "subcontract_allocations"},
+            fields=["subcontractor"])}
+        allocated.discard("")
+        if not allocated:
+            # No allocation rows at all — nothing to contradict, and the line's
+            # own stamp is what the PO was built from in the first place.
+            continue
+        gone = item_subs - allocated
+        if gone:
+            poid = frappe.db.get_value("PO Dispatch", pd_name, "poid") or pd_name
+            stale.append(f"{poid}: ordered to {', '.join(sorted(gone))}, but the line "
+                         f"now says {', '.join(sorted(allocated))}")
+    if stale:
+        frappe.throw(
+            "This purchase order no longer matches its lines:<br>• "
+            + "<br>• ".join(stale)
+            + "<br><br>Rebuild the purchase order from the Subcon PO page so it "
+              "goes to the supplier the line actually names.",
+            title="Subcontractor changed since this PO was drafted",
+        )
 
 
 def on_purchase_order_submit(doc, method=None):
@@ -2025,7 +2212,7 @@ def subcon_payout_summary(portal_filters=None):
           SELECT sm.supplier AS supplier, sm.name AS subcontract,
                  sm.contract_model AS contract_model,
                  {_ms_status_sql(n)} AS status,
-                 IFNULL(pd.ms{n}_amount, 0) AS ms_amount,
+                 {_ms_amount_sql(n)} AS ms_amount,
                  {_inet_amount_sql(n)} AS inet_amount,
                  {_payout_shown_sql(n)} AS payout,
                  {_vat_sql(n)} AS vat,
@@ -2082,7 +2269,7 @@ def subcon_payout_summary(portal_filters=None):
         f"""
         SELECT IFNULL(pd.sub_po_status, '') AS status,
                COUNT(*) AS row_count,
-               COALESCE(SUM(IFNULL(pd.ms1_amount,0) + IFNULL(pd.ms2_amount,0)), 0) AS ms_amount,
+               COALESCE(SUM({_ms_amount_sql(1)} + {_ms_amount_sql(2)}), 0) AS ms_amount,
                COALESCE(SUM({line_inet}), 0) AS inet_amount,
                COALESCE(SUM({line_payout}), 0) AS payout,
                COALESCE(SUM({line_vat}), 0) AS vat

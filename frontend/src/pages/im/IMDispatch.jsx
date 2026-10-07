@@ -9,6 +9,7 @@ import { useTableRowLimit, TABLE_ROW_LIMIT_ALL, TABLE_ROW_LIMIT_DEFAULT } from "
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import useFeatureFlags from "../../hooks/useFeatureFlags";
 import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -278,6 +279,9 @@ export default function IMDispatch() {
 
   // ── Backend assignment ─────────────────────────────────────────────────
   const [canBackend, setCanBackend] = useState(false);
+  // `canBackend` is whether this user may; the switch is whether the business
+  // wants the route at all.
+  const { enabled: featureOn } = useFeatureFlags();
   const [showBackendModal, setShowBackendModal] = useState(false);
   const [backendTeams, setBackendTeams] = useState([]);
   const [backendTeamsLoading, setBackendTeamsLoading] = useState(false);
@@ -1213,7 +1217,7 @@ export default function IMDispatch() {
           >
             Create rollout plans ({selected.size})
           </button>
-          {canBackend && (
+          {canBackend && featureOn("enable_backend_assign") && (
             <button
               type="button"
               className="btn-secondary"

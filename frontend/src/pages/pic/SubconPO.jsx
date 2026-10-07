@@ -13,7 +13,7 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubPoStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubPoStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "./picShared";
 import { money, qty as fmtQty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -197,6 +197,10 @@ function DetailModal({ row, onClose }) {
           <KV label="Project" value={row.project_code} mono />
         </div>
 
+        {/* Full width, not squeezed into a 200px grid track — five columns in
+            a third of the popup is what clipped the milestone badges. */}
+        <SubcontractorSplitTable rows={row.subcontract_allocations} rate={row.rate} />
+
         <div style={{ marginBottom: 14 }}>
           <DetailHero>
             <DetailStatTile label="Subcon Status" value={<SubPoStatusBadge value={row.sub_po_status} />} />
@@ -204,7 +208,21 @@ function DetailModal({ row, onClose }) {
             <DetailStatTile label="Subcon MS2"
               value={row.ms2_amount ? <SubPoStatusBadge value={row.sub_po_status_ms2} /> : "—"} />
             <DetailStatTile label="Payout %" value={row.payout_pct != null ? `${fmtQty.format(row.payout_pct)}%` : "—"} />
-            <DetailStatTile label="Line Amount" value={money.format(row.line_amount || 0)} />
+            {/* This supplier's share, with the whole line beneath it on a
+                split — the two figures side by side is what makes 400 of 968
+                read as a share rather than a contradiction. */}
+            <DetailStatTile
+              label={Number(row.alloc_count || 0) > 1 ? "Their Share" : "Line Amount"}
+              value={
+                <>
+                  {money.format(row.line_amount || 0)}
+                  {Number(row.alloc_count || 0) > 1 && row.full_line_amount != null && (
+                    <span style={{ fontSize: "0.7rem", color: "#64748b", fontWeight: 500 }}>
+                      {" "}of {money.format(row.full_line_amount)}
+                    </span>
+                  )}
+                </>
+              } />
             <DetailStatTile label="Payout MS1"
               value={money.format(row.sub_po_amount_ms1 || row.expected_payout_ms1 || 0)}
               tone="green"
@@ -1212,7 +1230,13 @@ export default function SubconPO() {
                   <td onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                   </td>
-                  <td style={{ fontSize: "0.82rem" }} title={r.subcontract || ""}>{r.subcontractor_name || r.subcontract || "—"}</td>
+                  {/* The row is ONE payable supplier; the marker says the line
+                      is shared, including with an INET crew that never appears
+                      here as a row of its own. */}
+                  <td style={{ fontSize: "0.82rem" }} title={r.subcontract || ""}>
+                    <SubcontractorCell rows={r.subcontract_allocations}
+                                       fallback={r.subcontractor_name || r.subcontract} />
+                  </td>
                   <td style={{ fontSize: "0.82rem" }}>
                     {r.supplier_missing
                       ? <span style={{ color: "#b45309", fontWeight: 700 }} title="No Supplier linked on the Subcontract Master — this line can't be ordered">⚠ Not linked</span>
@@ -1229,7 +1253,35 @@ export default function SubconPO() {
                   <td><SubPoStatusBadge value={r.sub_po_status} /></td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                   <td style={{ fontSize: "0.82rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>{r.item_description || "—"}</td>
-                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.qty != null ? fmtQty.format(r.qty) : "—"}</td>
+                  {/* THIS subcontractor's share, not the line's quantity. A line
+                      split 0.5 / 0.5 showed "1" here while the money beside it was
+                      already halved, which read as a rounding bug. The line total
+                      stays visible beside it so the share has something to mean. */}
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {(() => {
+                      const split = Number(r.alloc_count || 0) > 1 && r.alloc_qty != null;
+                      const shown = split ? Number(r.alloc_qty) : r.qty;
+                      if (shown == null) return "—";
+                      return (
+                        <>
+                          {fmtQty.format(shown)}
+                          {split && (
+                            <span
+                              title={`This line is split across ${r.alloc_count} subcontractors — ${fmtQty.format(r.alloc_qty)} of ${fmtQty.format(r.qty)} is theirs`}
+                              style={{
+                                marginLeft: 5, padding: "0 5px", borderRadius: 999,
+                                background: "#f1f5f9", border: "1px solid #e2e8f0",
+                                color: "#475569", fontSize: "0.64rem", fontWeight: 700,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              of {fmtQty.format(r.qty)}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.rate != null ? money.format(r.rate) : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{money.format(r.line_amount || 0)}</td>
                   <td><PoStatusBadge value={r.dispatch_status} /></td>

@@ -9,8 +9,11 @@
   "closed_amount",
   "closed_on",
   "milestone",
+  "subcontractor",
   "source",
   "closed_by",
+  "rollout_plan",
+  "team",
   "remark"
  ],
  "fields": [
@@ -59,6 +62,26 @@
    "in_list_view": 1,
    "label": "Closed By",
    "options": "User"
+  },
+  {
+   "columns": 2,
+   "fieldname": "subcontractor",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Subcontractor",
+   "options": "Subcontract Master"
+  },
+  {
+   "fieldname": "rollout_plan",
+   "fieldtype": "Link",
+   "label": "Rollout Plan",
+   "options": "Rollout Plan"
+  },
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "label": "Team",
+   "options": "INET Team"
   },
   {
    "fieldname": "remark",

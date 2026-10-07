@@ -1,0 +1,1 @@
+import{r,p as n}from"./index.js";let t=null,a=null;function c(){const[l,s]=r.useState(t||{});return r.useEffect(()=>{if(t)return;let e=!0;return a=a||n.getFeatureFlags().catch(()=>({})),a.then(u=>{t=u||{},e&&s(t)}),()=>{e=!1}},[]),{enabled:e=>l[e]!==!1,flags:l}}export{c as u};

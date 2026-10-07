@@ -533,7 +533,11 @@ export default function IMExecution() {
       // the replacement plan carries the line's Work Done.
       if (e.plan_status === "Cancelled") continue;
       if (!(isNotRequired(e.qc_required) || ["Pass", "Not Applicable"].includes(e.qc_status))) continue;
-      if (e.work_done) continue;
+      // An existing Work Done blocks a SECOND one — but not the remainder of
+      // the same line. A POID keeps one Work Done for its whole life and the
+      // closure ledger carries each closing event, so quantity still
+      // outstanding is recorded onto that record, not refused.
+      if (e.work_done && !(Number(e.remaining_qty) > 0)) continue;
       // Closed outside the rollout (Direct Close / Backend): the backend
       // refuses a second Work Done for the line, so don't offer it — unless
       // the IM has explicitly chosen to adopt that record into this rollout.
@@ -626,7 +630,10 @@ export default function IMExecution() {
     if (Number(e.is_internal_work || 0)) return "Internal work — set Execution Status to Completed instead, no Work Done needed";
     if (e.work_done_external)
       return `${(e.work_done_external_source || "Direct Close")} record ${e.work_done_external} already exists for this line`;
-    if (e.work_done) {
+    if (e.work_done && Number(e.remaining_qty) > 0) {
+      // Not a blocker: this is the remainder, and it goes onto the record the
+      // line already has. Fall through to the QC / CIAG gates below.
+    } else if (e.work_done) {
       const pending = [];
       if (!isNotRequired(e.ciag_required) && !["Approved", "Not Applicable"].includes(e.ciag_status))
         pending.push("CIAG approval");
@@ -1206,7 +1213,13 @@ export default function IMExecution() {
                     const extras = selectedMultiTeamCompanions.filter((c) => c.rollout_plan && c.rollout_plan === e.rollout_plan).length;
                     return (
                       <span key={e.name} style={{ fontSize: 11, background: "#dcfce7", color: "#15803d", borderRadius: 4, padding: "2px 7px", fontFamily: "monospace" }}>
-                        {e.poid || e.system_id || e.name} · {e.site_code || "—"}{extras > 0 && <span style={{ opacity: 0.7 }}> · {extras + 1} executions</span>}
+                        {e.poid || e.system_id || e.name} · {e.site_code || "—"}
+                        {extras > 0 && <span style={{ opacity: 0.7 }}> · {extras + 1} executions</span>}
+                        {/* The line already has a Work Done; this run adds the
+                            outstanding quantity to it as a further closure. */}
+                        {Number(e.remaining_qty) > 0 && e.work_done && (
+                          <span style={{ opacity: 0.8 }}> · adds remaining {e.remaining_qty}</span>
+                        )}
                       </span>
                     );
                   })}
