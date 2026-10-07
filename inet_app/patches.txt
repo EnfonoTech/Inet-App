@@ -34,3 +34,4 @@ inet_app.patches.resync_mapped_dummy_values
 inet_app.patches.drop_work_done_cost_rollup
 inet_app.patches.backfill_closure_subcontractor
 inet_app.patches.backfill_subcontract_allocations
+inet_app.patches.default_feature_switches_on

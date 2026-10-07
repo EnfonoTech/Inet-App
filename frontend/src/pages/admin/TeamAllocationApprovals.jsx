@@ -289,7 +289,7 @@ export default function TeamAllocationApprovals() {
                         {isCancel ? (
                           <>Plan: {r.plan_status || "—"} · {r.plan_date || "—"} · IM: {r.im_name || r.im || "—"} · PO: {r.poid || r.po_dispatch || "—"}</>
                         ) : isPoidCancel ? (
-                          <>SAR {money.format(r.total_amount || 0)} · IM: {r.im || "—"} · {r.poid_list || "—"}</>
+                          <>SAR {money.format(r.total_amount || 0)} · IM: {r.im_full_name || r.im || "—"} · {r.poid_list || "—"}</>
                         ) : isDirectClose ? (
                           <>SAR {money.format(r.total_amount || 0)} · {r.close_type || "—"}{r.milestone ? ` ${r.milestone}` : " full"} · {r.subcontractor || "—"} · {r.poid_list || "—"}</>
                         ) : isTransfer ? (

@@ -610,6 +610,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         for r in rows:
             r["activity_type"] = act_map.get(r.get("item_code") or "")
             r["linked_invoices_csv"] = inv_map.get(r["po_dispatch"])
+        # The per-subcontractor split, so the Subcontract column can show the
+        # "+1" marker and the detail popup the full breakdown. A line with one
+        # supplier gets a one-entry list and renders exactly as before; a line
+        # with none gets no list at all. One batched query for the page.
+        from inet_app.api.subcontractor_sync import attach_allocations
+        attach_allocations(rows, key="po_dispatch")
     return {
         "rows": rows,
         "total_count": total_count,

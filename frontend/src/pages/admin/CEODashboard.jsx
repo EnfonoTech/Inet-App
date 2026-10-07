@@ -151,7 +151,7 @@ export default function CEODashboard() {
         <div className="nd-panel"><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
           <table className="nd-table"><thead><tr><th>IM</th><th>Revenue</th><th>Profit</th></tr></thead><tbody>
             {(im_performance || []).slice(0, 5).map((im) => (
-              <tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {money.format(im.profit || 0)}</td></tr>
+              <tr key={im.im}><td><strong>{im.im_full_name || im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {money.format(im.profit || 0)}</td></tr>
             ))}
           </tbody></table>
         </div></div>

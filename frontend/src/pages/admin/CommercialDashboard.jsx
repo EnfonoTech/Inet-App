@@ -480,7 +480,7 @@ export default function CommercialDashboard() {
               <tbody>
                 {per_im.map((im) => (
                   <tr key={im.im}>
-                    <td><strong style={{ fontSize: 11.5 }}>{im.im}</strong></td>
+                    <td><strong style={{ fontSize: 11.5 }}>{im.im_full_name || im.im}</strong></td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmt.format(im.line_count || 0)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{compactSar(im.invoiced)}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: C.amber }}>{compactSar(im.backlog)}</td>

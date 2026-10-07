@@ -64,6 +64,12 @@ export default function CloseRemainderModal({ row, onClose, onDone }) {
         {...shared}
         imName={row.im}
         qtyOf={(r) => Number(r.remaining_qty ?? r.qty ?? 0)}
+        // Plain "Execution": a remainder plan is a companion of the current
+        // visit like any other, and the visit number advances only when the
+        // user deliberately picks Re-Visit or Extra Visit. The over-sum this
+        // used to cause (15 + 6 reading as 21 on a line already closed at 10)
+        // is fixed where it belonged — in the breakdown, which now counts only
+        // the plans a closure has not already settled.
         defaultVisitType="Execution"
         title={`Plan the remaining ${qtyFmt.format(outstanding)} of ${row.poid || ""}`}
         submitLabel="Create plan"

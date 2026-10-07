@@ -23,6 +23,30 @@ const h = { margin: "0 0 10px", fontSize: "0.92rem", color: "#0f172a" };
 const mono = { fontFamily: "monospace", fontSize: "0.78rem" };
 const dim = { color: "#64748b", fontSize: "0.78rem" };
 
+// Deliberately NOT `className="data-table"`. That class carries
+// `min-width: max-content`, which is what lets DataTablePro's
+// `.data-table-wrapper` scroll a wide table — but these tables have no such
+// wrapper, so the rule just made them burst out of their card and overlap
+// everything beside and below them. A bare <table> still picks up the global
+// th/td padding and borders, so it looks the same without the blow-out.
+const scroll = { overflowX: "auto", margin: "0 -16px", padding: "0 16px" };
+const table = { margin: 0, width: "100%", minWidth: 560, borderCollapse: "collapse" };
+const cell = { whiteSpace: "nowrap", verticalAlign: "middle" };
+
+// `minWidth: 0` is the part that matters: without it a grid item refuses to
+// shrink below its content, so "Saleh Abdul Aziz Al Dosari Contracting Company"
+// pushed straight over the next column. Label above, value wrapping below.
+function Fact({ label, children }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: "0.68rem", textTransform: "uppercase",
+                    letterSpacing: "0.4px", color: "#94a3b8" }}>{label}</div>
+      <div style={{ color: "#0f172a", fontWeight: 600, fontSize: "0.82rem",
+                    overflowWrap: "anywhere" }}>{children}</div>
+    </div>
+  );
+}
+
 function SourceTable({ title, rows, cols, empty }) {
   return (
     <div style={card}>
@@ -30,28 +54,36 @@ function SourceTable({ title, rows, cols, empty }) {
       {!rows?.length ? (
         <div style={dim}>{empty}</div>
       ) : (
-        <table className="data-table" style={{ margin: 0, tableLayout: "fixed", width: "100%" }}>
-          <thead>
-            <tr>{cols.map((c) => (
-              <th key={c.key} style={{ textAlign: c.right ? "right" : "left" }}>{c.label}</th>
-            ))}</tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                {cols.map((c) => (
-                  <td key={c.key} style={{
-                    textAlign: c.right ? "right" : "left",
-                    fontVariantNumeric: c.right ? "tabular-nums" : undefined,
-                    ...(c.mono ? mono : null),
-                  }}>
-                    {c.render ? c.render(r) : (r[c.key] ?? "—")}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div style={scroll}>
+          <table style={table}>
+            <thead>
+              <tr>{cols.map((c) => (
+                <th key={c.key} style={{ ...cell, textAlign: c.right ? "right" : "left" }}>
+                  {c.label}
+                </th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  {cols.map((c) => (
+                    <td key={c.key} style={{
+                      ...cell,
+                      textAlign: c.right ? "right" : "left",
+                      fontVariantNumeric: c.right ? "tabular-nums" : undefined,
+                      // Free text can be long; cap it and show the rest on hover
+                      // rather than letting one cell stretch the whole table.
+                      ...(c.wide ? { whiteSpace: "normal", maxWidth: 260 } : null),
+                      ...(c.mono ? mono : null),
+                    }} title={c.render ? undefined : String(r[c.key] ?? "")}>
+                      {c.render ? c.render(r) : (r[c.key] ?? "—")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -92,7 +124,7 @@ export default function SubconReconcile() {
     try {
       const rows = draft.filter((d) => d.subcontractor && Number(d.qty) > 0);
       adopt(await pmApi.setSubcontractorAllocation(data.line.name, rows, remark || undefined));
-      setMsg("Split saved. It is marked as set by hand, so nothing will re-derive past it.");
+      setMsg("Split saved — set by hand, so nothing will re-derive it.");
       setRemark("");
     } catch (e2) { setErr(e2.message || "Could not save"); }
     finally { setBusy(false); }
@@ -145,7 +177,7 @@ export default function SubconReconcile() {
           value={poid}
           onChange={(e) => setPoid(e.target.value)}
           placeholder="POID or PO Dispatch name"
-          style={{ minWidth: 300, fontFamily: "monospace" }}
+          style={{ flex: "1 1 260px", minWidth: 0, maxWidth: 420, fontFamily: "monospace" }}
         />
         <button type="submit" className="btn-primary" disabled={busy || !poid.trim()}>
           {busy ? "Loading…" : "Open"}
@@ -169,24 +201,27 @@ export default function SubconReconcile() {
                     }}>set by hand</span>
                   )}
                 </h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, ...dim }}>
-                  <div>PO <strong style={{ color: "#0f172a" }}>{line.po_no || "—"}</strong></div>
-                  <div>DUID <strong style={{ color: "#0f172a" }}>{line.site_code || "—"}</strong></div>
-                  <div>Item <strong style={{ color: "#0f172a" }}>{line.item_code || "—"}</strong></div>
-                  <div>IM <strong style={{ color: "#0f172a" }}>{line.im || "—"}</strong></div>
-                  <div>Ordered qty <strong style={{ color: "#0f172a" }}>{qtyFmt.format(Number(line.qty) || 0)}</strong></div>
-                  <div>Confirmed <strong style={{ color: "#0f172a" }}>{line.confirmed_qty ? qtyFmt.format(Number(line.confirmed_qty)) : "—"}</strong></div>
-                  <div>Line amount <strong style={{ color: "#0f172a" }}>SAR {money.format(Number(line.line_amount) || 0)}</strong></div>
-                  <div>Line stamp <strong style={{ color: "#0f172a" }}>{line.contract || "—"}</strong></div>
-                  <div>Status <strong style={{ color: "#0f172a" }}>{line.dispatch_status || "—"}</strong></div>
+                <div style={{ display: "grid",
+                              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                              gap: "10px 14px" }}>
+                  <Fact label="PO">{line.po_no || "—"}</Fact>
+                  <Fact label="DUID">{line.site_code || "—"}</Fact>
+                  <Fact label="Item">{line.item_code || "—"}</Fact>
+                  <Fact label="IM">{line.im || "—"}</Fact>
+                  <Fact label="Ordered qty">{qtyFmt.format(Number(line.qty) || 0)}</Fact>
+                  <Fact label="Confirmed">
+                    {line.confirmed_qty ? qtyFmt.format(Number(line.confirmed_qty)) : "—"}
+                  </Fact>
+                  <Fact label="Line amount">SAR {money.format(Number(line.line_amount) || 0)}</Fact>
+                  <Fact label="Line stamp">{line.contract || "—"}</Fact>
+                  <Fact label="Status">{line.dispatch_status || "—"}</Fact>
                 </div>
                 {data.locked && (
                   <div className="notice error" style={{ marginTop: 12, fontSize: "0.8rem" }}>
                     <span>!</span>
                     <div>
-                      A supplier purchase order has been <strong>submitted</strong> on this line.
-                      The PO is the source of truth — the split cannot be changed in a way that
-                      contradicts it. Cancel or amend that purchase order first.
+                      A supplier PO is <strong>submitted</strong> on this line. Cancel or amend
+                      it before changing the split.
                       <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
                         {Object.entries(data.locks).map(([sub, info]) => (
                           <li key={sub}>{sub} — {qtyFmt.format(Number(info.qty) || 0)} ({info.statuses.join(" / ")})</li>
@@ -200,16 +235,17 @@ export default function SubconReconcile() {
               <div style={card}>
                 <h3 style={h}>The split</h3>
                 <div style={{ ...dim, marginBottom: 10 }}>
-                  Re-divides {qtyFmt.format(expected)} between subcontractors. It does not change how
-                  much was done — that is the confirmation step, which has its own invoicing checks.
+                  Re-divides {qtyFmt.format(expected)} between subcontractors. It does not change
+                  how much was done.
                 </div>
-                <table className="data-table" style={{ margin: 0, tableLayout: "fixed", width: "100%" }}>
+                <div style={scroll}>
+                <table style={{ ...table, tableLayout: "fixed" }}>
                   <thead>
                     <tr>
-                      <th>Subcontractor</th>
-                      <th style={{ width: 120, textAlign: "right" }}>Qty</th>
-                      <th style={{ width: 150, textAlign: "right" }}>Share of amount</th>
-                      <th style={{ width: 60 }} />
+                      <th style={cell}>Subcontractor</th>
+                      <th style={{ ...cell, width: 110, textAlign: "right" }}>Qty</th>
+                      <th style={{ ...cell, width: 150, textAlign: "right" }}>Share of amount</th>
+                      <th style={{ ...cell, width: 48 }} />
                     </tr>
                   </thead>
                   <tbody>
@@ -221,7 +257,7 @@ export default function SubconReconcile() {
                             disabled={busy || data.locked}
                             onChange={(e) => setDraft(draft.map((x, j) =>
                               j === i ? { ...x, subcontractor: e.target.value } : x))}
-                            style={{ width: "100%" }}
+                            style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}
                           >
                             <option value="">— select —</option>
                             {(data.subcontractors || []).map((s) => (
@@ -237,7 +273,8 @@ export default function SubconReconcile() {
                             disabled={busy || data.locked}
                             onChange={(e) => setDraft(draft.map((x, j) =>
                               j === i ? { ...x, qty: e.target.value } : x))}
-                            style={{ width: "100%", textAlign: "right" }}
+                            style={{ width: "100%", minWidth: 0, boxSizing: "border-box",
+                                     textAlign: "right" }}
                           />
                         </td>
                         <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -279,12 +316,13 @@ export default function SubconReconcile() {
                     </tr>
                   </tfoot>
                 </table>
+                </div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
                   <input
                     value={remark} onChange={(e) => setRemark(e.target.value)}
                     placeholder="Why (optional) — goes on the ledger and the status trail"
                     disabled={busy || data.locked}
-                    style={{ flex: "1 1 280px" }}
+                    style={{ flex: "1 1 240px", minWidth: 0 }}
                   />
                   <button type="button" className="btn-primary"
                           disabled={busy || data.locked || !balanced}
@@ -378,7 +416,7 @@ export default function SubconReconcile() {
                   { key: "changed_at", label: "When", render: (r) => (r.changed_at || "").slice(0, 16) },
                   { key: "old_value", label: "From" },
                   { key: "new_value", label: "To" },
-                  { key: "remark", label: "Why" },
+                  { key: "remark", label: "Why", wide: true },
                   { key: "changed_by", label: "By" },
                 ]}
               />

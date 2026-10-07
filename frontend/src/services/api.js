@@ -642,6 +642,10 @@ export const pmApi = {
 
   // Subcontractor reconcile — Administrator only; the server enforces that,
   // the sidebar entry only keeps it out of everyone else's way.
+  // Feature switches (INET Settings). The UI hides what is off; the endpoints
+  // are what actually refuse it.
+  getFeatureFlags: () => call("inet_app.api.features.get_feature_flags"),
+
   getSubcontractorReconcile: (poid) =>
     call("inet_app.api.subcon_reconcile.get_subcontractor_reconcile", { poid }),
   setSubcontractorAllocation: (po_dispatch, allocation, remark) =>

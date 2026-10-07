@@ -54,6 +54,7 @@ export default function RolloutPlanModal({
   const [qcRequired, setQcRequired] = useState(true);
   const [ciagRequired, setCiagRequired] = useState(true);
   const [visitType, setVisitType] = useState(defaultVisitType);
+  const [planQty, setPlanQty] = useState("");
   const [managerRemark, setManagerRemark] = useState("");
   const [planDocUrls, setPlanDocUrls] = useState([]);
   const [creating, setCreating] = useState(false);
@@ -94,6 +95,7 @@ export default function RolloutPlanModal({
     setAccessTime("");
     setAccessPeriod("");
     setVisitType(defaultVisitType);
+    setPlanQty("");
     const fcTeams = [...new Set(rows.map((r) => r.target_team).filter(Boolean))];
     setPlanTeam(fcTeams.length === 1 ? fcTeams[0] : "");
     const fcDates = [...new Set(rows.map((r) => r.target_date).filter(Boolean))];
@@ -136,7 +138,15 @@ export default function RolloutPlanModal({
   }, [open, rows]);
 
   const createPlanDuids = [...new Set(rows.map((r) => r.site_code || r.name).filter(Boolean))];
-  const createPlanTotalQty = rows.reduce((s, r) => s + Number(qtyOf(r) || 0), 0);
+  const lineTotalQty = rows.reduce((s, r) => s + Number(qtyOf(r) || 0), 0);
+  // How much of the line THIS plan covers. The whole of it by default, which
+  // is what every plan did before this existed. Offered on a single line only:
+  // across a bulk selection one number has no shared meaning, and each line
+  // keeps its own quantity.
+  const singleLine = rows.length === 1;
+  const createPlanTotalQty = singleLine && planQty !== "" && Number(planQty) > 0
+    ? Number(planQty)
+    : lineTotalQty;
   const selectedAmt = rows.reduce((s, r) => s + Number(r.line_amount || 0), 0);
   const planTeamsAssignedQty = (planTeams || [])
     .filter((r) => r.team)
@@ -172,12 +182,31 @@ export default function RolloutPlanModal({
     try {
       const dispatches = rows.map((r) => r.name);
       const validExtras = (planTeams || []).filter((r) => r.team);
+      // `assigned_qty: 0` on the lead team means "give it whatever is left of
+      // the LINE" — _sync_plan_teams auto-distributes the remainder across any
+      // row left at zero. That is right when the plan covers the whole line,
+      // and wrong the moment it covers only part of it, so a partial plan
+      // states the lead team's share outright.
+      const partialPlan = singleLine && createPlanTotalQty < lineTotalQty - 0.00005;
+      const leadShare = Math.max(0, createPlanTotalQty - planTeamsAssignedQty);
+      // ONE plan is created per selected line, and this payload goes to every
+      // one of them. So a typed quantity only means something on a single
+      // line: planning two 1-unit lines with "Irfan 1, Sharban 1" sent BOTH
+      // teams' full quantities to BOTH lines — each plan read as 2 on a line
+      // of 1, and the lead team ended up with 0 on both. Across several lines
+      // the teams are sent at zero, which is _sync_plan_teams' instruction to
+      // divide each line's own quantity between them.
       const teamsPayload = validExtras.length > 0
         ? [
-            ...(validExtras.some((r) => r.team === planTeam) ? [] : [{ team: planTeam, assigned_qty: 0 }]),
-            ...validExtras.map((r) => ({ team: r.team, assigned_qty: Number(r.assigned_qty) || 0 })),
+            ...(validExtras.some((r) => r.team === planTeam)
+              ? []
+              : [{ team: planTeam, assigned_qty: partialPlan ? leadShare : 0 }]),
+            ...validExtras.map((r) => ({
+              team: r.team,
+              assigned_qty: singleLine ? (Number(r.assigned_qty) || 0) : 0,
+            })),
           ]
-        : [];
+        : (partialPlan ? [{ team: planTeam, assigned_qty: leadShare }] : []);
       const result = await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
@@ -291,6 +320,32 @@ export default function RolloutPlanModal({
           </div>
         </div>
 
+        {/* How much of the line this plan covers. Blank = all of it, which is
+            what every plan did before this field existed. */}
+        {singleLine && lineTotalQty > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, marginBottom: 6, color: "#475569" }}>
+              Qty for this plan
+            </label>
+            <input
+              type="number" min="0" max={lineTotalQty} step="any"
+              value={planQty}
+              placeholder={`All ${qty.format(lineTotalQty)}`}
+              onChange={(e) => setPlanQty(e.target.value)}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e2e8f0", boxSizing: "border-box" }}
+            />
+            <div style={{ marginTop: 4, fontSize: "0.74rem",
+                          color: createPlanTotalQty > lineTotalQty + 0.00005 ? "#b91c1c" : "#64748b" }}>
+              {createPlanTotalQty > lineTotalQty + 0.00005
+                ? `The line only carries ${qty.format(lineTotalQty)}.`
+                : createPlanTotalQty < lineTotalQty - 0.00005
+                  ? `${qty.format(createPlanTotalQty)} of ${qty.format(lineTotalQty)} · `
+                    + `${qty.format(lineTotalQty - createPlanTotalQty)} left to plan later`
+                  : "Covers the whole line. Leave blank for this."}
+            </div>
+          </div>
+        )}
+
         {/* Optional multi-team split */}
         <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -309,6 +364,13 @@ export default function RolloutPlanModal({
             background: planTeamsRemaining < 0 ? "#fef2f2" : "#eef2ff",
             border: planTeamsRemaining < 0 ? "1px solid #fecaca" : "1px solid #c7d2fe",
           }}>
+            {!singleLine && (
+              <div style={{ color: "#b45309", fontWeight: 600, marginBottom: 4 }}>
+                {rows.length} lines selected — each gets its own plan, and each
+                line's quantity is divided evenly between the teams. Per-team
+                quantities apply to a single line only.
+              </div>
+            )}
             Total qty <strong>{qty.format(createPlanTotalQty)}</strong>
             {" · Assigned to extras "}
             <strong>{fmt.format(planTeamsAssignedQty)}</strong>
@@ -345,13 +407,16 @@ export default function RolloutPlanModal({
                     type="text"
                     inputMode="decimal"
                     pattern="[0-9]*\.?[0-9]*"
-                    value={row.assigned_qty ?? ""}
+                    value={singleLine ? (row.assigned_qty ?? "") : ""}
+                    disabled={!singleLine}
+                    title={singleLine ? undefined
+                      : "Per-team quantities apply to a single line. With several selected, each line's quantity is divided evenly."}
                     onChange={(e) => {
                       const v = e.target.value;
                       if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
                       setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: v } : x));
                     }}
-                    placeholder="Qty"
+                    placeholder={singleLine ? "Qty" : "split evenly"}
                     style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
                   />
                   <button

@@ -181,10 +181,17 @@ export function primarySubcontractor(rows, fallback) {
   ).subcontractor;
 }
 
-/** Table cell: today's value, plus a muted marker when the line is split. */
+/** Table cell: today's value, plus a muted marker when the line is split.
+ *
+ * The NAME is whatever the row already resolved — `fallback` — not the biggest
+ * allocation. The column filter builds its options from that same SQL column,
+ * and a cell that renders a different name than the filter offers is the
+ * single most repeated bug on these tables. The marker carries the extra
+ * information instead; the View popup carries the detail.
+ */
 export function SubcontractorCell({ rows, fallback }) {
   const list = Array.isArray(rows) ? rows.filter((r) => r && r.subcontractor) : [];
-  const name = primarySubcontractor(list, fallback);
+  const name = fallback || primarySubcontractor(list, fallback);
   if (!name) return <span style={{ color: "#94a3b8" }}>—</span>;
   const extra = list.length - 1;
   return (
@@ -220,8 +227,10 @@ export function SubcontractorSplitTable({ rows, rate, compact = false }) {
       <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", marginBottom: 6, letterSpacing: 0.4 }}>
         SUBCONTRACTORS ({list.length})
       </div>
-      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+      {/* overflowX, not hidden: five columns in a narrow popup clipped the
+          milestone badges off the right-hand edge with no way to reach them. */}
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflowX: "auto", background: "#fff" }}>
+        <table style={{ width: "100%", minWidth: 420, borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
             <tr style={{ background: "#f8fafc", color: "#475569", fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: 0.4 }}>
               <th style={{ textAlign: "left", padding: pad }}>Subcontractor</th>
@@ -234,15 +243,19 @@ export function SubcontractorSplitTable({ rows, rate, compact = false }) {
           <tbody>
             {list.map((r, i) => (
               <tr key={r.subcontractor} style={{ borderTop: i === 0 ? "none" : "1px solid #f1f5f9" }}>
-                <td style={{ padding: pad, fontWeight: 600, color: "#0f172a" }}>{r.subcontractor}</td>
-                <td style={{ padding: pad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                <td style={{ padding: pad, fontWeight: 600, color: "#0f172a", minWidth: 150 }}>
+                  {r.subcontractor}
+                </td>
+                <td style={{ padding: pad, textAlign: "right", whiteSpace: "nowrap",
+                             fontVariantNumeric: "tabular-nums" }}>
                   {Number(r.qty ?? 0)}
                 </td>
-                <td style={{ padding: pad, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                <td style={{ padding: pad, textAlign: "right", whiteSpace: "nowrap",
+                             fontVariantNumeric: "tabular-nums" }}>
                   {money(r.amount)}
                 </td>
-                <td style={{ padding: pad }}><SubPoStatusBadge value={r.sub_po_status_ms1} /></td>
-                <td style={{ padding: pad }}><SubPoStatusBadge value={r.sub_po_status_ms2} /></td>
+                <td style={{ padding: pad, whiteSpace: "nowrap" }}><SubPoStatusBadge value={r.sub_po_status_ms1} /></td>
+                <td style={{ padding: pad, whiteSpace: "nowrap" }}><SubPoStatusBadge value={r.sub_po_status_ms2} /></td>
               </tr>
             ))}
           </tbody>

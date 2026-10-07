@@ -15,7 +15,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "./picShared";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -445,7 +445,7 @@ export default function PICPending() {
                   <td onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                   </td>
-                  <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}><SubcontractorCell rows={r.subcontract_allocations} fallback={r.subcontractor} /></td>
                   <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                   <td>{r.po_no || "—"}</td>

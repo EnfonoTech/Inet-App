@@ -4,6 +4,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { pmApi } from "../../services/api";
+import useFeatureFlags from "../../hooks/useFeatureFlags";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import useFilterOptions from "../../hooks/useFilterOptions";
@@ -11,7 +12,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import CloseRemainderModal from "../../components/CloseRemainderModal";
-import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge } from "../../components/ConfirmedQtyFields";
+import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge, remainderActionFor } from "../../components/ConfirmedQtyFields";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import RemarksCell from "../../components/RemarksCell";
@@ -388,6 +389,7 @@ export default function WorkDone() {
   const [confirmAlloc, setConfirmAlloc] = useState(null);
   const [decideFor, setDecideFor] = useState(null);
   const [closeRemainderFor, setCloseRemainderFor] = useState(null);
+  const { enabled: featureOn } = useFeatureFlags();
   const [decideBusy, setDecideBusy] = useState(false);
   const [decideErr, setDecideErr] = useState(null);
 
@@ -402,8 +404,13 @@ export default function WorkDone() {
     try {
       await pmApi.setRemainingQtyAction(decideFor.po_dispatch || decideFor.system_id, action);
       setDecideFor(null);
-      loadData();
-      if (openAfter) setCloseRemainderFor(openAfter);
+      if (openAfter) {
+        // Straight into the closing form — reloading first only flashed the
+        // table behind the dialog, and the close reloads when it finishes.
+        setCloseRemainderFor(openAfter);
+      } else {
+        loadData();
+      }
     } catch (e) {
       setDecideErr(e?.message || "Failed to save");
     } finally {
@@ -582,6 +589,13 @@ export default function WorkDone() {
 
   const [refreshKey, setRefreshKey] = useState(0);
   const loadData = useCallback(() => setRefreshKey((k) => k + 1), []);
+  // A reload the skip-refetch guard cannot sit out: after a close the row's
+  // numbers change while every filter stays identical, which is exactly the
+  // shape the guard skips. Clearing the cache makes the refetch unconditional.
+  const forceReload = useCallback(() => {
+    lastFetchRef.current = { signature: null, limit: null, rows: [] };
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   async function submitBulk() {
     setBulkBusy(true);
@@ -1370,9 +1384,11 @@ export default function WorkDone() {
                       style={idx >= displayLimit ? { display: "none" } : {
                         ...(row.is_dummy_po ? { background: "#fffbeb" } : {}),
                         // Confirmed short with no decision on the leftover —
-                        // stands out until someone answers it.
+                        // stands out until someone answers it. Indigo, NOT the
+                        // amber above: that is the dummy-PO tint, and two
+                        // meanings in one colour is no signal at all.
                         ...(Number(row.remaining_qty) > 0 && !row.remaining_qty_action
-                          ? { background: "#fffbeb", boxShadow: "inset 3px 0 0 #f59e0b" }
+                          ? { background: "#eef2ff", boxShadow: "inset 3px 0 0 #6366f1" }
                           : {}),
                         cursor: "pointer",
                       }}
@@ -1696,7 +1712,7 @@ export default function WorkDone() {
         <CloseRemainderModal
           row={closeRemainderFor}
           onClose={() => setCloseRemainderFor(null)}
-          onDone={loadData}
+          onDone={forceReload}
         />
       )}
 
@@ -1714,7 +1730,12 @@ export default function WorkDone() {
             </div>
             {decideErr && <div className="notice error" style={{ marginBottom: 10 }}>{decideErr}</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {REMAINING_ACTIONS.filter((a) => !a.hidden).map((a) => (
+              {REMAINING_ACTIONS.filter((a) => !a.hidden
+                && (!a.routes || a.routes.includes((decideFor.source || "").trim()))
+                // A route the business has switched off is not offered: the
+                // form behind it would only be refused by the endpoint.
+                && (!a.feature || featureOn(a.feature(decideFor.source)))
+              ).map((a0) => remainderActionFor(a0, decideFor.source)).map((a) => (
                 <button key={a.value} type="button" disabled={decideBusy}
                         onClick={() => decideRemaining(a.value)}
                         style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#fff", cursor: decideBusy ? "default" : "pointer", width: "100%" }}>

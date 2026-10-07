@@ -16,7 +16,13 @@
   "expense_tax_account",
   "subcon_po_section",
   "purchase_tax_template",
-  "subcon_po_schedule_days"
+  "subcon_po_schedule_days",
+  "feature_section",
+  "enable_direct_close",
+  "enable_backend_assign",
+  "feature_column",
+  "enable_partial_close",
+  "enable_subcontractor_split"
  ],
  "fields": [
   {
@@ -98,6 +104,39 @@
    "fieldname": "subcon_po_schedule_days",
    "fieldtype": "Int",
    "label": "Subcon PO Required-By Days"
+  },
+  {
+   "fieldname": "feature_section",
+   "fieldtype": "Section Break",
+   "label": "Features"
+  },
+  {
+   "fieldname": "enable_direct_close",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Direct Close"
+  },
+  {
+   "fieldname": "enable_backend_assign",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Backend Assign"
+  },
+  {
+   "fieldname": "feature_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "enable_partial_close",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Partial Quantity Close"
+  },
+  {
+   "fieldname": "enable_subcontractor_split",
+   "fieldtype": "Check",
+   "default": "1",
+   "label": "Subcontractor Quantity Split"
   }
  ],
  "index_web_pages_for_search": 1,

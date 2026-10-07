@@ -205,7 +205,7 @@ export default function OpsDashboard() {
         <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
           <div className="nd-panel" style={{ flex: 1 }}><div className="nd-panel-header"><h3>IM Performance</h3></div><div className="nd-panel-body">
             <table className="nd-table"><thead><tr><th>IM</th><th style={{ textAlign: "right" }}>Revenue</th><th style={{ textAlign: "right" }}>Profit</th></tr></thead><tbody>
-              {(im_performance || []).slice(0, 5).map((im) => (<tr key={im.im}><td><strong>{im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {money.format(im.profit || 0)}</td></tr>))}
+              {(im_performance || []).slice(0, 5).map((im) => (<tr key={im.im}><td><strong>{im.im_full_name || im.im || "—"}</strong></td><td style={{ textAlign: "right" }}>SAR {money.format(im.revenue || 0)}</td><td style={{ textAlign: "right", color: (im.profit || 0) >= 0 ? C.green : C.red }}>SAR {money.format(im.profit || 0)}</td></tr>))}
             </tbody></table>
           </div></div>
         </div>

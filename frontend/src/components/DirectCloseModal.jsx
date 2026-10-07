@@ -4,6 +4,7 @@ import { pmApi } from "../services/api";
 import { missingImRows, imRequiredMessage } from "../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../utils/requiredFields";
 import { money } from "../utils/numberFormat";
+import useFeatureFlags from "../hooks/useFeatureFlags";
 
 /**
  * Close lines directly, with or without a milestone scope.
@@ -21,6 +22,7 @@ export default function DirectCloseModal({
   open, rows = [], huaweiIms = [], projectDomains = [],
   onClose, onDone,
 }) {
+  const { enabled } = useFeatureFlags();
   const [dcNote, setDcNote] = useState("");
   const [dcType, setDcType] = useState("INET");
   const [dcSubcontractor, setDcSubcontractor] = useState("");
@@ -51,7 +53,13 @@ export default function DirectCloseModal({
   // A partial quantity only means something on ONE line — across a mixed
   // selection "close 2" has no shared referent.
   const singleRow = rows.length === 1 ? rows[0] : null;
-  const fullQty = Number(singleRow?.remaining_qty ?? singleRow?.qty ?? 0) || 0;
+  // `??` was wrong here: `remaining_qty` is a real field that is 0 on a line
+  // with nothing outstanding, which is most of them — and `0 ?? qty` keeps the
+  // 0, so the quantity box silently vanished on any caller that passes the
+  // field through. Only a POSITIVE outstanding quantity should win; otherwise
+  // the ordered quantity is what can be closed.
+  const outstanding = Number(singleRow?.remaining_qty) || 0;
+  const fullQty = outstanding > 0 ? outstanding : (Number(singleRow?.qty) || 0);
   useEffect(() => {
     if (!open || rows.length === 0) { setDcPreflight(null); return; }
     let cancelled = false;
@@ -98,7 +106,10 @@ export default function DirectCloseModal({
     setDcType("INET");
     setDcSubcontractor("");
     setDcMilestone("full");
-    setDcQty(rows.length === 1 ? String(Number(rows[0]?.remaining_qty ?? rows[0]?.qty ?? "") || "") : "");
+    const _out = Number(rows[0]?.remaining_qty) || 0;
+    setDcQty(rows.length === 1
+      ? String((_out > 0 ? _out : Number(rows[0]?.qty)) || "")
+      : "");
     setDcClosedOn(todayDate());
     // Pre-fill only where every row agrees, so a mixed batch is not silently
     // unified under one row's value.
@@ -180,6 +191,7 @@ export default function DirectCloseModal({
   // was typed is not a usable quantity. Closing the full amount sends nothing,
   // so the common path stays byte-identical to before.
   function closeQtyToSend() {
+    if (!enabled("enable_partial_close")) return null;
     if (!singleRow || dcQty === "") return null;
     const n = Number(dcQty);
     if (!Number.isFinite(n) || n <= 0) return false;
@@ -312,32 +324,6 @@ export default function DirectCloseModal({
                 </div>
               );
             })()}
-            {singleRow && fullQty > 0 && (() => {
-              const partial = closeQtyToSend();
-              const left = typeof partial === "number" ? fullQty - partial : 0;
-              return (
-                <div className="form-group" style={{ marginBottom: 10 }}>
-                  <label>Quantity to close</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={fullQty}
-                    value={dcQty}
-                    onChange={(e) => setDcQty(e.target.value)}
-                    disabled={dcBusy}
-                    style={{ width: "100%" }}
-                  />
-                  <div style={{ marginTop: 4, fontSize: "0.76rem", color: left > 0 ? "#b45309" : "#64748b" }}>
-                    {partial === false
-                      ? `Enter between 0 and ${fullQty}.`
-                      : left > 0
-                        ? `Closes ${partial} of ${fullQty} — ${Number(left.toFixed(4))} stays outstanding and can be closed later, to this or another subcontractor.`
-                        : `Closes the whole line (${fullQty}).`}
-                  </div>
-                </div>
-              );
-            })()}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
               <div className="form-group" style={{ marginBottom: 10 }}>
                 <label>Huawei IM</label>
@@ -364,16 +350,42 @@ export default function DirectCloseModal({
                 />
               </div>
             </div>
-            <div className="form-group" style={{ marginBottom: 10 }}>
-              <label>Closing Date *</label>
-              <input
-                type="date"
-                value={dcClosedOn}
-                max={todayDate()}
-                onChange={(e) => setDcClosedOn(e.target.value)}
-                disabled={dcBusy}
-                style={{ width: "100%" }}
-              />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 12px" }}>
+              {singleRow && fullQty > 0 && enabled("enable_partial_close") && (() => {
+                const partial = closeQtyToSend();
+                const left = typeof partial === "number" ? fullQty - partial : 0;
+                return (
+                  <div className="form-group" style={{ marginBottom: 10 }}>
+                    <label>Quantity to close</label>
+                    <input
+                      type="number" step="0.01" min="0" max={fullQty}
+                      value={dcQty}
+                      onChange={(e) => setDcQty(e.target.value)}
+                      disabled={dcBusy}
+                      style={{ width: "100%", boxSizing: "border-box" }}
+                    />
+                    <div style={{ marginTop: 4, fontSize: "0.74rem",
+                                  color: left > 0 ? "#b45309" : "#64748b" }}>
+                      {partial === false
+                        ? `Enter 0–${fullQty}.`
+                        : left > 0
+                          ? `${partial} of ${fullQty} · ${Number(left.toFixed(4))} left open`
+                          : "Whole line"}
+                    </div>
+                  </div>
+                );
+              })()}
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label>Closing Date *</label>
+                <input
+                  type="date"
+                  value={dcClosedOn}
+                  max={todayDate()}
+                  onChange={(e) => setDcClosedOn(e.target.value)}
+                  disabled={dcBusy}
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+              </div>
             </div>
             <div className="form-group" style={{ marginBottom: 10 }}>
               <label>Note (optional)</label>

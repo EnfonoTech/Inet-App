@@ -601,9 +601,22 @@ def _batch_resolve_subcontracts(po_dispatch_names):
                    pd.pic_status, pd.pic_status_ms2,
                    pd.sub_po_amount_ms1, pd.sub_po_amount_ms2,
                    sm.name AS subcontract, sm.type AS contract_type,
-                   sm.supplier, sm.sub_payout_pct, sm.contract_model, sm.status AS contract_status
+                   sm.supplier, sm.sub_payout_pct, sm.contract_model, sm.status AS contract_status,
+                   -- The supplier's OWN share of the line. Without it the PO
+                   -- was raised for the whole line quantity: 121 units ordered
+                   -- from a subcontractor who did 50 of them.
+                   alloc.qty AS alloc_qty,
+                   (SELECT COUNT(*) FROM `tabPO Subcontract Allocation` a2
+                     WHERE a2.parent = pd.name AND a2.parenttype = 'PO Dispatch') AS alloc_count
             {_SUBCON_FROM_JOIN}
             WHERE pd.name IN ({ph})
+            -- A split line yields one row per supplier here, and only one of
+            -- them survives into the dict below. Ordering puts the PAYABLE one
+            -- last so it wins: an INET contract never gets a supplier PO, so
+            -- letting row order decide meant the PO sometimes resolved to the
+            -- in-house leg and the line was skipped as "INET-type contract".
+            ORDER BY CASE WHEN IFNULL(sm.type,'') = 'SUB' THEN 1 ELSE 0 END,
+                     IFNULL(alloc.qty, 0)
             """,
             tuple(chunk),
             as_dict=True,
@@ -754,9 +767,17 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         "site_name": "IFNULL(pd.site_name,'')",
         "item": "IFNULL(pd.item_code,'')",
         "description": "IFNULL(pd.item_description,'')",
-        "qty": "CAST(pd.qty AS CHAR)",
+        # These two columns render THIS SUPPLIER'S share, not the line's, so
+        # the filter has to offer the same numbers. Offering 121 for a cell
+        # that reads 50 is the "filter must match what the cell renders" trap:
+        # picking the only value on offer returned nothing the user could see.
+        # Trailing zeros trimmed so the dropdown reads "50", the way the cell
+        # does. ROUND(...,4) alone offered "50.0000" against a cell showing
+        # "50" — the filter worked, but the user has to recognise the value.
+        "qty": ("TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM "
+                f"CAST(ROUND(IFNULL(pd.qty,0) * ({ALLOC_SHARE_SQL}), 4) AS CHAR)))"),
         "unit_price": "CAST(pd.rate AS CHAR)",
-        "line_amount": "CAST(pd.line_amount AS CHAR)",
+        "line_amount": f"CAST(ROUND(IFNULL(pd.line_amount,0) * ({ALLOC_SHARE_SQL}), 2) AS CHAR)",
         "subcontract": "IFNULL(sm.subcontractor_name,'')",
         "contract_model": "IFNULL(sm.contract_model,'')",
         "supplier": "IFNULL(sm.supplier,'')",
@@ -920,7 +941,14 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
           COALESCE(NULLIF(pd.poid,''), pd.name) AS poid,
           pd.po_no, pd.po_line_no,
           pd.item_code, pd.item_description,
-          pd.qty, pd.rate, pd.line_amount, pd.tax_rate,
+          pd.qty, pd.rate, pd.tax_rate,
+          -- This supplier's share of the line. Every other money column on
+          -- this row is already share-weighted (ms1_amount, ms2_amount), so a
+          -- full-line 968.00 sitting beside a share of 400.00 read as a
+          -- contradiction. `full_line_amount` keeps the whole figure for the
+          -- popup, which is where the comparison belongs.
+          ROUND(IFNULL(pd.line_amount, 0) * ({ALLOC_SHARE_SQL}), 2) AS line_amount,
+          IFNULL(pd.line_amount, 0) AS full_line_amount,
           pd.project_code, proj.project_name,
           pd.site_code, pd.site_name, pd.center_area, pd.region_type,
           pd.im, imm.full_name AS im_full_name,
@@ -1004,6 +1032,12 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
             r["purchase_orders_csv"] = docs.get("po")
             r["purchase_invoices_csv"] = docs.get("pi")
             r["supplier_missing"] = 1 if not (r.get("supplier") or "").strip() else 0
+        # The whole line's split, including the legs this page does not show.
+        # A row here is one PAYABLE supplier, so a line shared with an INET
+        # crew appears as a single row with nothing to say it is a share — the
+        # marker and the View popup need the other legs to say so.
+        from inet_app.api.subcontractor_sync import attach_allocations
+        attach_allocations(rows, key="po_dispatch")
 
     return {
         "rows": rows,
@@ -1105,7 +1139,11 @@ def _po_item_pricing(pd_row, milestone, payout_pct, precision):
     """
     n = _ms_num(milestone)
     ms_pct = flt(pd_row.get(f"ms{n}_pct") or 0)
-    full_qty = flt(pd_row.get("qty") or 1) or 1
+    # THIS SUPPLIER'S quantity, not the line's. On a line split 71 INET / 50
+    # Jareesh, the supplier PO must be for 50 — it used to be raised for all
+    # 121, ordering a subcontractor more than twice the work they did.
+    # Milestone scaling then applies on top, as it always has.
+    full_qty = flt(pd_row.get("alloc_qty") or 0) or flt(pd_row.get("qty") or 1) or 1
     full_rate = flt(pd_row.get("rate") or 0)
 
     qty = round(full_qty * ms_pct / 100.0, 6) if ms_pct > 0 else full_qty

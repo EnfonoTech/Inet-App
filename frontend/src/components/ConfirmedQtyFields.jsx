@@ -28,6 +28,22 @@ import { pmApi } from "../services/api";
  * it restores the line's full ordered value as the invoice base, because the
  * customer has agreed to pay for the part that was never delivered.
  */
+// What "close the rest" means for a line, by the route that closed it first.
+// _remainder_close enforces same-route-only, so this is a statement of fact,
+// not a choice the user gets to make.
+const REMAINDER_ROUTE_LABEL = {
+  "Direct Close": "Direct Close",
+  "Backend": "Backend assign",
+  "Rollout Execution": "a new plan",
+};
+
+export function remainderActionFor(action, source) {
+  // Returns the action unchanged unless it is the "close the rest" one.
+  const route = REMAINDER_ROUTE_LABEL[(source || "").trim()];
+  if (action.value !== "Pending \u2013 to be worked" || !route) return action;
+  return { ...action, effect: `Opens ${route}. Can go to a different subcontractor.` };
+}
+
 export const REMAINING_ACTIONS = [
   {
     value: "Cancelled",
@@ -37,14 +53,26 @@ export const REMAINING_ACTIONS = [
   },
   {
     value: "Pending – to be worked",
-    label: "Plan remaining",
-    effect: "Line stays open for another visit. Confirm again when it is done.",
+    label: "Close remaining",
+    // Filled in per row by remainderActionFor(): a line is closed again by the
+    // route that closed it first, so naming that route is the useful part.
+    effect: "Close the rest of this line.",
     billsFull: false,
-    // Hidden from the chooser while the planning side of this is unfinished.
-    // The entry stays so lines already marked this way still render their
-    // badge and so set_remaining_qty_action keeps accepting the value —
-    // only the button is withdrawn.
-    hidden: true,
+    // A POID is closed again by the SAME route that closed it first
+    // (_remainder_close and _require_no_shortcut_close both enforce that), so
+    // this list is about which closing dialogs are finished — all three now
+    // are. Rollout was held back until the planning side was exercised: a
+    // remainder plan takes team rows like any other, so the leftover can be
+    // split across suppliers again rather than going to one.
+    routes: ["Direct Close", "Backend", "Rollout Execution"],
+    // Which switch governs the form this opens, by route. Rollout planning is
+    // the core track and has no switch — it is not something to turn off.
+    feature: (source) => {
+      const s = (source || "").trim();
+      if (s === "Backend") return "enable_backend_assign";
+      if (s === "Direct Close") return "enable_direct_close";
+      return null;
+    },
   },
   {
     value: "Pending – to be invoiced",
@@ -90,7 +118,9 @@ export function RemainderBadge({ remainingQty, action, onClick, fmt }) {
   const chosen = REMAINING_ACTIONS.find((a) => a.value === action);
   const n = fmt ? fmt.format(qty) : qty;
   const tone = !chosen
-    ? { bg: "#fef3c7", bd: "#fcd34d", fg: "#92400e", text: `${n} left` }
+    // Indigo for "undecided", matching the row tint. Amber is the dummy-PO
+    // colour elsewhere on this table, so it cannot also mean this.
+    ? { bg: "#e0e7ff", bd: "#c7d2fe", fg: "#4338ca", text: `${n} left` }
     : chosen.value === "Cancelled"
       ? { bg: "#fee2e2", bd: "#fecaca", fg: "#b91c1c", text: `${n} cancelled` }
       : chosen.billsFull
@@ -164,15 +194,29 @@ export default function ConfirmedQtyFields({
 
   const splitMode = subRows.length > 1;
 
+  // What the team leads reported across the split, for the variance note. Not
+  // a limit on anything — the IM's confirmation is the payable figure.
+  const achievedTotal = useMemo(
+    () => Math.round(subRows.reduce((s, r) => s + (Number(r.achieved) || 0), 0) * 10000) / 10000,
+    [subRows],
+  );
+
   // Seed the grid from what the IM assigned at planning, once, when the rows
-  // first arrive. A supplier already settled by an earlier closure is seeded
-  // at that closed figure and locked — allocations freeze once written.
+  // first arrive.
+  //
+  // A supplier already settled by an earlier closure is seeded at that closed
+  // figure PLUS whatever this visit assigns them. Seeding at the closed figure
+  // alone — and freezing the row — meant a line part-closed at 23 could never
+  // record the remaining 7: both rows sat locked at what they had already been
+  // paid, and the total could not move. What is settled is a FLOOR, not the
+  // answer: the ledger writes each leg as the delta over what it already
+  // holds, so raising a row adds a closure rather than rewriting one.
   useEffect(() => {
     if (!splitMode || !onAllocationChange) return;
     if (allocation && allocation.length) return;
     onAllocationChange(subRows.map((r) => ({
       subcontractor: r.subcontractor || "",
-      qty: Number(r.closed) > 0 ? Number(r.closed) : Number(r.assigned) || 0,
+      qty: (Number(r.closed) || 0) + (Number(r.assigned) || 0),
     })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splitMode, subRows]);
@@ -300,8 +344,7 @@ export default function ConfirmedQtyFields({
             </span>
           </div>
           <div style={{ fontSize: "0.76rem", color: "#64748b", margin: "6px 0 8px" }}>
-            More than one subcontractor worked this line. What you enter here is what each is
-            paid on — the total becomes the confirmed quantity.
+            What each subcontractor is paid on.
           </div>
 
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
@@ -323,7 +366,11 @@ export default function ConfirmedQtyFields({
                 {subRows.map((r, i) => {
                   const sub = r.subcontractor || "";
                   const leg = (allocation || []).find((a) => a.subcontractor === sub);
-                  const locked = Number(r.closed) > 0;
+                  // Settled quantity is a FLOOR, not a freeze: it cannot be
+                  // taken back, but more can be added on a later visit.
+                  const settled = Number(r.closed) || 0;
+                  const belowFloor = settled > 0
+                    && Number(leg?.qty ?? 0) < settled - 0.00005;
                   const assigned = Number(r.assigned) || 0;
                   const achieved = Number(r.achieved) || 0;
                   // Achieved is the TLs' number and never the payout basis, so
@@ -333,13 +380,15 @@ export default function ConfirmedQtyFields({
                   return (
                     <tr key={sub || "(none)"} style={{
                       borderTop: i === 0 ? "none" : "1px solid #f1f5f9",
-                      background: locked ? "#f8fafc" : undefined,
+                      background: settled > 0 ? "#f8fafc" : undefined,
                     }}>
                       <td style={{ padding: "6px 10px", fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub}>
                         {sub || <em style={{ color: "#94a3b8", fontWeight: 400 }}>No subcontractor</em>}
-                        {locked && (
-                          <span style={{ marginLeft: 6, fontSize: "0.64rem", fontWeight: 700, color: "#64748b" }} title="Already closed — frozen">
-                            LOCKED
+                        {settled > 0 && (
+                          <span style={{ marginLeft: 6, fontSize: "0.64rem", fontWeight: 700,
+                                         color: belowFloor ? "#b91c1c" : "#64748b" }}
+                                title={`${settled} already closed — cannot go below it`}>
+                            {settled} CLOSED
                           </span>
                         )}
                       </td>
@@ -360,18 +409,20 @@ export default function ConfirmedQtyFields({
                       </td>
                       <td style={{ padding: "4px 10px", textAlign: "right" }}>
                         <input
-                          type="number" min="0" step="any"
+                          type="number" min={settled || 0} step="any"
                           value={leg?.qty ?? ""}
-                          disabled={disabled || locked}
+                          disabled={disabled}
                           onChange={(e) => setLegQty(sub, e.target.value)}
                           style={{
                             width: "100%", padding: "5px 7px", textAlign: "right",
                             border: "1px solid #e2e8f0", borderRadius: 6, fontSize: "0.84rem",
                             fontVariantNumeric: "tabular-nums",
-                            background: locked ? "#f1f5f9" : "#fff",
-                            color: locked ? "#94a3b8" : undefined,
+                            background: "#fff",
+                            borderColor: belowFloor ? "#fca5a5" : "#e2e8f0",
                           }}
-                          title={locked ? "Already closed — frozen" : undefined}
+                          title={settled > 0
+                            ? `${settled} is already closed and cannot be reduced`
+                            : undefined}
                         />
                       </td>
                     </tr>
@@ -396,6 +447,17 @@ export default function ConfirmedQtyFields({
 
           {allocTone.hint && (
             <div style={{ marginTop: 6, fontSize: "0.76rem", color: allocTone.fg }}>{allocTone.hint}</div>
+          )}
+
+          {/* A note, never a block. The confirmed quantity is the IM's
+              decision and is not validated against what the teams reported —
+              they may confirm less (a short delivery) or more (work the TLs
+              under-reported). Saying so beats silently differing. */}
+          {achievedTotal > 0 && Math.abs(allocTotal - achievedTotal) > 0.00005 && (
+            <div style={{ marginTop: 6, fontSize: "0.76rem", color: "#64748b" }}>
+              Teams reported <strong>{achievedTotal}</strong>
+              {allocTotal > achievedTotal ? " — confirming more." : " — confirming less."}
+            </div>
           )}
         </div>
       )}

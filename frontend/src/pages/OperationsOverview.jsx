@@ -114,7 +114,7 @@ export default function OperationsOverview() {
                             <td>{d.po_no}</td>
                             <td>{d.site_code}</td>
                             <td>{d.item_code}</td>
-                            <td>{d.im || "—"}</td>
+                            <td>{d.im_full_name || d.im || "—"}</td>
                             <td>{d.dispatch_status}</td>
                           </tr>
                         ))}

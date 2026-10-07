@@ -34,6 +34,7 @@ from frappe.utils import (
     time_diff_in_seconds,
 )
 from inet_app.roles import ADMIN_ROLES, PM_LEVEL_ROLES, is_admin
+from inet_app.api.features import feature_enabled, require_feature
 from inet_app.api.subcontractor_sync import (
     ALLOC_JOIN_SQL,
     ALLOC_SHARE_SQL,
@@ -7842,6 +7843,59 @@ def update_execution(payload):
         except Exception:
             pass
 
+    # Work cannot be dated before the plan it belongs to.
+    #
+    # Checked only when this call SETS the date — creating the execution, or
+    # editing the date itself. A row that already carries an early date is left
+    # alone: those 10 exist on this bench already, and refusing every later
+    # edit would mean nobody could pass QC on them or close them out. The rule
+    # stops new ones; it does not strand the old.
+    if "execution_date" in payload and doc.get("rollout_plan"):
+        _plan_date = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "plan_date")
+        _exec_date = getdate(doc.execution_date) if doc.get("execution_date") else None
+        if _plan_date and _exec_date and _exec_date < getdate(_plan_date):
+            frappe.throw(
+                f"This plan starts on {getdate(_plan_date)}, so work cannot be "
+                f"dated {_exec_date}. Move the plan date first if the team went "
+                f"early.",
+                title="Before the plan date",
+            )
+
+    # A team cannot report more than it was assigned.
+    #
+    # The IM's assignment is what INET stands behind towards the subcontractor,
+    # and the IM may still confirm LESS than was reported — that chain is
+    # unchanged. What is refused is the other direction: a TL claiming beyond
+    # the quantity they were given. Measured before this existed: 19 team rows
+    # on the production copy, 21.67 units reported past their assignment, and
+    # 15 plans sitting over 100% complete.
+    #
+    # Only checked where a Rollout Plan Team row actually exists for this team.
+    # Older single-team plans have none, and those are left alone rather than
+    # blocked on a rule their data cannot answer.
+    if (
+        flt(getattr(doc, "achieved_qty", 0) or 0) > 0
+        and doc.get("team")
+        and doc.get("rollout_plan")
+        and frappe.db.exists("DocType", "Rollout Plan Team")
+    ):
+        _row = frappe.db.get_value(
+            "Rollout Plan Team",
+            {"parent": doc.rollout_plan, "team": doc.team},
+            ["name", "assigned_qty"], as_dict=True,
+        )
+        if _row:
+            _assigned = flt(_row.get("assigned_qty") or 0)
+            _achieved = flt(doc.achieved_qty or 0)
+            if _achieved > _assigned + 0.00005:
+                _tn = frappe.db.get_value("INET Team", doc.team, "team_name") or doc.team
+                frappe.throw(
+                    f"{_tn} was assigned {_assigned:g} on this plan, so {_achieved:g} "
+                    f"cannot be reported against it. Ask the IM to raise the "
+                    f"assignment first, or report at most {_assigned:g}.",
+                    title="More than assigned",
+                )
+
     # Keep achieved amount server-driven from achieved qty * billing rate.
     if hasattr(doc, "achieved_qty") and hasattr(doc, "achieved_amount"):
         if "achieved_qty" in payload or "achieved_amount" not in payload:
@@ -8331,16 +8385,87 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
             # Silent on a genuine retry, but NOT when the line still has a
             # confirmed remainder: there the IM planned the rest expecting to
             # record it, and a quiet no-op reads as "the button does nothing".
-            # An Execution plan joins the visit that already owns the Work
-            # Done, so it takes a Re-Visit or an Extra Visit to record more.
+            #
+            # This used to refuse outright and tell the IM to re-plan as a
+            # Re-Visit or an Extra Visit. That is not how the planning side
+            # works: "All POIDs (re-plan)" and the remainder close both add a
+            # COMPANION to the current visit, and the visit number advances
+            # only when someone deliberately picks Re-Visit or Extra Visit. So
+            # the instruction asked for something the normal flow never
+            # produces, and the line sat unrecordable.
+            #
+            # A POID keeps ONE Work Done for its whole life, which is the rule
+            # worth protecting — and the closure ledger is what lets a second
+            # closing event exist without a second record. So the remainder is
+            # appended to the record that already exists, through the same
+            # _remainder_close every other route ends at, rather than being
+            # refused or quietly dropped.
             outstanding, _src = _outstanding_remainder(dispatch_name)
             if outstanding > 0:
-                frappe.throw(
-                    f"This plan is visit {cint(frappe.db.get_value('Rollout Plan', rp_name, 'visit_number'))}, "
-                    f"which already produced Work Done {existing_wd_name}. "
-                    f"The remaining {outstanding:g} needs its own visit — plan it "
-                    "as a Re-Visit or an Extra Visit, then record the Work Done."
-                )
+                # Per SUPPLIER, from THIS plan's team rows, not one lump to
+                # whichever supplier the line resolves to. The plan says who is
+                # doing the remaining work — 6 to one team and 1 to another is
+                # two suppliers, and the ledger has to say so or one of them is
+                # paid for work the other did.
+                legs = frappe.db.sql(
+                    """
+                    SELECT IFNULL(it.subcontractor, '') AS sub,
+                           ROUND(SUM(IFNULL(rpt.assigned_qty, 0)), 4) AS qty
+                    FROM `tabRollout Plan Team` rpt
+                    JOIN `tabINET Team` it ON it.name = rpt.team
+                    WHERE rpt.parent = %s
+                    GROUP BY IFNULL(it.subcontractor, '')
+                    HAVING qty > 0
+                    """,
+                    (rp_name,), as_dict=True,
+                ) or []
+                total = sum(flt(l["qty"]) for l in legs)
+                # Scaled to what is actually outstanding: the plan may assign
+                # more or less than the line has left, and the ledger must
+                # never close more than the line carries.
+                if total > 0 and abs(total - outstanding) > 0.00005:
+                    for l in legs:
+                        l["qty"] = round(flt(l["qty"]) * outstanding / total, 4)
+                    # The last leg absorbs the rounding so the legs sum exactly.
+                    drift = round(outstanding - sum(flt(l["qty"]) for l in legs), 4)
+                    if drift and legs:
+                        legs[-1]["qty"] = round(flt(legs[-1]["qty"]) + drift, 4)
+                if not legs:
+                    legs = [{"sub": None, "qty": outstanding}]
+
+                for leg in legs:
+                    ok, info = _remainder_close(
+                        dispatch_name, route="Rollout Execution",
+                        qty=flt(leg["qty"]), subcontractor=(leg["sub"] or None),
+                        remark=f"remainder recorded from {rp_name}",
+                    )
+                    if not ok:
+                        frappe.throw(
+                            f"Could not record the remaining {outstanding:g} on "
+                            f"{existing_wd_name}: {info.get('error') or 'unknown reason'}"
+                        )
+                # The same tail the ordinary path runs once a Work Done
+                # lands. Returning straight after the ledger write left the
+                # line sitting at "Planned" — the status its remainder plan
+                # gave it — on a line that now has nothing outstanding. The
+                # work is done; the status has to say so.
+                _left, _ = _outstanding_remainder(dispatch_name)
+                if flt(_left) <= 0:
+                    set_dispatch_status(dispatch_name, "Completed",
+                                        remark="remainder recorded")
+                    _parent = frappe.db.get_value("PO Dispatch", dispatch_name, "po_intake")
+                    _line_no = frappe.db.get_value("PO Dispatch", dispatch_name, "po_line_no")
+                    if _parent and _line_no:
+                        _il = frappe.db.exists("PO Intake Line",
+                                               {"parent": _parent, "po_line_no": _line_no})
+                        if _il and isinstance(_il, str):
+                            frappe.db.set_value("PO Intake Line", _il,
+                                                "po_line_status", "Completed")
+                frappe.db.commit()
+                return {"name": existing_wd_name, "already_exists": True,
+                        "remainder": True, "closed_qty": outstanding,
+                        "still_outstanding": flt(_left),
+                        "legs": [(l["sub"], flt(l["qty"])) for l in legs]}
             return {"name": existing_wd_name, "already_exists": True}
 
     # Never allow Work Done while this plan carries an open Issue & Risk
@@ -11225,6 +11350,8 @@ def _normalised_allocation(allocation, confirmed_qty, po_dispatch=None):
             f"{flt(confirmed_qty):g}. They have to match — the split is what "
             f"each subcontractor is paid on."
         )
+    if len(clean) > 1:
+        require_feature("enable_subcontractor_split")
     # An issued supplier PO outranks this split: it is a document the
     # subcontractor already holds. Throws for a submitted PO, warns for a draft.
     if po_dispatch:
@@ -11486,9 +11613,26 @@ def get_dispatch_subcontractor_breakdown(po_dispatch=None):
     """Who worked this line, and for how much — the seed for the confirm grid.
 
     One row per SUBCONTRACTOR (not per team: two teams of the same supplier are
-    one payable party), summing their ``Rollout Plan Team.assigned_qty`` across
-    every live plan on the line, with ``achieved_qty`` alongside so the IM sees
-    the variance while deciding.
+    one payable party), from the LATEST live visit's ``Rollout Plan Team``
+    rows, with ``achieved_qty`` alongside so the IM sees the variance while
+    deciding.
+
+    Two things are excluded, and both are about not counting the same work
+    twice:
+
+    * **Earlier visits.** A Re-Visit REDOES the work rather than adding to it,
+      the same rule derive_dispatch_allocations follows. Summing every visit
+      made a 4-unit line read as 8 — Jareesh 6 (2 on visit 1, 4 again on
+      visit 2) and INet 2.
+
+    * **Plans a closure has already settled.** A line confirmed short is
+      planned again IN THE SAME VISIT — companions, which is how the planning
+      pages work and how an IM expects it to work. But the first plan's
+      assignment is stale the moment it is confirmed: 15 assigned, 10
+      confirmed, and nothing trues the 15 down. Adding a 6-unit remainder plan
+      beside it read as 21. A plan created AFTER the last closure has not been
+      settled by it, and that ordering is the exact signal — no guessing which
+      part of the 15 the 10 came from.
 
     ``assigned`` is what the IM committed at planning and is what seeds the
     grid; ``achieved`` is what the TLs reported and is shown, never used as the
@@ -11510,6 +11654,18 @@ def get_dispatch_subcontractor_breakdown(po_dispatch=None):
     if not frappe.db.exists("PO Dispatch", po_dispatch):
         frappe.throw(f"PO Dispatch not found: {po_dispatch}")
 
+    # When the line was last closed. Anything planned after that is work the
+    # ledger has not accounted for yet.
+    last_closed = frappe.db.sql(
+        """
+        SELECT MAX(c.closed_on) FROM `tabWork Done Closure` c
+        JOIN `tabWork Done` wd ON wd.name = c.parent
+        WHERE wd.system_id = %s
+        """,
+        (po_dispatch,),
+    )
+    last_closed = last_closed[0][0] if last_closed else None
+
     rows = frappe.db.sql(
         """
         SELECT IFNULL(it.subcontractor, '')            AS subcontractor,
@@ -11522,12 +11678,21 @@ def get_dispatch_subcontractor_breakdown(po_dispatch=None):
         JOIN `tabRollout Plan Team` rpt ON rpt.parent = rp.name
         LEFT JOIN `tabINET Team` it ON it.name = rpt.team
         LEFT JOIN `tabSubcontract Master` sm ON sm.name = it.subcontractor
-        WHERE rp.po_dispatch = %s
+        WHERE rp.po_dispatch = %(po_dispatch)s
           AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+          AND IFNULL(rp.visit_number, 0) = (
+                SELECT MAX(IFNULL(rp2.visit_number, 0))
+                FROM `tabRollout Plan` rp2
+                WHERE rp2.po_dispatch = rp.po_dispatch
+                  AND IFNULL(rp2.plan_status, '') <> 'Cancelled')
+          -- Only plans the closure ledger has not already settled. With no
+          -- closures yet (the ordinary first confirmation) this is every plan
+          -- of the visit, so nothing changes for the common case.
+          AND (%(last_closed)s IS NULL OR rp.creation > %(last_closed)s)
         GROUP BY IFNULL(it.subcontractor, ''), IFNULL(sm.type, '')
         ORDER BY assigned DESC
         """,
-        (po_dispatch,), as_dict=True,
+        {"po_dispatch": po_dispatch, "last_closed": last_closed}, as_dict=True,
     ) or []
 
     closed = dict(frappe.db.sql(
@@ -13593,6 +13758,9 @@ def get_commercial_dashboard(etag=None):
         """,
         as_dict=True,
     )
+    _im_lbl = im_display_names([r.get("im") for r in per_im])
+    for r in per_im:
+        r["im_full_name"] = _im_lbl.get(cstr(r.get("im") or "")) or r.get("im")
 
     per_project = frappe.db.sql(
         f"""
@@ -13775,6 +13943,22 @@ WORK_DONE_SUPPLIER_LEG_SQL = """
           AND c.parenttype = 'Work Done'
           AND c.parentfield = 'closures'
 """
+
+
+def im_display_names(codes):
+    """``{code: full name}`` for IM Master codes.
+
+    IM Master is named by its code (``autoname: field:im_id``), so a raw `im`
+    value reads "456" — meaningless to everyone looking at it. Every surface
+    that shows an IM resolves it through here rather than inventing its own
+    lookup.
+    """
+    codes = {cstr(c or "").strip() for c in (codes or [])} - {""}
+    if not codes:
+        return {}
+    return {m.name: (m.full_name or m.name) for m in frappe.get_all(
+        "IM Master", filters={"name": ["in", list(codes)]},
+        fields=["name", "full_name"], limit_page_length=len(codes) + 1)}
 
 
 def _subcontracted_contract_names():
@@ -14474,15 +14658,19 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     ][:5]
 
     _ip_report = get_im_performance_report(from_date=first_day, to_date=last_day)
+    _ip_rows = _ip_report.get("data") or []
+    _ip_lbl = im_display_names([r.get("im") for r in _ip_rows])
     im_perf = [
         {
             "im":        r.get("im"),
+            # The code alone reads "456". Every IM surface shows the name.
+            "im_full_name": _ip_lbl.get(cstr(r.get("im") or "")) or r.get("im"),
             "teams":     r.get("teams"),
             "revenue":   r.get("revenue"),
             "team_cost": r.get("team_cost"),
             "profit":    r.get("profit"),
         }
-        for r in (_ip_report.get("data") or [])
+        for r in _ip_rows
     ]
 
     # ---- Team status summary -----------------------------------------------
@@ -18550,11 +18738,43 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     # whichever execution finished last — so a plan-scoped test left every
     # other companion sitting in Rollout Work Done forever, correctly told
     # "Work Done already exists" and never going away.
+    remaining_qty_sql_ex = (
+        "IFNULL(pd.remaining_qty, 0) AS remaining_qty,"
+        if frappe.db.has_column("PO Dispatch", "remaining_qty") else "0 AS remaining_qty,"
+    )
     ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
     qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
+    # ...but ONLY once the line has nothing left to do. A visit can gain a
+    # further plan AFTER its first confirmation — the "All POIDs (re-plan)"
+    # flow, and the remainder close, both add a companion rather than a new
+    # visit. Rule 2 then saw the Work Done built from the earlier companion and
+    # hid the new executions outright, so the outstanding quantity could never
+    # be recorded: the plan was made, the work was done, and the line simply
+    # vanished from Rollout Work Done. Outstanding quantity means the visit is
+    # not finished, whatever has already been written for it.
+    # Two ways a completed execution is genuinely finished with:
+    #   * the line has nothing outstanding, or
+    #   * this plan predates the last closure, so the ledger already counted it.
+    # The second keeps the earlier companions hidden once their work has been
+    # confirmed, instead of dragging every one of them back onto the page the
+    # moment a remainder plan is added beside them.
+    settled_tests = []
+    if frappe.db.has_column("PO Dispatch", "remaining_qty"):
+        settled_tests.append("IFNULL(pd.remaining_qty, 0) <= 0")
+    if frappe.db.exists("DocType", "Work Done Closure"):
+        settled_tests.append(
+            "rp.creation <= (SELECT MAX(c0.closed_on)"
+            " FROM `tabWork Done Closure` c0"
+            " JOIN `tabWork Done` wd_c0 ON wd_c0.name = c0.parent"
+            " WHERE wd_c0.system_id = rp.po_dispatch)"
+        )
+    outstanding_guard = (
+        " (" + " OR ".join(settled_tests) + ") AND" if settled_tests else ""
+    )
     portal_clause += "" if _bucket_ex else (
         " AND NOT ("
+        + outstanding_guard +
         " de.execution_status = 'Completed'"
         " AND ("
         # Rule 1: lead DE — own QC/CIAG complete + any WD exists for this plan
@@ -18846,6 +19066,13 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                  LIMIT 1
                ) AS work_done_external_source,
                it.team_name AS team_name,
+               -- What the line still owes. The page needs it to tell a line
+               -- that is finished from one that has quantity left: the first
+               -- is correctly refused a second Work Done, the second is the
+               -- remainder and must be offered, not blocked.
+               IFNULL(pd.qty, 0) AS ordered_qty,
+               IFNULL(pd.confirmed_qty, 0) AS confirmed_qty,
+               {remaining_qty_sql_ex}
                {im_full_sql_ex}
                {im_ex_extra_sql}
         FROM `tabDaily Execution` de
@@ -18995,6 +19222,12 @@ def get_duid_overview(query=None, duid=None, po_no=None, poid=None):
     # so no extra query — and deliberately NOT from Rollout Plan.system_id /
     # Daily Execution.system_id, which schema_check reports as present on
     # some sites and absent from the doctype JSON.
+    # IM Master is named by its code, so `im` reads "456" on every one of these
+    # rows. Resolved here the same way every other IM surface does it.
+    _im_lbl = im_display_names([d.get("im") for d in dispatches])
+    for d in dispatches:
+        d["im_full_name"] = _im_lbl.get(cstr(d.get("im") or "")) or d.get("im")
+
     poid_by_dispatch = {d.name: (d.get("poid") or d.name) for d in dispatches}
     poid_by_plan = {}
     for p in plans:
@@ -22953,6 +23186,7 @@ def direct_close_dispatches(po_dispatches, close_type, subcontractor, note=None,
     something sensible: ``updated`` is only populated when the close actually
     ran (an admin's own request), and is empty while one waits for approval.
     """
+    require_feature("enable_direct_close")
     result = request_direct_close(
         po_dispatches, close_type, subcontractor, closed_on,
         milestone=milestone, note=note, reason=note,
@@ -23021,8 +23255,16 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     if cur_status in ("Cancelled", "Closed"):
         return False, {"po_dispatch": name, "poid": poid, "error": f"Already {cur_status}"}
 
-    # For milestone close, allow re-entry even if Completed (the other milestone may still be open)
-    if not milestone and cur_status == "Completed":
+    # For milestone close, allow re-entry even if Completed (the other milestone
+    # may still be open) — and likewise when quantity is still OUTSTANDING.
+    #
+    # A line confirmed short is Completed the moment its first close lands, so
+    # this guard used to refuse the second close of the remainder outright:
+    # "Already Completed" on a line with 1 of 2 still to do. Completed means
+    # the work recorded so far is done, not that the line is finished — what
+    # finishes it is having nothing left outstanding.
+    if (not milestone and cur_status == "Completed"
+            and flt(_outstanding_remainder(name)[0]) <= 0):
         return False, {"po_dispatch": name, "poid": poid, "error": "Already Completed"}
 
     if role == "im":
@@ -23187,7 +23429,13 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
                       "milestone": milestone, "both_closed": both_closed}
 
     # ── Full close path (original logic) ────────────────────────────────
-    if cur_status == "Completed":
+    # Completed means the work recorded SO FAR is done, not that the line is
+    # finished — a line confirmed short goes Completed on its first close while
+    # quantity is still outstanding. This guard sits ahead of the remainder
+    # branch below, so without the outstanding test it refused the very close
+    # that branch exists to perform: "Already Completed" on a line with 1 of 2
+    # still to do.
+    if cur_status == "Completed" and flt(_outstanding_remainder(name)[0]) <= 0:
         return False, {"po_dispatch": name, "poid": poid, "error": "Already Completed"}
 
     if frappe.db.exists("Work Done", {"system_id": name}):
@@ -23199,7 +23447,9 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         if outstanding > 0:
             ok, info = _remainder_close(
                 name, route="Direct Close", milestone=milestone, remark=note,
-                user=im_doc or frappe.session.user,
+                # A User, not an IM Master: this lands in the closure row's
+                # closed_by (Link -> User). The IM is recorded separately.
+                user=frappe.session.user,
                 # Close only what was asked for, and credit it to the supplier
                 # named on THIS close. Closing 2 today and 4 in two days, to a
                 # different subcontractor, is two passes through here.
@@ -23263,11 +23513,18 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
     # Only when strictly less than the line: a close_qty equal to the whole
     # line is the ordinary full close, and must not be turned into a
     # confirmation that then reads as short.
+    #
+    # `user` is a User, not an IM Master: _apply_confirmed_qty puts it in
+    # PO Dispatch.confirmed_by (Link -> User) and in the closure row's
+    # closed_by. Passing `im_doc` here threw "Could not find Confirmed By: 456"
+    # — an IM Master code — AFTER the Work Done had already been written, so
+    # the line closed at its full quantity with no ledger and no allocation.
+    # The IM is recorded separately, through direct_close_by below.
     _partial = flt(close_qty or 0)
     if _partial > 0 and _partial < flt(pd.get("qty") or 0) - 0.00005:
         _apply_confirmed_qty(
             name, _partial, remark=note, milestone=milestone,
-            source="Direct Close", user=im_doc or frappe.session.user,
+            source="Direct Close", user=frappe.session.user,
             subcontractor=subcontractor,
         )
 
@@ -23333,7 +23590,12 @@ def _assign_backend_one(role, im_identifiers, name, team, remark, huawei_im=None
     cur_status = (pd.get("dispatch_status") or "")
     if cur_status == "Planned":
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Already in Rollout Planning — cancel the plan first."}
-    if cur_status == "Completed":
+    # Completed means the work recorded SO FAR is done, not that the line is
+    # finished. An IM who confirms 0.5 of 1 leaves 0.5 outstanding on a line
+    # that is already Completed — and closing that remainder through Backend is
+    # exactly what this route is for. Same correction the Direct Close guards
+    # needed; without it "Already completed." refused every remainder.
+    if cur_status == "Completed" and flt(_outstanding_remainder(name)[0]) <= 0:
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Already completed."}
     if cur_status == "Cancelled":
         return False, {"po_dispatch": name, "poid": pd.get("poid") or name, "error": "Cancelled — cannot sub-contract."}
@@ -23393,6 +23655,7 @@ def assign_backend(po_dispatch=None, po_dispatches=None, backend_team=None, rema
     role = _user_role_class()
     if role not in ("pm", "im"):
         frappe.throw("Not permitted", frappe.PermissionError)
+    require_feature("enable_backend_assign")
     if not backend_team:
         frappe.throw("backend_team is required")
 
@@ -26745,6 +27008,7 @@ def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
     if not names:
         frappe.throw("Select at least one POID to close.")
 
+    require_feature("enable_direct_close")
     closed_dt, milestone = _direct_close_params_or_throw(
         close_type, subcontractor, closed_on, milestone)
     _require_dispatch_im(names, "closing these lines")
@@ -26786,6 +27050,17 @@ def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
             continue
         warn = next((i for i in issues if i["severity"] == "warn"), None)
         pd["_warning"] = warn["short"] if warn else None
+        # What this close actually covers: an explicit close_qty wins, else a
+        # line already closed once covers only what is still outstanding.
+        _ordered = flt(pd.get("qty") or 0)
+        _explicit = flt(close_qty or 0)
+        if _explicit > 0 and _explicit < _ordered - 0.00005:
+            require_feature("enable_partial_close")
+        if _explicit > 0:
+            pd["_close_qty"] = _explicit
+        else:
+            _out, _ = _outstanding_remainder(name)
+            pd["_close_qty"] = flt(_out) if flt(_out) > 0 else _ordered
         rows.append(pd)
 
     if not rows:
@@ -26814,18 +27089,19 @@ def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
             "item_code": pd.get("item_code"),
             "item_description": (pd.get("item_description") or "")[:140],
             "qty": flt(pd.get("qty") or 0),
-            # How much of the line this close covers. Blank means all of it —
-            # the normal case, and what every caller sent before partial
-            # closing existed. A partial close leaves the rest outstanding, so
-            # the line can be closed again later, to the same subcontractor or
-            # a different one.
-            "close_qty": (flt(close_qty) if close_qty not in (None, "", 0) else None),
+            # How much of the line this close covers — ALWAYS stamped, so the
+            # approval screen can show "1 of 2" and price it accordingly. Equal
+            # to `qty` on an ordinary full close. It used to be set only when a
+            # caller passed one explicitly, so closing the 1 remaining unit of
+            # a 2-unit line asked the admin to approve "qty 2, SAR 2,082" when
+            # SAR 1,041 was all that would happen.
+            "close_qty": flt(pd.get("_close_qty") or 0) or None,
             "line_amount": flt(pd.get("line_amount") or 0),
             "line_status": "Pending",
             "line_note": pd.get("_warning"),
         })
     doc.poid_count = len(rows)
-    doc.total_amount = sum(flt(r.get("line_amount") or 0) for r in rows)
+    doc.total_amount = sum(_closing_amount(r) for r in rows)
     doc.insert(ignore_permissions=True)
     frappe.db.commit()
 
@@ -26852,6 +27128,18 @@ def request_direct_close(po_dispatches, close_type, subcontractor, closed_on,
     return {"created": 1, "request": doc.name, "poid_count": doc.poid_count,
             "total_amount": flt(doc.total_amount), "blocked": blocked,
             "auto_approved": False}
+
+
+def _closing_amount(row):
+    """The money a close actually covers: the line's value, pro-rated when only
+    part of the quantity is being closed. One definition, so the request header
+    and the approval screen cannot disagree."""
+    amount = flt(row.get("line_amount") or 0)
+    ordered = flt(row.get("qty") or 0)
+    closing = flt(row.get("_close_qty") or row.get("close_qty") or 0)
+    if ordered > 0 and closing > 0 and closing < ordered - 0.00005:
+        return round(amount * closing / ordered, 2)
+    return amount
 
 
 def _pending_direct_close_request(dispatch_name):
@@ -27053,8 +27341,21 @@ def list_direct_close_requests(status=None, limit=200):
     ) or []:
         line_map.setdefault(ln["parent"], []).append(ln)
 
+    # IM Master is named by its code (autoname: field:im_id), so `im` reads
+    # "456". Nobody knows who that is — resolved once for the whole page.
+    _im_codes = {cstr(r.get("im") or "") for r in rows} - {""}
+    im_names = {m.name: (m.full_name or m.name) for m in frappe.get_all(
+        "IM Master", filters={"name": ["in", list(_im_codes)]},
+        fields=["name", "full_name"],
+        limit_page_length=len(_im_codes) + 1)} if _im_codes else {}
+
     for r in rows:
+        r["im_full_name"] = im_names.get(cstr(r.get("im") or "")) or r.get("im")
         r["lines"] = line_map.get(r["name"], [])
+        # What each line is really worth to this close: pro-rated when only
+        # part of the quantity is going, so the screen and the header agree.
+        for ln in r["lines"]:
+            ln["close_amount"] = _closing_amount(ln)
         r["poid_list"] = ", ".join(l["poid"] for l in r["lines"][:5])
         if len(r["lines"]) > 5:
             r["poid_list"] += f" +{len(r['lines']) - 5} more"

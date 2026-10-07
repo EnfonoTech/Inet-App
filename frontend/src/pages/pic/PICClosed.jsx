@@ -15,7 +15,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "./picShared";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -99,6 +99,9 @@ function DetailModal({ row, onClose }) {
             "ms1_vat", "ms2_vat", "ms1_invoiced", "ms2_invoiced",
           ]}
         />
+        {/* Who worked it, when more than one did. Renders nothing on a
+            single-supplier line, which is almost all of them. */}
+        <SubcontractorSplitTable rows={row.subcontract_allocations} rate={row.rate} />
       </div>
     </div>
   );
@@ -498,7 +501,7 @@ export default function PICClosed() {
                   <td onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(r.po_dispatch)} onChange={() => toggleRow(r.po_dispatch)} />
                   </td>
-                  <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}><SubcontractorCell rows={r.subcontract_allocations} fallback={r.subcontractor} /></td>
                   <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                   <td>{r.po_no || "—"}</td>
