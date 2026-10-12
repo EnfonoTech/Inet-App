@@ -25,6 +25,7 @@ import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
          SubcontractorSplitTable } from "../pic/picShared";
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
 
+import { DOC_REQUIREMENTS } from "../../utils/docRequirements";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 /* Money must not be rounded away. `fmt` above drops the decimals entirely,
    which hid real halalas: ms2_amount alone is fractional on 1,550 of 1,983
@@ -46,21 +47,6 @@ const sar = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFract
 // "operationally done" subset.
 const PO_STATUSES = ["Pending", "Dispatched", "Planned", "Backend Assigned", "Completed", "Partially Submitted", "Submitted", "Partially Closed", "Closed", "Cancelled"];
 
-const DOC_REQUIREMENTS = {
-  "installation":    { doc1Label: "Confirmation Mail", doc2: null },
-  "Dismantle":       { doc1Label: "Confirmation Mail", doc2: { label: "Supporting Documents", parts: [{ label: "Dismantling Checklist", slot: "im_doc2a" }, { label: "PPT", slot: "im_doc2b" }, { label: "POD", slot: "im_doc2c" }], accept: ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx" } },
-  "Survey & Design": { doc1Label: "Confirmation Mail", doc2: { label: "Survey Report", accept: ".pdf" } },
-  "PAT":             { doc1Label: "Confirmation Mail", doc2: { label: "PAT Document", accept: ".pdf" } },
-  "Design":          { doc1Label: "Confirmation Mail", doc2: { label: "MOP / SED", accept: ".pdf" } },
-  "test":            { doc1Label: "Confirmation Mail", doc2: { label: "Test Report", accept: ".pdf,.xls,.xlsx,.doc,.docx,.csv" } },
-  "Visit":           { doc1Label: "Confirmation Mail", doc2: { label: "Visit Justification Mail", accept: ".msg" } },
-  "Local Material":  { doc1Label: "Confirmation Mail", doc2: { label: "POD", accept: ".pdf" } },
-  "commission":      { doc1Label: "Confirmation", doc2: null },
-  "Acquizision":     { doc1Label: "Confirmation", doc2: null },
-  "Batteries":       { doc1Label: "Confirmation Mail", doc2: null },
-  "Migration":       { doc1Label: "Confirmation Mail", doc2: null },
-  "Document":        { doc1Label: "Confirmation Mail", doc2: { label: "Document", accept: ".pdf" } },
-};
 
 function AttachmentSlotList({ attachments, docReq }) {
   if (!attachments?.length) return null;

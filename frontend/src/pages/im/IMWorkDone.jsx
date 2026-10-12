@@ -22,6 +22,7 @@ import ConfirmedQtyFields, { qtyLockReason, REMAINING_ACTIONS, RemainderBadge, r
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { DOC_REQUIREMENTS } from "../../utils/docRequirements";
 import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
          SubcontractorSplitTable } from "../pic/picShared";
 
@@ -35,24 +36,6 @@ import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
 const money = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const qtyFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 4 });
 
-// Required documents per activity type.
-// doc2: null → Not applicable (only DOC1 needed)
-// doc2: { label, accept } → second doc required with those accepted formats
-const DOC_REQUIREMENTS = {
-  "installation":    { doc1Label: "Confirmation Mail", doc2: null },
-  "Dismantle":       { doc1Label: "Confirmation Mail", doc2: { label: "Supporting Documents", parts: [{ label: "Dismantling Checklist", slot: "im_doc2a" }, { label: "PPT", slot: "im_doc2b" }, { label: "POD", slot: "im_doc2c" }], accept: ".pdf,.xls,.xlsx,.doc,.docx,.ppt,.pptx" } },
-  "Survey & Design": { doc1Label: "Confirmation Mail", doc2: { label: "Survey Report", accept: ".pdf" } },
-  "PAT":             { doc1Label: "Confirmation Mail", doc2: { label: "PAT Document", accept: ".pdf" } },
-  "Design":          { doc1Label: "Confirmation Mail", doc2: { label: "MOP / SED", accept: ".pdf" } },
-  "test":            { doc1Label: "Confirmation Mail", doc2: { label: "Test Report", accept: ".pdf,.xls,.xlsx,.doc,.docx,.csv" } },
-  "Visit":           { doc1Label: "Confirmation Mail", doc2: { label: "Visit Justification Mail", accept: ".msg" } },
-  "Local Material":  { doc1Label: "Confirmation Mail", doc2: { label: "POD", accept: ".pdf" } },
-  "commission":      { doc1Label: "Confirmation", doc2: null },
-  "Acquizision":     { doc1Label: "Confirmation", doc2: null },
-  "Batteries":       { doc1Label: "Confirmation Mail", doc2: null },
-  "Migration":       { doc1Label: "Confirmation Mail", doc2: null },
-  "Document":        { doc1Label: "Confirmation Mail", doc2: { label: "Document", accept: ".pdf" } },
-};
 
 function badgeTone(value) {
   const s = String(value || "").toLowerCase();

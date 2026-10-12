@@ -19,23 +19,9 @@ import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, Subcontracto
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
+import { DOC_REQUIREMENTS } from "../../utils/docRequirements";
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
-const DOC_REQUIREMENTS = {
-  "installation":    { doc1Label: "Confirmation Mail", doc2: null },
-  "Dismantle":       { doc1Label: "Confirmation Mail", doc2: { label: "Supporting Documents", parts: [{ label: "Dismantling Checklist", slot: "im_doc2a" }, { label: "PPT", slot: "im_doc2b" }, { label: "POD", slot: "im_doc2c" }] } },
-  "Survey & Design": { doc1Label: "Confirmation Mail", doc2: { label: "Survey Report" } },
-  "PAT":             { doc1Label: "Confirmation Mail", doc2: { label: "PAT Document" } },
-  "Design":          { doc1Label: "Confirmation Mail", doc2: { label: "MOP / SED" } },
-  "test":            { doc1Label: "Confirmation Mail", doc2: { label: "Test Report" } },
-  "Visit":           { doc1Label: "Confirmation Mail", doc2: { label: "Visit Justification Mail" } },
-  "Local Material":  { doc1Label: "Confirmation Mail", doc2: { label: "POD" } },
-  "commission":      { doc1Label: "Confirmation", doc2: null },
-  "Acquizision":     { doc1Label: "Confirmation", doc2: null },
-  "Batteries":       { doc1Label: "Confirmation Mail", doc2: null },
-  "Migration":       { doc1Label: "Confirmation Mail", doc2: null },
-  "Document":        { doc1Label: "Confirmation Mail", doc2: { label: "Document" } },
-};
 
 const PIC_STATUSES = [
   "Work Not Done",
