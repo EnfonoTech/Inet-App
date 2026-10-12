@@ -27712,6 +27712,109 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
 
 
 @frappe.whitelist()
+def _team_today_status_sql(date_lit, *, backend_value="NULL"):
+    """``INET Team.today_status`` for one date — the single definition.
+
+    Four places render this (the SELECT and the column-filter mirror, in both
+    list_admin_teams and list_im_teams), which is why it is built here rather
+    than written out four times.
+
+    The old rule said "In Execution" whenever ANY non-cancelled Daily
+    Execution carried that date, and never looked at the plan at all. Three
+    things followed, all wrong:
+
+      * a *Completed* execution still counted (only 'Cancelled' was excluded),
+        so a team that finished at 9am read In Execution all day;
+      * an execution on a Cancelled or Completed plan counted, while
+        ``active_plan_count`` on the same row required a live plan — two
+        columns of one row built from two different definitions;
+      * ``last_progress_date`` dragged old work forward, so touching a
+        September execution in October made that team In Execution in October.
+
+    Measured on the production copy the contradiction fired on nearly every
+    team on nearly every day: 19 of 19 on 2026-09-29, 22 of 22 on 2026-09-20.
+
+    The vocabulary:
+      In Execution — an execution is In Progress under a live plan covering
+                     the date. Means "right now".
+      Worked       — an execution was recorded ON that date under a plan that
+                     covered it. What a past date actually wants to show.
+      Planned      — a live plan covers the date, the same status set
+                     ``active_plan_count`` uses, so the two can no longer
+                     disagree.
+      Idle         — none of the above.
+    """
+    return f"""CASE
+                    WHEN IFNULL(it.team_category, '') = 'Backend Team' THEN {backend_value}
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabDaily Execution` de_s
+                        INNER JOIN `tabRollout Plan` rp_de ON rp_de.name = de_s.rollout_plan
+                        WHERE de_s.team = it.name
+                          AND de_s.execution_status = 'In Progress'
+                          AND rp_de.plan_status IN ('Planned', 'In Execution', 'Extended')
+                          AND {date_lit} BETWEEN rp_de.plan_date AND IFNULL(rp_de.plan_end_date, rp_de.plan_date)
+                    ) THEN 'In Execution'
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabDaily Execution` de_w
+                        INNER JOIN `tabRollout Plan` rp_wk ON rp_wk.name = de_w.rollout_plan
+                        WHERE de_w.team = it.name
+                          AND de_w.execution_status NOT IN ('Cancelled')
+                          AND de_w.execution_date = {date_lit}
+                          AND rp_wk.plan_status <> 'Cancelled'
+                          AND {date_lit} BETWEEN rp_wk.plan_date AND IFNULL(rp_wk.plan_end_date, rp_wk.plan_date)
+                    ) THEN 'Worked'
+                    WHEN EXISTS (
+                        SELECT 1 FROM `tabRollout Plan` rp_s
+                        WHERE (rp_s.team = it.name OR EXISTS (
+                                SELECT 1 FROM `tabRollout Plan Team` rpt_stat
+                                WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
+                              ))
+                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended')
+                          AND {date_lit} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)
+                    ) THEN 'Planned'
+                    ELSE 'Idle'
+                END"""
+
+
+def _team_today_driver_sql(date_lit):
+    """The plan, and its POID, that explains today_status.
+
+    The client asked to see *why* a team reads In Execution. A status with no
+    evidence behind it is what made the old one impossible to argue with, so
+    every non-Idle status now names the record it came from. The legs are
+    tried in the order the CASE above decides.
+    """
+    dot = " \u00b7 "
+    return f"""COALESCE(
+                (SELECT CONCAT(rp_d1.name, IFNULL(CONCAT('{dot}', NULLIF(pd_d1.poid, '')), ''))
+                   FROM `tabDaily Execution` de_d1
+                   INNER JOIN `tabRollout Plan` rp_d1 ON rp_d1.name = de_d1.rollout_plan
+                   LEFT JOIN `tabPO Dispatch` pd_d1 ON pd_d1.name = rp_d1.po_dispatch
+                  WHERE de_d1.team = it.name AND de_d1.execution_status = 'In Progress'
+                    AND rp_d1.plan_status IN ('Planned', 'In Execution', 'Extended')
+                    AND {date_lit} BETWEEN rp_d1.plan_date AND IFNULL(rp_d1.plan_end_date, rp_d1.plan_date)
+                  ORDER BY rp_d1.plan_date, rp_d1.name LIMIT 1),
+                (SELECT CONCAT(rp_d2.name, IFNULL(CONCAT('{dot}', NULLIF(pd_d2.poid, '')), ''))
+                   FROM `tabDaily Execution` de_d2
+                   INNER JOIN `tabRollout Plan` rp_d2 ON rp_d2.name = de_d2.rollout_plan
+                   LEFT JOIN `tabPO Dispatch` pd_d2 ON pd_d2.name = rp_d2.po_dispatch
+                  WHERE de_d2.team = it.name AND de_d2.execution_status NOT IN ('Cancelled')
+                    AND de_d2.execution_date = {date_lit}
+                    AND rp_d2.plan_status <> 'Cancelled'
+                    AND {date_lit} BETWEEN rp_d2.plan_date AND IFNULL(rp_d2.plan_end_date, rp_d2.plan_date)
+                  ORDER BY rp_d2.plan_date, rp_d2.name LIMIT 1),
+                (SELECT CONCAT(rp_d3.name, IFNULL(CONCAT('{dot}', NULLIF(pd_d3.poid, '')), ''))
+                   FROM `tabRollout Plan` rp_d3
+                   LEFT JOIN `tabPO Dispatch` pd_d3 ON pd_d3.name = rp_d3.po_dispatch
+                  WHERE (rp_d3.team = it.name OR EXISTS (
+                          SELECT 1 FROM `tabRollout Plan Team` rpt_d3
+                          WHERE rpt_d3.parent = rp_d3.name AND rpt_d3.team = it.name))
+                    AND rp_d3.plan_status IN ('Planned', 'In Execution', 'Extended')
+                    AND {date_lit} BETWEEN rp_d3.plan_date AND IFNULL(rp_d3.plan_end_date, rp_d3.plan_date)
+                  ORDER BY rp_d3.plan_date, rp_d3.name LIMIT 1)
+            )"""
+
+
 def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None, _options=None, _summary=None):
     """List all INET Teams with active project/domain for the PM admin Teams page.
 
@@ -27799,17 +27902,10 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             f"AND {_date_lit} BETWEEN rp_a.plan_date AND IFNULL(rp_a.plan_end_date, rp_a.plan_date)"
             ") AS CHAR)"
         ),
+        # Mirrors the SELECT exactly because both come from
+        # _team_today_status_sql — the filter must offer what the cell renders.
         "today": (
-            "IFNULL(CASE WHEN IFNULL(it.team_category,'') = 'Backend Team' THEN '' "
-            "WHEN EXISTS (SELECT 1 FROM `tabDaily Execution` de_t WHERE de_t.team = it.name "
-            f"AND (de_t.execution_date = {_date_lit} OR de_t.last_progress_date = {_date_lit}) "
-            "AND de_t.execution_status NOT IN ('Cancelled')) THEN 'In Execution' "
-            "WHEN EXISTS (SELECT 1 FROM `tabRollout Plan` rp_s WHERE (rp_s.team = it.name "
-            "OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_s WHERE rpt_s.parent = rp_s.name "
-            "AND rpt_s.team = it.name)) "
-            "AND rp_s.plan_status IN ('Planned','In Execution','Extended','Completed') "
-            f"AND {_date_lit} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)) "
-            "THEN 'Planned' ELSE 'Idle' END, '')"
+            "IFNULL(" + _team_today_status_sql(_date_lit, backend_value="''") + ", '')"
         ),
     }
     if isinstance(column_filters, str):
@@ -27871,16 +27967,15 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
 
     # Date placeholder: use the supplied date literal or fall back to CURDATE()
     date_expr = "%s" if date_val else "CURDATE()"
-    if date_val:
-        # Inject 6 copies of date_val (domains, projects, active_plan_count,
-        # today_status ×3 — the Daily Execution check now tests both
-        # execution_date and last_progress_date, since a multi-day plan's
-        # single reused Daily Execution row never updates execution_date
-        # past its first day; last_progress_date is what actually reflects
-        # "touched today" from day 2 onward).
-        params_date = [date_val] * 6
-    else:
-        params_date = []
+    # today_status and today_driver inline the date as an escaped literal
+    # (_date_lit) rather than binding it, the same way col_filter_map does and
+    # for the same reason: they come from a shared helper, so a placeholder
+    # inside them would make this query's parameter count depend on that
+    # helper's internals. The three %s left here bind, in order: domains,
+    # projects, active_plan_count.
+    _today_status_case = _team_today_status_sql(_date_lit)
+    _today_driver_expr = _team_today_driver_sql(_date_lit)
+    params_date = [date_val] * 3 if date_val else []
 
     # Build full param list: date params interleaved with where params
     # Query uses date params first (in subqueries), then where params last
@@ -27941,27 +28036,8 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                   AND rpa.plan_status IN ('Planned','In Execution','Extended')
                   AND {date_expr} BETWEEN rpa.plan_date AND IFNULL(rpa.plan_end_date, rpa.plan_date)
             ) AS active_plan_count,
-            (
-                CASE
-                    WHEN IFNULL(it.team_category, '') = 'Backend Team' THEN NULL
-                    WHEN EXISTS (
-                        SELECT 1 FROM `tabDaily Execution` de_s
-                        WHERE de_s.team = it.name
-                          AND (de_s.execution_date = {date_expr} OR de_s.last_progress_date = {date_expr})
-                          AND de_s.execution_status NOT IN ('Cancelled')
-                    ) THEN 'In Execution'
-                    WHEN EXISTS (
-                        SELECT 1 FROM `tabRollout Plan` rp_s
-                        WHERE (rp_s.team = it.name OR EXISTS (
-                                SELECT 1 FROM `tabRollout Plan Team` rpt_stat
-                                WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
-                              ))
-                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended', 'Completed')
-                          AND {date_expr} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)
-                    ) THEN 'Planned'
-                    ELSE 'Idle'
-                END
-            ) AS today_status
+            ({_today_status_case}) AS today_status,
+            ({_today_driver_expr}) AS today_driver
         FROM `tabINET Team` it
         LEFT JOIN `tabIM Master` im_m ON im_m.name = it.im
         {where_sql}
@@ -28052,17 +28128,10 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             f"AND {_date_lit} BETWEEN rp_a.plan_date AND IFNULL(rp_a.plan_end_date, rp_a.plan_date)"
             ") AS CHAR)"
         ),
+        # Mirrors the SELECT exactly because both come from
+        # _team_today_status_sql — the filter must offer what the cell renders.
         "today": (
-            "IFNULL(CASE WHEN IFNULL(it.team_category,'') = 'Backend Team' THEN '' "
-            "WHEN EXISTS (SELECT 1 FROM `tabDaily Execution` de_t WHERE de_t.team = it.name "
-            f"AND (de_t.execution_date = {_date_lit} OR de_t.last_progress_date = {_date_lit}) "
-            "AND de_t.execution_status NOT IN ('Cancelled')) THEN 'In Execution' "
-            "WHEN EXISTS (SELECT 1 FROM `tabRollout Plan` rp_s WHERE (rp_s.team = it.name "
-            "OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_s WHERE rpt_s.parent = rp_s.name "
-            "AND rpt_s.team = it.name)) "
-            "AND rp_s.plan_status IN ('Planned','In Execution','Extended','Completed') "
-            f"AND {_date_lit} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)) "
-            "THEN 'Planned' ELSE 'Idle' END, '')"
+            "IFNULL(" + _team_today_status_sql(_date_lit, backend_value="''") + ", '')"
         ),
     }
     if isinstance(column_filters, str):
@@ -28118,8 +28187,16 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                  "cond": "IFNULL(it.team_type,'') = 'SUB'", "hide_if_zero": True},
             ])
     date_expr = "%s" if date_val else "CURDATE()"
-    # 6 copies — see list_admin_teams' comment on this same count.
-    params_date = [date_val] * 6 if date_val else []
+    # See list_admin_teams for why the date is inlined here.
+    # today_status and today_driver inline the date as an escaped literal
+    # (_date_lit) rather than binding it, the same way col_filter_map does and
+    # for the same reason: they come from a shared helper, so a placeholder
+    # inside them would make this query's parameter count depend on that
+    # helper's internals. The three %s left here bind, in order: domains,
+    # projects, active_plan_count.
+    _today_status_case = _team_today_status_sql(_date_lit)
+    _today_driver_expr = _team_today_driver_sql(_date_lit)
+    params_date = [date_val] * 3 if date_val else []
     full_params = params_date + params
 
     rows = frappe.db.sql(
@@ -28175,27 +28252,8 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                   AND rpa.plan_status IN ('Planned','In Execution','Extended')
                   AND {date_expr} BETWEEN rpa.plan_date AND IFNULL(rpa.plan_end_date, rpa.plan_date)
             ) AS active_plan_count,
-            (
-                CASE
-                    WHEN IFNULL(it.team_category, '') = 'Backend Team' THEN NULL
-                    WHEN EXISTS (
-                        SELECT 1 FROM `tabDaily Execution` de_s
-                        WHERE de_s.team = it.name
-                          AND (de_s.execution_date = {date_expr} OR de_s.last_progress_date = {date_expr})
-                          AND de_s.execution_status NOT IN ('Cancelled')
-                    ) THEN 'In Execution'
-                    WHEN EXISTS (
-                        SELECT 1 FROM `tabRollout Plan` rp_s
-                        WHERE (rp_s.team = it.name OR EXISTS (
-                                SELECT 1 FROM `tabRollout Plan Team` rpt_stat
-                                WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
-                              ))
-                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended', 'Completed')
-                          AND {date_expr} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)
-                    ) THEN 'Planned'
-                    ELSE 'Idle'
-                END
-            ) AS today_status
+            ({_today_status_case}) AS today_status,
+            ({_today_driver_expr}) AS today_driver
         FROM `tabINET Team` it
         LEFT JOIN `tabIM Master` im_m ON im_m.name = it.im
         {where_sql}

@@ -20,6 +20,9 @@ function badgeTone(value) {
   if (s === "field team") return { bg: "#f5f3ff", fg: "#6d28d9", dot: "#8b5cf6" };
   if (s === "backend team") return { bg: "#fff7ed", fg: "#c2410c", dot: "#f97316" };
   if (s === "in execution") return { bg: "#ecfdf5", fg: "#047857", dot: "#10b981" };
+  // "Worked" is finished work on a past date, not work happening now — teal
+  // keeps it readable beside In Execution's green without claiming to be it.
+  if (s === "worked") return { bg: "#f0fdfa", fg: "#0f766e", dot: "#14b8a6" };
   if (s === "planned") return { bg: "#eff6ff", fg: "#1d4ed8", dot: "#3b82f6" };
   if (s === "extended") return { bg: "#ecfeff", fg: "#0e7490", dot: "#22d3ee" };
   if (s === "idle") return { bg: "#f1f5f9", fg: "#64748b", dot: "#94a3b8" };
@@ -52,11 +55,12 @@ function StatDivider() {
   return <div style={{ width: 1, background: "#e2e8f0", margin: "8px 2px", alignSelf: "stretch" }} />;
 }
 
-function StatusPill({ value }) {
+function StatusPill({ value, title }) {
   if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
   const t = badgeTone(value);
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", background: t.bg, color: t.fg }}>
+    <span title={title || undefined}
+      style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", background: t.bg, color: t.fg, cursor: title ? "help" : undefined }}>
       <span style={{ width: 5, height: 5, borderRadius: 999, background: t.dot, flexShrink: 0 }} />
       {value}
     </span>
@@ -380,6 +384,7 @@ export default function Teams() {
       inet: active.filter((r) => r.team_type === "INET").length,
       sub: active.filter((r) => r.team_type === "SUB").length,
       inExecution: field.filter((r) => r.today_status === "In Execution").length,
+      worked: field.filter((r) => r.today_status === "Worked").length,
       planned: field.filter((r) => r.today_status === "Planned").length,
       idle: field.filter((r) => r.today_status === "Idle").length,
     };
@@ -497,6 +502,9 @@ export default function Teams() {
             <StatItem label="In Execution" value={stats.inExecution} color="#047857" accent="#10b981"
               onClick={() => clickStat("today_status", "In Execution")}
               active={statFilter?.field === "today_status" && statFilter?.value === "In Execution"} />
+            <StatItem label="Worked" value={stats.worked} color="#0f766e" accent="#14b8a6"
+              onClick={() => clickStat("today_status", "Worked")}
+              active={statFilter?.field === "today_status" && statFilter?.value === "Worked"} />
             <StatItem label="Planned" value={stats.planned} color="#1d4ed8" accent="#3b82f6"
               onClick={() => clickStat("today_status", "Planned")}
               active={statFilter?.field === "today_status" && statFilter?.value === "Planned"} />
@@ -557,7 +565,7 @@ export default function Teams() {
                     <td><StatusPill value={r.status} /></td>
                     <td>
                       {r.today_status
-                        ? <StatusPill value={r.today_status} />
+                        ? <StatusPill value={r.today_status} title={r.today_driver || undefined} />
                         : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
                     </td>
                     <td style={{ color: "#475569" }}>{r.im_name || "—"}</td>
