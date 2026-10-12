@@ -15,7 +15,7 @@ import DateRangePicker from "../../components/DateRangePicker";
 import { RemainderBadge } from "../../components/ConfirmedQtyFields";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable, isPicRejection, picRejectionReasonError, picRejectionReasonKey } from "./picShared";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
@@ -541,6 +541,7 @@ export default function PICTracker() {
       pic_status_ms2: row.pic_status_ms2 || "",
       isdp_owner: row.isdp_owner || "",
       ibuy_owner: row.ibuy_owner || "",
+      pic_rejection_remark: row.pic_rejection_remark || "",
       pic_detail_remark: row.pic_detail_remark || "",
       pic_detail_remark_ms2: row.pic_detail_remark_ms2 || "",
       ms1_applied_date: row.ms1_applied_date || "",
@@ -575,6 +576,15 @@ export default function PICTracker() {
         setEditErr(`${label} cannot be in the future.`);
         return;
       }
+    }
+
+    // A rejection has to say why — the server refuses it too, this just
+    // says so before the round-trip.
+    for (const ms of ["MS1", "MS2"]) {
+      const statusKey = ms === "MS2" ? "pic_status_ms2" : "pic_status";
+      const reasonErr = picRejectionReasonError(
+        editFields[statusKey], editFields[picRejectionReasonKey(ms)]);
+      if (reasonErr) { setEditErr(`${ms}: ${reasonErr}`); return; }
     }
 
     setEditBusy(true);
@@ -647,6 +657,8 @@ export default function PICTracker() {
 
   async function submitBulk() {
     if (!selected.size) return;
+    const reasonErr = picRejectionReasonError(bulkStatus, bulkRemark);
+    if (reasonErr) { setBulkErr(reasonErr); return; }
     setBulkBusy(true);
     setBulkErr(null);
     try {
@@ -1411,6 +1423,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               title="MS1 — 1st Payment"
               statusKey="pic_status"
               detailKey="pic_detail_remark"
+              reasonKey="pic_rejection_remark"
               appliedKey="ms1_applied_date"
               invoicedKey="ms1_invoiced"
               invoiceMonthKey="ms1_invoice_month"
@@ -1432,6 +1445,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               title="MS2 — 2nd Payment"
               statusKey="pic_status_ms2"
               detailKey="pic_detail_remark_ms2"
+              reasonKey="pic_detail_remark_ms2"
               appliedKey="ms2_applied_date"
               invoicedKey="ms2_invoiced"
               invoiceMonthKey="ms2_invoice_month"
@@ -1717,10 +1731,14 @@ function InvoiceMonthSelect({ value, onChange, disabled }) {
 
 function MilestonePanel({
   tone, title, pctLabel, amount, invoiced, unbilled,
-  statusKey, detailKey, appliedKey, invoicedKey,
+  statusKey, detailKey, reasonKey, appliedKey, invoicedKey,
   invoiceMonthKey, ibuyDateKey, receivedKey,
   fields, set, busy,
 }) {
+  // A Rejected status is the IM's to-do list, so it must carry a reason.
+  const needsReason = isPicRejection(fields[statusKey]);
+  const reasonInDetail = reasonKey === detailKey;
+  const reasonMissing = needsReason && !String(fields[reasonKey] || "").trim();
   const accentBorder = tone === "violet" ? "#ddd6fe" : "#bfdbfe";
   const accentTextColor = tone === "violet" ? "#6d28d9" : "#1d4ed8";
   return (
@@ -1746,10 +1764,22 @@ function MilestonePanel({
             {PIC_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
+        {needsReason && !reasonInDetail && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Field label="Rejection Reason (required)">
+              <textarea rows={2} value={fields[reasonKey] || ""} onChange={(e) => set(reasonKey, e.target.value)} disabled={busy}
+                style={reasonMissing ? { ...fieldTextareaStyle, borderColor: "#fca5a5", background: "#fef2f2" } : fieldTextareaStyle}
+                placeholder="What the IM has to correct before resubmitting" />
+            </Field>
+          </div>
+        )}
         <div style={{ gridColumn: "1 / -1" }}>
-          <Field label="Detail Remarks / Dependency">
+          <Field label={needsReason && reasonInDetail
+            ? "Detail Remarks / Rejection Reason (required)" : "Detail Remarks / Dependency"}>
             <textarea rows={2} value={fields[detailKey] || ""} onChange={(e) => set(detailKey, e.target.value)} disabled={busy}
-              style={fieldTextareaStyle} placeholder="Outstanding dependency, blocker, or note" />
+              style={needsReason && reasonInDetail && reasonMissing
+                ? { ...fieldTextareaStyle, borderColor: "#fca5a5", background: "#fef2f2" } : fieldTextareaStyle}
+              placeholder="Outstanding dependency, blocker, or note" />
           </Field>
         </div>
         <Field label="Applied Date">

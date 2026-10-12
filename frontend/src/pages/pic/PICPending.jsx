@@ -15,7 +15,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
-import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "./picShared";
+import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable, picRejectionReasonError } from "./picShared";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -286,6 +286,9 @@ export default function PICPending() {
 
   async function submitBulk() {
     if (!selected.size) return;
+    // A rejection has to say why — the server refuses it too.
+    const reasonErr = picRejectionReasonError(bulkStatus, bulkRemark);
+    if (reasonErr) { setBulkErr(reasonErr); return; }
     setBulkBusy(true);
     setBulkErr(null);
     try {

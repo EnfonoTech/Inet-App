@@ -1475,6 +1475,43 @@ _PIC_MS_RESOLVED_FOR_CLOSE = {"Commercial Invoice Closed", "Commercial Invoice S
 
 _PIC_REJECTED_STATUSES = {"I-BUY Rejected", "ISDP Rejected"}
 
+
+def _rejection_remark_field(milestone):
+    """Where a rejection reason lives for this milestone.
+
+    Same split ``reject_pic_line`` uses: MS1 has a dedicated
+    ``pic_rejection_remark``; MS2 has no equivalent, so its general-purpose
+    detail remark carries the reason.
+    """
+    return ("pic_detail_remark_ms2"
+            if str(milestone or "MS1").upper() == "MS2" else "pic_rejection_remark")
+
+
+def _require_rejection_reason(new_status, old_status, remark, milestone, label=None):
+    """A rejection has to say why — on every route, not just the Reject button.
+
+    ``reject_pic_line`` has demanded a remark from the start. The generic
+    routes did not, and they are how most rejections actually get set: of the
+    195 rejected milestones on the production copy only 9 carry a reason, so
+    the IM is told to fix something without being told what.
+
+    Only a *transition into* a rejected status is challenged — editing an
+    unrelated field on an already-rejected line is left alone. Returns the
+    field the reason belongs in, or None when this is not a rejection.
+    """
+    new_status = (new_status or "").strip()
+    if new_status not in _PIC_REJECTED_STATUSES:
+        return None
+    if new_status == (old_status or "").strip():
+        return None
+    if not str(remark or "").strip():
+        who = (str(label) + ": ") if label else ""
+        frappe.throw(
+            who + "a reason is required to set " + new_status
+            + ". The IM sees this as the correction to make."
+        )
+    return _rejection_remark_field(milestone)
+
 # dispatch_status values this module auto-manages once a line reaches
 # Completed and enters the PIC/invoicing flow — see
 # _compute_dispatch_status_from_pic. Anything outside this set (Pending,
@@ -1605,6 +1642,7 @@ _PIC_WRITABLE = (
     "pic_status_ms2", "pic_detail_remark_ms2", "ms2_applied_date",
     "ms2_invoice_month", "ms2_ibuy_inv_date", "ms2_payment_received_date",
     # Common
+    "pic_rejection_remark",  # required when a milestone moves to a Rejected status
     "ms1_pct", "ms2_pct",  # PIC may override the parsed split
     # Acceptance gates — PIC can correct typos coming from the master tracker
     "sqc_status", "pat_status", "im_rejection_remark",
@@ -1650,6 +1688,19 @@ def update_pic_row(po_dispatch, fields):
     new_ms2 = (fields.get("pic_status_ms2") or "").strip()
     ms1_touched = "pic_status" in fields
     ms2_touched = "pic_status_ms2" in fields
+
+    # A rejection must carry its reason, whichever route sets it — the
+    # dedicated Reject action always has, these generic ones did not.
+    for _ms, _was_touched, _old_ms, _new_ms in (
+        ("MS1", ms1_touched, old_ms1, new_ms1),
+        ("MS2", ms2_touched, old_ms2, new_ms2),
+    ):
+        if not _was_touched:
+            continue
+        _require_rejection_reason(
+            _new_ms, _old_ms, fields.get(_rejection_remark_field(_ms)),
+            _ms, label=(doc.poid or po_dispatch),
+        )
     # Only recompute when this call actually touches a milestone status —
     # eff_ms1/eff_ms2 fall back to the stored value for whichever one this
     # call didn't touch, so a single-milestone update still sees the OTHER
@@ -1905,6 +1956,18 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
         remark_field = "pic_detail_remark"
         applied_date_field = "ms1_applied_date"
     applied_date = str(applied_date).strip() if applied_date else None
+
+    # A rejection must carry its reason. One remark covers the whole bulk
+    # call, so this is checked once rather than per row — and it is routed to
+    # the rejection field, not the general detail remark, which is where
+    # reject_pic_line puts it and where the IM's PIC Rejected tab reads it.
+    if (pic_status or "").strip() in _PIC_REJECTED_STATUSES:
+        if not str(remark or "").strip():
+            frappe.throw(
+                "A reason is required to set " + str(pic_status)
+                + ". The IM sees this as the correction to make."
+            )
+        remark_field = _rejection_remark_field(milestone)
 
     # Snapshot old values up front so the audit log can record before/after.
     names_to_check = [str(n or "").strip() for n in po_dispatches]

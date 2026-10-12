@@ -276,3 +276,36 @@ export function SubcontractorSplitTable({ rows, rate, compact = false }) {
     </div>
   );
 }
+
+/**
+ * The two PIC statuses that mean "the IM has to fix something".
+ * Mirrors `_PIC_REJECTED_STATUSES` in `api/pic.py`.
+ */
+export const PIC_REJECTED_STATUSES = ["I-BUY Rejected", "ISDP Rejected"];
+
+export function isPicRejection(status) {
+  return PIC_REJECTED_STATUSES.includes(String(status || "").trim());
+}
+
+/**
+ * Where the reason lives for a milestone. MS1 has a dedicated field; MS2 has
+ * no equivalent, so its general-purpose detail remark carries it — the same
+ * split `reject_pic_line` uses.
+ */
+export function picRejectionReasonKey(milestone) {
+  return String(milestone || "MS1").toUpperCase() === "MS2"
+    ? "pic_detail_remark_ms2"
+    : "pic_rejection_remark";
+}
+
+/**
+ * The complaint to show when a rejection carries no reason, or null when
+ * there is nothing to complain about. The server refuses these too; this
+ * exists so the user is told before the round-trip.
+ */
+export function picRejectionReasonError(status, remark) {
+  if (!isPicRejection(status)) return null;
+  if (String(remark || "").trim()) return null;
+  return `A reason is required to set ${String(status).trim()}. `
+    + "The IM sees this as the correction to make.";
+}
