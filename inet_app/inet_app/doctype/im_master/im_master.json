@@ -58,13 +58,15 @@
    "fieldname": "employee",
    "fieldtype": "Link",
    "label": "Employee",
-   "options": "Employee"
+   "options": "Employee",
+   "ignore_user_permissions": 1
   },
   {
    "fieldname": "user",
    "fieldtype": "Link",
    "label": "User Account",
-   "options": "User"
+   "options": "User",
+   "ignore_user_permissions": 1
   },
   {
    "default": "Active",
