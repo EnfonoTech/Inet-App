@@ -138,7 +138,12 @@
   "cancel_requested_at",
   "cancel_responded_by",
   "cancel_responded_at",
-  "cancel_pm_remark"
+  "cancel_pm_remark",
+  "section_replacement",
+  "replaced_by",
+  "replaced_on",
+  "column_break_repl",
+  "replaces_poids"
  ],
  "fields": [
   {
@@ -543,8 +548,8 @@
   {
    "fieldname": "subcontract_allocations",
    "fieldtype": "Table",
-   "options": "PO Subcontract Allocation",
-   "label": "Subcontract Allocations"
+   "label": "Subcontract Allocations",
+   "options": "PO Subcontract Allocation"
   },
   {
    "fieldname": "sqc_status",
@@ -936,6 +941,34 @@
    "fieldname": "cancel_pm_remark",
    "fieldtype": "Small Text",
    "label": "PM Remark"
+  },
+  {
+   "fieldname": "section_replacement",
+   "fieldtype": "Section Break",
+   "label": "Replacement"
+  },
+  {
+   "fieldname": "replaced_by",
+   "fieldtype": "Link",
+   "label": "Replaced By POID",
+   "options": "PO Dispatch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "replaced_on",
+   "fieldtype": "Datetime",
+   "label": "Replaced On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_repl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "replaces_poids",
+   "fieldtype": "Small Text",
+   "label": "Replaces POIDs",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

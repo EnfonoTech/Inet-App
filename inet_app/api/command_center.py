@@ -26235,6 +26235,669 @@ def list_my_pending_po_transfer_poids():
     return [r[0] for r in rows]
 
 
+# ---------------------------------------------------------------------------
+# POID Replacement / Merge
+#
+# The customer cancels a POID mid-execution and issues another covering the
+# same work. The IM's plan, execution and Work Done move onto the new line;
+# the old one is kept as a tombstone pointing at its successor. Several old
+# POIDs may land on one new one, which is the "merge" half.
+#
+# This is NOT the cancel flow. A cancellation abandons the work; a replacement
+# keeps it and files it under a new customer line. Separate request, separate
+# approval queue. Only the terminal status overlaps — the old line ends up
+# Cancelled either way, told apart by ``replaced_by`` being set, which is also
+# why no report needed changing: they already exclude Cancelled.
+#
+# The rule that makes this cheap: a line may be replaced until it is
+# CONFIRMED. After that the money is settled and a correction belongs to
+# finance, not to planning. Before confirmation a Work Done carries no
+# ``Work Done Closure`` rows at all — 3,961 of 3,976 on the production copy —
+# so moving it is re-pointing one field rather than merging a ledger. And
+# because invoiced lines are refused, no accounting row is ever re-attributed:
+# the POID Accounting Dimension puts a `poid` link on every accounting
+# doctype, GL Entry included, and those must keep pointing at the line they
+# were billed under.
+# ---------------------------------------------------------------------------
+
+_PO_REPLACEMENT_PENDING = "Pending PM Approval"
+
+#: A line already in one of these has left the replaceable window.
+_PO_REPLACEMENT_BLOCKED_STATUSES = frozenset({"Cancelled"})
+
+
+def _po_replacement_snapshot(name):
+    """Everything the guards and the request line need, in one read."""
+    fields = [
+        "name", "poid", "po_no", "site_code", "project_code", "item_code",
+        "item_description", "qty", "line_amount", "im", "dispatch_status",
+        "confirmed_qty", "ms1_invoiced", "ms2_invoiced",
+        "is_internal_work", "is_dummy_po",
+    ]
+    for optional in ("replaced_by", "replaces_poids"):
+        if frappe.db.has_column("PO Dispatch", optional):
+            fields.append(optional)
+    pd = frappe.db.get_value("PO Dispatch", name, fields, as_dict=True)
+    if not pd:
+        return None
+
+    pd["plan_count"] = frappe.db.count(
+        "Rollout Plan", {"po_dispatch": name, "plan_status": ("!=", "Cancelled")})
+    pd["execution_count"] = frappe.db.sql(
+        "SELECT COUNT(*) FROM `tabDaily Execution` de "
+        "INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
+        "WHERE rp.po_dispatch = %s", (name,))[0][0] or 0
+    pd["work_done_count"] = frappe.db.count("Work Done", {"system_id": name})
+
+    # Closures only exist once a line is confirmed. If any are present the
+    # line is past the window regardless of what confirmed_qty says.
+    pd["closure_count"] = 0
+    if frappe.db.has_column("Work Done Closure", "closed_qty"):
+        pd["closure_count"] = frappe.db.sql(
+            "SELECT COUNT(*) FROM `tabWork Done Closure` c "
+            "INNER JOIN `tabWork Done` w ON w.name = c.parent "
+            "WHERE w.system_id = %s", (name,))[0][0] or 0
+
+    pd["submitted_invoice_count"] = 0
+    if frappe.db.has_column("Sales Invoice Item", "poid"):
+        pd["submitted_invoice_count"] = frappe.db.sql(
+            "SELECT COUNT(*) FROM `tabSales Invoice Item` sii "
+            "INNER JOIN `tabSales Invoice` si ON si.name = sii.parent "
+            "WHERE sii.poid = %s AND si.docstatus = 1", (name,))[0][0] or 0
+
+    from inet_app.api.subcontractor_sync import subcon_po_raised
+    pd["subcon_po_raised"] = bool(subcon_po_raised(name))
+    return pd
+
+
+def _po_replacement_pending_elsewhere(name, ignore_request=None):
+    """A line mid-way through another request cannot also be replaced: both
+    decisions assume a state the other is about to change.
+
+    ``ignore_request`` excludes one PO Replacement Request by name. The
+    approve path needs it: the request being decided is still "Pending PM
+    Approval" until its own write lands, so without this every approval
+    refuses itself. The transfer flow hits the same trap and skips the check
+    outright at approve time; excluding just this one request keeps the guard
+    live against a SECOND request racing the first.
+    """
+    for table, parent, status in (
+        ("PO Replacement Request Line", "PO Replacement Request", _PO_REPLACEMENT_PENDING),
+        ("PO Transfer Request Line", "PO Transfer Request", "Pending PM Approval"),
+        ("PO Cancel Request Line", "PO Cancel Request", "Pending PM Approval"),
+        ("PO Direct Close Request Line", "PO Direct Close Request", _DIRECT_CLOSE_PENDING),
+    ):
+        if not frappe.db.exists("DocType", parent):
+            continue
+        params = [name, status]
+        extra = ""
+        if ignore_request and parent == "PO Replacement Request":
+            extra = " AND h.name != %s"
+            params.append(ignore_request)
+        hit = frappe.db.sql(
+            f"SELECT h.name FROM `tab{table}` l "
+            f"INNER JOIN `tab{parent}` h ON h.name = l.parent "
+            f"WHERE l.po_dispatch = %s AND h.request_status = %s{extra} LIMIT 1",
+            tuple(params),
+        )
+        if hit:
+            return parent, hit[0][0]
+    return None, None
+
+
+def assert_po_replacement_source_eligible(pd, im_identifiers=None, expected_im=None,
+                                          ignore_request=None):
+    """The OLD line — the one carrying the work that is about to move.
+
+    Used both when the request is made (against the caller's own IMs) and
+    again at approval time, because everything checked here can change while
+    the request waits.
+    """
+    label = (pd or {}).get("poid") or (pd or {}).get("name") or "?"
+    if not pd or not pd.get("name"):
+        frappe.throw(f"{label}: PO Dispatch not found")
+    if im_identifiers is not None and (pd.get("im") or "") not in im_identifiers:
+        frappe.throw(f"{label}: not assigned to you")
+    if expected_im is not None and pd.get("im") != expected_im:
+        frappe.throw(
+            f"{label}: ownership changed since the request was made "
+            f"(now: {pd.get('im') or '—'}). Reject and ask the IM to re-request."
+        )
+    if cint(pd.get("is_internal_work")):
+        frappe.throw(f"{label}: internal work has no customer POID to replace")
+    if cint(pd.get("is_dummy_po")) and not (pd.get("poid") or "").strip():
+        frappe.throw(f"{label}: unmapped dummy PO — map it to a real PO line first")
+    if (pd.get("dispatch_status") or "") in _PO_REPLACEMENT_BLOCKED_STATUSES:
+        frappe.throw(f"{label}: already {pd.get('dispatch_status')}")
+    if (pd.get("replaced_by") or "").strip():
+        frappe.throw(f"{label}: already replaced by {pd.get('replaced_by')}")
+
+    # The window closes at confirmation.
+    if flt(pd.get("confirmed_qty")) > 0 or cint(pd.get("closure_count")):
+        frappe.throw(
+            f"{label}: already confirmed. A confirmed line's quantity and value "
+            "are settled — correcting it is a finance correction, not a replacement."
+        )
+    invoiced = flt(pd.get("ms1_invoiced")) + flt(pd.get("ms2_invoiced"))
+    if invoiced > 0 or cint(pd.get("submitted_invoice_count")):
+        frappe.throw(
+            f"{label}: already invoiced (SAR {invoiced:,.2f}). The invoice and its "
+            "accounting entries belong to this POID and must keep pointing at it."
+        )
+    if pd.get("subcon_po_raised"):
+        frappe.throw(
+            f"{label}: a subcontractor PO has been raised. Cancel or amend that PO "
+            "before moving the work."
+        )
+    parent, req = _po_replacement_pending_elsewhere(pd["name"], ignore_request=ignore_request)
+    if req:
+        frappe.throw(f"{label}: a {parent} is already waiting ({req}). Let that be decided first.")
+
+
+def assert_po_replacement_target_eligible(target, sources):
+    """The NEW line — the one the work is about to land on.
+
+    It must be a real, live line of the same project that is not itself
+    carrying work: a new POID that has already been planned separately is a
+    double-booking, not a replacement.
+    """
+    label = (target or {}).get("poid") or (target or {}).get("name") or "?"
+    if not target or not target.get("name"):
+        frappe.throw("The new POID was not found.")
+    if cint(target.get("is_internal_work")):
+        frappe.throw(f"{label}: internal work cannot receive a customer POID's work")
+    if (target.get("dispatch_status") or "") in _PO_REPLACEMENT_BLOCKED_STATUSES:
+        frappe.throw(f"{label}: the new POID is {target.get('dispatch_status')}")
+    if (target.get("replaced_by") or "").strip():
+        frappe.throw(f"{label}: the new POID has itself been replaced by {target.get('replaced_by')}")
+    # Identity and project first: a line replacing itself trips the
+    # "already has work" test below for the wrong reason, and the message
+    # would send the user looking for a plan that is their own.
+    for src in sources:
+        if src["name"] == target["name"]:
+            frappe.throw(f"{label}: a POID cannot replace itself")
+        if (src.get("project_code") or "") != (target.get("project_code") or ""):
+            frappe.throw(
+                f"{src.get('poid') or src['name']} is on project "
+                f"{src.get('project_code') or '—'} but the new POID is on "
+                f"{target.get('project_code') or '—'}."
+            )
+    if cint(target.get("plan_count")) or cint(target.get("execution_count")) \
+            or cint(target.get("work_done_count")):
+        frappe.throw(
+            f"{label}: the new POID already has its own plan or execution. "
+            "Moving more work onto it would double-book the line."
+        )
+
+
+@frappe.whitelist()
+def check_po_replacement(po_dispatches, new_po_dispatch):
+    """Read-only preview: may these lines be replaced by that one, and if not why.
+
+    Writes nothing. The modal calls this before showing the confirm button so
+    the IM sees the refusals by POID rather than one error at submit time.
+    """
+    if isinstance(po_dispatches, str):
+        try:
+            parsed = frappe.parse_json(po_dispatches)
+            po_dispatches = parsed if isinstance(parsed, (list, tuple)) else [po_dispatches]
+        except Exception:
+            po_dispatches = [po_dispatches]
+    names = [str(n or "").strip() for n in (po_dispatches or []) if str(n or "").strip()]
+    if not names:
+        frappe.throw("po_dispatches list is required")
+    new_po_dispatch = str(new_po_dispatch or "").strip()
+    if not new_po_dispatch:
+        frappe.throw("new_po_dispatch is required")
+
+    role = _user_role_class()
+    if role not in ("pm", "im"):
+        frappe.throw("Not permitted", frappe.PermissionError)
+    im_identifiers = None
+    if role == "im":
+        _resolved, im_identifiers = _require_inet_im_session()
+        im_identifiers = set(im_identifiers)
+
+    target = _po_replacement_snapshot(new_po_dispatch)
+    sources = []
+    eligible, blocked = [], []
+    for name in names:
+        pd = _po_replacement_snapshot(name)
+        if not pd:
+            blocked.append({"po_dispatch": name, "poid": name, "error": "PO Dispatch not found"})
+            continue
+        try:
+            assert_po_replacement_source_eligible(pd, im_identifiers=im_identifiers)
+            sources.append(pd)
+        except Exception as e:
+            blocked.append({"po_dispatch": name, "poid": pd.get("poid") or name,
+                            "error": str(e)})
+
+    target_error = None
+    if sources:
+        try:
+            assert_po_replacement_target_eligible(target, sources)
+        except Exception as e:
+            target_error = str(e)
+
+    if not target_error:
+        eligible = [{
+            "po_dispatch": p["name"], "poid": p.get("poid") or p["name"],
+            "po_no": p.get("po_no"), "site_code": p.get("site_code"),
+            "project_code": p.get("project_code"), "item_code": p.get("item_code"),
+            "item_description": p.get("item_description"),
+            "qty": flt(p.get("qty")), "line_amount": flt(p.get("line_amount")),
+            "plan_count": cint(p.get("plan_count")),
+            "execution_count": cint(p.get("execution_count")),
+            "work_done_count": cint(p.get("work_done_count")),
+        } for p in sources]
+
+    return {
+        "new_po_dispatch": new_po_dispatch,
+        "new_poid": (target or {}).get("poid") or new_po_dispatch,
+        "target_error": target_error,
+        "eligible": eligible,
+        "blocked": blocked,
+        "total_amount": sum(e["line_amount"] for e in eligible),
+    }
+
+
+def _po_replacement_serialize(name):
+    d = frappe.db.get_value(
+        "PO Replacement Request", name,
+        ["name", "im", "new_po_dispatch", "new_poid", "requested_by", "request_status",
+         "poid_count", "total_amount", "reason", "pm_remark",
+         "approved_by", "approved_at", "creation", "modified"],
+        as_dict=True,
+    )
+    if not d:
+        return None
+    if d.get("im"):
+        d["im_name"] = frappe.db.get_value("IM Master", d["im"], "full_name") or d["im"]
+    d["lines"] = frappe.db.get_all(
+        "PO Replacement Request Line",
+        filters={"parent": name},
+        fields=["po_dispatch", "poid", "po_no", "site_code", "project_code",
+                "item_code", "item_description", "qty", "line_amount", "line_status"],
+        order_by="idx asc",
+    )
+    return d
+
+
+def _apply_po_replacement(sources, target):
+    """Move the work off the old POIDs and onto the new one.
+
+    Four things move, and they are the only four: the plans, their executions,
+    the Work Done, and the material requested for the line. Everything else —
+    status events, the activity log, notifications, attachments, past requests,
+    and every accounting row — stays on the old record, because that is where
+    it happened and the old POID is the number it was recorded under.
+
+    Plans move whatever their status: a cancelled attempt is part of this
+    work's history and belongs with the work, not with the number it was
+    filed under. They move by ``set_value`` rather than ``save`` because
+    Rollout Plan and Daily Execution both have ``on_update`` hooks that
+    notify, and a replacement is not a re-plan.
+
+    Work Done is the exception that DOES save: its revenue is derived from the
+    PO Dispatch it points at (``WorkDone._line_revenue``), so re-pointing and
+    saving re-values it against the new line. That is what rescues the stranded
+    case — work recorded at SAR 0.00 against a cancelled line becomes worth the
+    new line's amount the moment it lands there.
+    """
+    moved = {"plans": 0, "executions": 0, "work_done_moved": 0,
+             "work_done_merged": 0, "material_requests": 0, "intake_lines": 0}
+    now = now_datetime()
+    user = frappe.session.user
+    user_name = frappe.utils.get_fullname(user)
+    target_name = target["name"]
+    target_label = target.get("poid") or target_name
+    old_poids = []
+
+    # One Work Done per POID: the first to arrive survives, the rest fold into
+    # it. Before confirmation there are no closure rows, so folding is addition
+    # rather than a ledger merge — and revenue is not summed, because the new
+    # line is worth what the new line says, not what the old ones did.
+    survivor = frappe.db.get_value("Work Done", {"system_id": target_name}, "name")
+
+    def _event(po_dispatch, entity, entity_name, field, old, new, remark):
+        ev = frappe.new_doc("PO Status Event")
+        ev.po_dispatch = po_dispatch
+        ev.entity = entity
+        ev.entity_name = entity_name
+        ev.field_changed = field
+        ev.old_value = cstr(old)[:140]
+        ev.new_value = cstr(new)[:140]
+        ev.changed_by = user
+        ev.changed_by_full_name = user_name
+        ev.changed_at = now
+        ev.remark = remark
+        ev.insert(ignore_permissions=True)
+
+    for src in sources:
+        name = src["name"]
+        label = src.get("poid") or name
+        old_poids.append(label)
+
+        plans = frappe.db.get_all("Rollout Plan", filters={"po_dispatch": name},
+                                  pluck="name", limit_page_length=0)
+        for rp in plans:
+            frappe.db.set_value("Rollout Plan", rp, "po_dispatch", target_name,
+                                update_modified=False)
+        moved["plans"] += len(plans)
+
+        # system_id on Daily Execution is a denormalised copy of its plan's
+        # line, so both routes to a row have to be covered.
+        des = set(frappe.db.get_all("Daily Execution", filters={"system_id": name},
+                                    pluck="name", limit_page_length=0))
+        if plans:
+            des |= set(frappe.db.get_all("Daily Execution",
+                                         filters={"rollout_plan": ["in", plans]},
+                                         pluck="name", limit_page_length=0))
+        for de in des:
+            frappe.db.set_value("Daily Execution", de, "system_id", target_name,
+                                update_modified=False)
+        moved["executions"] += len(des)
+
+        for wd_name in frappe.db.get_all("Work Done", filters={"system_id": name},
+                                         pluck="name", limit_page_length=0):
+            if not survivor:
+                wd = frappe.get_doc("Work Done", wd_name)
+                wd.system_id = target_name
+                wd.save(ignore_permissions=True)
+                survivor = wd_name
+                moved["work_done_moved"] += 1
+            else:
+                doc = frappe.get_doc("Work Done", wd_name)
+                surv = frappe.get_doc("Work Done", survivor)
+                surv.executed_qty = flt(surv.executed_qty) + flt(doc.executed_qty)
+                surv.save(ignore_permissions=True)
+                frappe.delete_doc("Work Done", wd_name, force=True, ignore_permissions=True)
+                moved["work_done_merged"] += 1
+
+        if frappe.db.has_column("Material Request", "poid"):
+            for mr in frappe.db.get_all("Material Request", filters={"poid": name},
+                                        pluck="name", limit_page_length=0):
+                frappe.db.set_value("Material Request", mr, "poid", target_name,
+                                    update_modified=False)
+                moved["material_requests"] += 1
+
+        # The tombstone. Cancelled is the value every report already excludes,
+        # so nothing downstream needed changing; replaced_by is what tells a
+        # replacement apart from a plain cancellation.
+        old_status = src.get("dispatch_status")
+        set_dispatch_status(name, "Cancelled",
+                            remark=f"replaced by {target_label}")
+        frappe.db.set_value("PO Dispatch", name,
+                            {"replaced_by": target_name, "replaced_on": now},
+                            update_modified=True)
+        _event(name, "PO Dispatch", name, "replaced_by", old_status, target_label,
+               f"POID replaced by {target_label}")
+
+        if (src.get("poid") or "").strip():
+            for il in frappe.db.get_all("PO Intake Line", filters={"poid": src["poid"]},
+                                        pluck="name", limit_page_length=0):
+                frappe.db.set_value("PO Intake Line", il, "po_line_status", "Cancelled",
+                                    update_modified=False)
+                moved["intake_lines"] += 1
+
+    # The new line records what it absorbed. Appended, not overwritten: a POID
+    # can receive a second batch later.
+    existing = cstr(frappe.db.get_value("PO Dispatch", target_name, "replaces_poids") or "")
+    merged = [p for p in (x.strip() for x in existing.split(",")) if p]
+    for p in old_poids:
+        if p not in merged:
+            merged.append(p)
+    frappe.db.set_value("PO Dispatch", target_name,
+                        {"replaces_poids": ", ".join(merged)[:8000]}, update_modified=True)
+    _event(target_name, "PO Dispatch", target_name, "replaces_poids",
+           existing, ", ".join(merged), f"absorbed {', '.join(old_poids)}")
+
+    # The work now belongs to a line with a different rate, and the old lines
+    # own nothing. Both sides are re-derived rather than left to drift.
+    from inet_app.api.dispatch_value_sync import resync_dispatch_values
+    from inet_app.api.subcontractor_sync import (
+        resync_dispatch_allocations, resync_dispatch_contract,
+    )
+    resync_dispatch_values(target_name, reason="POID replacement")
+    resync_dispatch_contract(target_name, reason="POID replacement")
+    resync_dispatch_allocations(target_name, reason="POID replacement")
+    for src in sources:
+        resync_dispatch_contract(src["name"], reason="POID replaced")
+        resync_dispatch_allocations(src["name"], reason="POID replaced")
+
+    return moved
+
+
+@frappe.whitelist()
+def request_po_replacement(po_dispatches, new_po_dispatch, reason=None):
+    """IM asks for one or more of their POIDs to be replaced by a new one.
+
+    One request covers every old POID — all-or-nothing validation, so nothing
+    is created if any line is ineligible.
+    """
+    _im_resolved, im_identifiers = _require_inet_im_session()
+    caller_im = _resolve_caller_im_or_throw()
+
+    if isinstance(po_dispatches, str):
+        try:
+            parsed = frappe.parse_json(po_dispatches)
+            po_dispatches = parsed if isinstance(parsed, (list, tuple)) else [po_dispatches]
+        except Exception:
+            po_dispatches = [po_dispatches]
+    names, seen = [], set()
+    for n in (po_dispatches or []):
+        n = (n or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    if not names:
+        frappe.throw("Select at least one POID to replace")
+
+    new_po_dispatch = (new_po_dispatch or "").strip()
+    if not new_po_dispatch:
+        frappe.throw("The new POID is required")
+    target = _po_replacement_snapshot(new_po_dispatch)
+    if not target:
+        frappe.throw("The new POID was not found")
+
+    sources = []
+    for n in names:
+        pd = _po_replacement_snapshot(n)
+        assert_po_replacement_source_eligible(pd, im_identifiers=set(im_identifiers))
+        sources.append(pd)
+    assert_po_replacement_target_eligible(target, sources)
+
+    doc = frappe.new_doc("PO Replacement Request")
+    doc.im = caller_im
+    doc.new_po_dispatch = new_po_dispatch
+    doc.new_poid = target.get("poid") or new_po_dispatch
+    doc.requested_by = frappe.session.user
+    doc.request_status = _PO_REPLACEMENT_PENDING
+    if reason:
+        doc.reason = str(reason)[:2000]
+    doc.poid_count = len(sources)
+    doc.total_amount = sum(flt(s.get("line_amount")) for s in sources)
+    for s in sources:
+        doc.append("poids", {
+            "po_dispatch": s.get("name"),
+            "poid": s.get("poid") or s.get("name"),
+            "po_no": s.get("po_no"),
+            "site_code": s.get("site_code"),
+            "project_code": s.get("project_code"),
+            "item_code": s.get("item_code"),
+            "item_description": s.get("item_description"),
+            "qty": flt(s.get("qty")),
+            "line_amount": flt(s.get("line_amount")),
+            "line_status": "Pending",
+        })
+    doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_pm_po_replacement_requested
+        notify_pm_po_replacement_requested(doc.name)
+    except Exception:
+        pass
+    return _po_replacement_serialize(doc.name)
+
+
+@frappe.whitelist()
+def pm_decide_po_replacement(request, action, remark=None):
+    """PM approves or rejects a replacement.
+
+    On approve every line is re-validated read-only first, so one line that
+    has moved on since the request was made aborts the whole approval before
+    anything is written.
+    """
+    request = (request or "").strip()
+    action = (action or "").strip().lower()
+    if action not in ("approve", "reject"):
+        frappe.throw("action must be 'approve' or 'reject'")
+    req = frappe.get_doc("PO Replacement Request", request)
+    if req.request_status != _PO_REPLACEMENT_PENDING:
+        frappe.throw(f"Request is not awaiting PM approval (current status: {req.request_status}).")
+    _assert_request_caller_role(req, "pm")
+
+    if action == "reject":
+        frappe.db.set_value("PO Replacement Request", request, {
+            "request_status": "Rejected by PM",
+            "approved_by": frappe.session.user,
+            "approved_at": now_datetime(),
+            "pm_remark": str(remark or "")[:2000] or None,
+        }, update_modified=True)
+        frappe.db.commit()
+        try:
+            from inet_app.api.notifications import notify_im_po_replacement_decided
+            notify_im_po_replacement_decided(request, "reject")
+        except Exception:
+            pass
+        return _po_replacement_serialize(request)
+
+    lines = frappe.db.get_all("PO Replacement Request Line", filters={"parent": request},
+                              fields=["po_dispatch"], limit_page_length=0)
+    if not lines:
+        frappe.throw("This request has no POID lines.")
+
+    target = _po_replacement_snapshot(req.new_po_dispatch)
+    sources = []
+    for l in lines:
+        pd = _po_replacement_snapshot(l.po_dispatch)
+        assert_po_replacement_source_eligible(pd, expected_im=req.im,
+                                              ignore_request=request)
+        sources.append(pd)
+    assert_po_replacement_target_eligible(target, sources)
+
+    moved = _apply_po_replacement(sources, target)
+
+    frappe.db.sql(
+        "UPDATE `tabPO Replacement Request Line` SET line_status = 'Replaced' WHERE parent = %s",
+        (request,),
+    )
+    frappe.db.set_value("PO Replacement Request", request, {
+        "request_status": "Approved",
+        "approved_by": frappe.session.user,
+        "approved_at": now_datetime(),
+        "pm_remark": str(remark or "")[:2000] or None,
+    }, update_modified=True)
+    frappe.db.commit()
+    try:
+        from inet_app.api.notifications import notify_im_po_replacement_decided
+        notify_im_po_replacement_decided(request, "approve")
+    except Exception:
+        pass
+    out = _po_replacement_serialize(request)
+    out["moved"] = moved
+    return out
+
+
+@frappe.whitelist()
+def cancel_po_replacement(request):
+    """Requester withdraws a request that is still awaiting PM approval."""
+    request = (request or "").strip()
+    req = frappe.get_doc("PO Replacement Request", request)
+    if req.request_status != _PO_REPLACEMENT_PENDING:
+        frappe.throw("Cannot cancel — request has already been decided.")
+    _assert_request_caller_role(req, "requester")
+    frappe.db.set_value("PO Replacement Request", request,
+                        {"request_status": "Cancelled"}, update_modified=True)
+    frappe.db.commit()
+    return _po_replacement_serialize(request)
+
+
+@frappe.whitelist()
+def list_po_replacement_requests(scope="all", status=None, limit=200):
+    """Replacement requests visible to the caller.
+
+    ``scope`` is "mine" (the caller IM's own), "pending_pm" (the approval
+    queue) or "all".
+    """
+    scope = (scope or "all").strip().lower()
+    wheres, params = [], []
+    if scope == "mine":
+        try:
+            caller_im = _resolve_caller_im_or_throw()
+        except Exception:
+            return []
+        wheres.append("h.im = %s")
+        params.append(caller_im)
+    elif scope == "pending_pm":
+        if not _is_pm_role():
+            return []
+        wheres.append("h.request_status = %s")
+        params.append(_PO_REPLACEMENT_PENDING)
+    if status:
+        wheres.append("h.request_status = %s")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+    params.append(_portal_row_limit(limit, 200))
+    rows = frappe.db.sql(
+        f"""
+        SELECT h.name, h.im, IFNULL(im_m.full_name, h.im) AS im_name,
+               h.new_po_dispatch, h.new_poid, h.requested_by, h.request_status,
+               h.poid_count, h.total_amount, h.reason, h.pm_remark,
+               h.approved_by, h.approved_at, h.creation, h.modified
+        FROM `tabPO Replacement Request` h
+        LEFT JOIN `tabIM Master` im_m ON im_m.name = h.im
+        {where_sql}
+        ORDER BY h.creation DESC
+        LIMIT %s
+        """,
+        tuple(params), as_dict=True,
+    ) or []
+    names = [r["name"] for r in rows]
+    if names:
+        ph = ", ".join(["%s"] * len(names))
+        by_parent = {}
+        for l in frappe.db.sql(
+            f"""SELECT parent, po_dispatch, poid, site_code, project_code,
+                       item_code, item_description, qty, line_amount, line_status
+                FROM `tabPO Replacement Request Line`
+                WHERE parent IN ({ph}) ORDER BY idx ASC""",
+            tuple(names), as_dict=True,
+        ):
+            by_parent.setdefault(l["parent"], []).append(l)
+        for r in rows:
+            r["lines"] = by_parent.get(r["name"], [])
+    return rows
+
+
+@frappe.whitelist()
+def list_my_pending_po_replacement_poids():
+    """PO Dispatch names the caller IM has tied up in a pending replacement,
+    so the UI can stop them being selected into a second one."""
+    try:
+        caller_im = _resolve_caller_im_or_throw()
+    except Exception:
+        return []
+    rows = frappe.db.sql(
+        "SELECT l.po_dispatch FROM `tabPO Replacement Request Line` l "
+        "INNER JOIN `tabPO Replacement Request` h ON h.name = l.parent "
+        "WHERE h.im = %s AND h.request_status = %s",
+        (caller_im, _PO_REPLACEMENT_PENDING),
+    )
+    return [r[0] for r in rows]
+
+
 @frappe.whitelist()
 def list_im_masters_for_transfer_picker(search=None, limit=200):
     """IM Master picker for the Intake-tab Transfer modal — IM-facing

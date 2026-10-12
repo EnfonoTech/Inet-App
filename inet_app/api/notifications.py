@@ -581,6 +581,52 @@ def notify_ims_po_transfer_pm_decided(request_name, action):
 
 
 # ---------------------------------------------------------------------------
+# PO Replacement Request — the customer re-issued a POID, the work moves across
+# Direct injection (db.set_value never fires hooks)
+# ---------------------------------------------------------------------------
+
+def notify_pm_po_replacement_requested(request_name):
+	"""Notify all PM when an IM asks for POIDs to be replaced by a new one."""
+	req = frappe.db.get_value(
+		"PO Replacement Request", request_name,
+		["im", "new_poid", "poid_count"], as_dict=True,
+	)
+	if not req:
+		return
+	subject = (
+		f"[ALERT] POID replacement awaiting approval — {req.poid_count} POID(s) "
+		f"from {_im_label(req.im)} → {req.new_poid}"
+	)
+	for user in _users_by_role(ADMIN_NOTIFY_ROLES):
+		_make_notification(user, subject, "PO Replacement Request", request_name,
+						   link="/pms/approvals")
+
+
+def notify_im_po_replacement_decided(request_name, action):
+	"""Notify the requesting IM once the PM has decided.
+
+	Only the one IM: a replacement stays with its owner, unlike a transfer,
+	which has a second IM on the receiving end.
+	"""
+	req = frappe.db.get_value(
+		"PO Replacement Request", request_name,
+		["im", "new_poid", "poid_count"], as_dict=True,
+	)
+	if not req:
+		return
+	im_user = frappe.db.get_value("IM Master", req.im, "user") if req.im else None
+	if action == "approve":
+		subject = (
+			f"[INFO] Replacement approved — {req.poid_count} POID(s) now carried "
+			f"by {req.new_poid}"
+		)
+	else:
+		subject = f"[ACTION] Replacement rejected — {req.poid_count} POID(s) unchanged"
+	_make_notification(im_user, subject, "PO Replacement Request", request_name,
+					   link="/pms/im-po-intake")
+
+
+# ---------------------------------------------------------------------------
 # Rollout Plan Cancel Request — IM requests PM approval to cancel
 # Direct injection (db.set_value never fires hooks; on_rollout_plan_update
 # hook exists but is unreachable via the API functions)
