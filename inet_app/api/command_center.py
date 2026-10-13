@@ -7137,6 +7137,11 @@ def get_rollout_plan_details(rollout_plan):
         for rk in ("general_remark", "manager_remark", "team_lead_remark"):
             if frappe.db.has_column("PO Dispatch", rk):
                 pd_cols.append(rk)
+        # Internal work is an INET-own job with no customer behind it, so the
+        # field app relaxes its closure rules for one. The form can only do
+        # that if it knows, hence the passthrough.
+        if frappe.db.has_column("PO Dispatch", "is_internal_work"):
+            pd_cols.append("is_internal_work")
         pd = frappe.db.get_value("PO Dispatch", pd_name, pd_cols, as_dict=True) or {}
         plan["poid"] = pd.get("poid")
         plan["po_no"] = pd.get("po_no")
@@ -7154,6 +7159,7 @@ def get_rollout_plan_details(rollout_plan):
         plan["site_code"] = pd.get("site_code")
         plan["site_name"] = pd.get("site_name")
         plan["center_area"] = pd.get("center_area")
+        plan["is_internal_work"] = cint(pd.get("is_internal_work") or 0)
         if not plan.get("region_type"):
             plan["region_type"] = pd.get("region_type") or region_type_from_center_area(
                 pd.get("center_area")

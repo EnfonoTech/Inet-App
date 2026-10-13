@@ -672,6 +672,11 @@ export default function ExecutionForm() {
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [planError, setPlanError] = useState(null);
 
+  // An INET-own job rather than customer work (PO Dispatch.is_internal_work).
+  // Nobody is being billed and nobody outside asks for evidence, so the site
+  // photos are offered but not demanded.
+  const isInternalWork = !!(plan && plan.is_internal_work);
+
   const [execStatus, setExecStatus] = useState("In Progress");
   const [achievedQty, setAchievedQty] = useState("");
   const [gpsLocation, setGpsLocation] = useState("");
@@ -952,12 +957,33 @@ export default function ExecutionForm() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!id) { setSubmitError("No rollout plan selected."); return; }
+    // How much was done. Meaningless for "Not Attended" — nobody went — so
+    // it is asked for on every other status. Zero is a real answer while the
+    // work is still In Progress or on Hold (24 of 610 In Progress rows on
+    // production say exactly that), but a line marked Completed with nothing
+    // achieved is the hole this rule exists to shut.
+    if (execStatus !== "Not Attended") {
+      const qtyTxt = String(achievedQty ?? "").trim();
+      const qtyNum = parseFloat(qtyTxt);
+      if (!qtyTxt || !Number.isFinite(qtyNum) || qtyNum < 0) {
+        setSubmitError("Achieved Qty is required.");
+        return;
+      }
+      if (execStatus === "Completed" && qtyNum <= 0) {
+        setSubmitError("Achieved Qty must be more than 0 to mark the work Completed.");
+        return;
+      }
+    }
     // Before is required for any real visit — the team arrived and started.
     // After only once the work is Completed: a visit left In Progress, on
     // Hold or Postponed has no "after" to photograph yet, and demanding one
     // would push the TL into taking a meaningless picture to get past the
     // form. "Not Attended" means nobody went, so neither applies.
-    if (execStatus !== "Not Attended") {
+    //
+    // Internal work is exempt entirely: there is no customer to evidence the
+    // site to. The capture tiles still show, so a TL who wants to attach
+    // photos can — they just do not block the form.
+    if (execStatus !== "Not Attended" && !isInternalWork) {
       const missingPhotos = [
         ...(photosBefore.length ? [] : ["Before"]),
         ...(execStatus === "Completed" && !photosAfter.length ? ["After"] : []),
@@ -967,6 +993,14 @@ export default function ExecutionForm() {
           `${missingPhotos.join(" and ")} site photo${missingPhotos.length > 1 ? "s are" : " is"} required.`);
         return;
       }
+    }
+    // What happened, in the TL's own words — required on every status,
+    // "Not Attended" included: that one goes through as the reason nobody
+    // attended, which until now was optional. A picked template counts, so
+    // the common case is one tap rather than typing.
+    if (!buildTlRemark()) {
+      setSubmitError("Team Lead Remark is required — pick a remark or type one.");
+      return;
     }
     setSubmitting(true); setSubmitError(null);
     try {
@@ -1440,7 +1474,7 @@ export default function ExecutionForm() {
             </div>
 
             <div className="exec-field">
-              <label>Achieved Qty</label>
+              <label>Achieved Qty {execStatus !== "Not Attended" && "*"}</label>
               <input
                 type="number"
                 min="0"
@@ -1448,6 +1482,7 @@ export default function ExecutionForm() {
                 value={achievedQty}
                 onChange={(e) => setAchievedQty(e.target.value)}
                 placeholder="0"
+                required={execStatus !== "Not Attended"}
               />
             </div>
 
@@ -1492,11 +1527,11 @@ export default function ExecutionForm() {
               <div className="exec-section-title">Site Photos</div>
               <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
                 <SitePhotoCapture
-                  label="Before" required
+                  label="Before" required={!isInternalWork}
                   urls={photosBefore} onChange={setPhotosBefore} at={photosBeforeAt}
                 />
                 <SitePhotoCapture
-                  label="After" required={execStatus === "Completed"}
+                  label="After" required={!isInternalWork && execStatus === "Completed"}
                   urls={photosAfter} onChange={setPhotosAfter} at={photosAfterAt}
                 />
               </div>
@@ -1525,7 +1560,7 @@ export default function ExecutionForm() {
 
           {/* ── Team Lead Remark ─────────────────────────────── */}
           <div className="exec-section">
-            <div className="exec-section-title">Team Lead Remark</div>
+            <div className="exec-section-title">Team Lead Remark *</div>
 
             {/* Selected remarks render as chips above the picker.
                 Each chip is removable so a wrong pick is one tap to undo. */}
