@@ -2713,12 +2713,9 @@ export default function IMPOIntake() {
 
       {/* ── REPLACE POID MODAL ───────────────────────────────────────────── */}
       {replaceOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 16, overflowY: "auto" }}
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
              onClick={() => !replaceBusy && setReplaceOpen(false)}>
-          {/* The scroll lives on the OVERLAY, not the card: SearchableSelect
-              drops an absolutely-positioned list, and a card with
-              overflow:auto clips it to a couple of visible rows. */}
-          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(620px, 96vw)", margin: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(620px, 96vw)", maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
                onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 4px", fontSize: "1rem" }}>Replace POID</h3>
             <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: 10 }}>

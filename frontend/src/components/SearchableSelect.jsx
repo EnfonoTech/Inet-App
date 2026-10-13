@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /** Matches FILTER_BLANK in the Python filter helpers — keep the two in step. */
 export const BLANK_ID = "__NONE__";
@@ -57,6 +58,10 @@ export default function SearchableSelect({
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
+  const panelRef = useRef(null);
+  // The panel is rendered into <body>, not next to the trigger, so it needs
+  // real coordinates rather than `top: 100%`.
+  const [panelPos, setPanelPos] = useState(null);
 
   const normalized = useMemo(() => {
     if (!Array.isArray(options)) return [];
@@ -144,7 +149,12 @@ export default function SearchableSelect({
   useEffect(() => {
     if (!open) return;
     const onDocMouseDown = (e) => {
-      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+      // The panel lives in <body>, so it is NOT inside wrapRef any more —
+      // without this second test every click on an option closed the panel
+      // before the click landed.
+      if (wrapRef.current?.contains(e.target)) return;
+      if (panelRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
     const onKey = (e) => {
       if (e.key === "Escape") setOpen(false);
@@ -165,6 +175,41 @@ export default function SearchableSelect({
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [open]);
+
+  // Why the panel is portaled at all: it used to be an absolutely-positioned
+  // child of the trigger, so any ancestor with `overflow: auto` — every modal
+  // card in the app that caps its height — clipped the option list to
+  // whatever happened to fit. Rendering into <body> takes it out of reach of
+  // those ancestors; the cost is having to position it by hand.
+  useLayoutEffect(() => {
+    if (!open) { setPanelPos(null); return; }
+    const place = () => {
+      const el = wrapRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const width = Math.max(r.width, minWidth != null ? minWidth : 0, 180);
+      // Flip above when the list would run off the bottom, the way a native
+      // select does, rather than disappearing under the viewport edge.
+      const below = window.innerHeight - r.bottom;
+      const estimated = 340;
+      const flip = below < estimated && r.top > below;
+      setPanelPos({
+        left: Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8)),
+        top: flip ? undefined : r.bottom + 4,
+        bottom: flip ? window.innerHeight - r.top + 4 : undefined,
+        width,
+        maxHeight: Math.max(160, (flip ? r.top : below) - 16),
+      });
+    };
+    place();
+    // `true` captures scrolls inside the modal body too, not just the window.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, minWidth]);
 
   useEffect(() => {
     if (!open || activeIdx < 0 || !listRef.current) return;
@@ -340,19 +385,23 @@ export default function SearchableSelect({
         </span>
       </div>
 
-      {open && (
-        <div style={{
-          position: "absolute",
-          top: "calc(100% + 4px)",
-          left: 0,
-          right: 0,
-          zIndex: 50,
+      {open && panelPos && createPortal(
+        <div ref={panelRef} style={{
+          position: "fixed",
+          left: panelPos.left,
+          top: panelPos.top,
+          bottom: panelPos.bottom,
+          width: panelPos.width,
+          // Above the modals it used to be trapped inside (9999 / 10000).
+          zIndex: 10050,
           background: "white",
           border: "1px solid #e2e8f0",
           borderRadius: 8,
           boxShadow: "0 10px 25px rgba(15,23,42,0.15)",
-          minWidth: Math.max(minWidth != null ? minWidth : 0, 180),
           overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: panelPos.maxHeight,
           ...panelStyle,
         }}>
           <div style={{ padding: 8, borderBottom: "1px solid #f1f5f9" }}>
@@ -395,7 +444,7 @@ export default function SearchableSelect({
               </button>
             )}
           </div>
-          <div ref={listRef} style={{ maxHeight: 280, overflowY: "auto", padding: "4px 0" }}>
+          <div ref={listRef} style={{ flex: 1, minHeight: 0, maxHeight: 280, overflowY: "auto", padding: "4px 0" }}>
             {!multi && (
               <div
                 onClick={() => commitSingle("")}
@@ -512,7 +561,8 @@ export default function SearchableSelect({
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
