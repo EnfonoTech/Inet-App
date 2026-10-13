@@ -170,6 +170,38 @@ class TestReplacementWindow(FrappeTestCase):
     def test_a_poid_cannot_replace_itself(self):
         self.assertIn("cannot replace itself", self._refusal(target=self.old))
 
+    def test_a_finished_target_is_refused(self):
+        """A new POID must still be waiting to be worked. Closed is the one
+        that mattered in practice: it carries no plan or Work Done of its own
+        on legacy lines, so the carrying-work test let it through while the
+        line had already been delivered and invoiced."""
+        for status in ("Closed", "Completed", "Submitted", "Partially Closed",
+                       "Backend Assigned", "Planned"):
+            frappe.db.set_value("PO Dispatch", self.new, "dispatch_status", status)
+            msg = self._refusal()
+            self.assertIsNotNone(msg, f"{status} should be refused as a target")
+            self.assertIn("waiting to be worked", msg, f"wrong reason for {status}")
+        frappe.db.set_value("PO Dispatch", self.new, "dispatch_status", "Dispatched")
+        self.assertIsNone(self._refusal(), "Dispatched must still be allowed")
+
+    def test_an_invoiced_target_is_refused(self):
+        frappe.db.set_value("PO Dispatch", self.new, "ms1_invoiced", 10)
+        try:
+            self.assertIn("already been invoiced", self._refusal())
+        finally:
+            frappe.db.set_value("PO Dispatch", self.new, "ms1_invoiced", 0)
+
+    def test_the_picker_only_offers_what_the_guard_accepts(self):
+        """The picker and the guard must agree, or the UI offers a POID and
+        the server then refuses it."""
+        from inet_app.api.command_center import list_po_replacement_targets
+        for r in list_po_replacement_targets([self.old], limit=25):
+            self.assertIn(r["dispatch_status"], ("", "Pending", "Dispatched"),
+                          f"{r['poid']} offered with status {r['dispatch_status']}")
+            res = check_po_replacement([self.old], r["name"])
+            self.assertIsNone(res["target_error"],
+                              f"{r['poid']} was offered but refused: {res['target_error']}")
+
     def test_a_target_carrying_work_is_refused(self):
         wd = frappe.new_doc("Work Done")
         wd.system_id = self.new
@@ -427,3 +459,194 @@ class TestReplacementApproval(FrappeTestCase):
             frappe.delete_doc("PO Replacement Request", rival,
                               force=True, ignore_permissions=True)
             frappe.db.commit()
+
+
+class TestReplacementOwnership(FrappeTestCase):
+    """Who owns the new POID afterwards, and whose lines may be picked."""
+
+    def setUp(self):
+        frappe.set_user("Administrator")
+        _cleanup()
+        self.old = _disposable_line("-O1")
+        project = frappe.db.get_value("PO Dispatch", self.old, "project_code")
+        self.new = _disposable_line("-O2", project_code=project)
+
+    def tearDown(self):
+        _cleanup()
+
+    def _move(self):
+        from inet_app.api.command_center import _apply_po_replacement
+        return _apply_po_replacement([_po_replacement_snapshot(self.old)],
+                                     _po_replacement_snapshot(self.new))
+
+    def test_an_unassigned_target_is_refused(self):
+        """An IM only ever acts on their own POIDs — the rule the whole portal
+        is built on. An unassigned line is not free to take: it has to be
+        dispatched to the IM first, which is the step that makes it theirs."""
+        frappe.db.set_value("PO Dispatch", self.new, "im", None)
+        res = check_po_replacement([self.old], self.new)
+        self.assertIsNotNone(res["target_error"])
+        self.assertIn("not assigned to any IM", res["target_error"])
+
+    def test_both_lines_must_be_the_same_im(self):
+        im = frappe.db.get_value("PO Dispatch", self.old, "im")
+        frappe.db.set_value("PO Dispatch", self.new, "im", im)
+        self.assertIsNone(check_po_replacement([self.old], self.new)["target_error"])
+
+    def test_a_target_already_owned_by_the_same_im_keeps_it(self):
+        im = frappe.db.get_value("PO Dispatch", self.old, "im")
+        frappe.db.set_value("PO Dispatch", self.new, "im", im)
+        self._move()
+        self.assertEqual(frappe.db.get_value("PO Dispatch", self.new, "im"), im)
+
+    def test_another_ims_poid_cannot_be_taken(self):
+        other = frappe.db.sql("""SELECT name FROM `tabIM Master`
+            WHERE name != %s LIMIT 1""",
+            (frappe.db.get_value("PO Dispatch", self.old, "im"),))
+        if not other:
+            self.skipTest("only one IM on this site")
+        frappe.db.set_value("PO Dispatch", self.new, "im", other[0][0])
+        res = check_po_replacement([self.old], self.new)
+        self.assertIsNotNone(res["target_error"])
+        self.assertIn("different IM", res["target_error"])
+
+    def test_the_picker_never_offers_another_ims_poid(self):
+        from inet_app.api.command_center import list_po_replacement_targets
+        mine = frappe.db.get_value("PO Dispatch", self.old, "im")
+        for r in list_po_replacement_targets([self.old], limit=50):
+            owner = frappe.db.get_value("PO Dispatch", r["name"], "im") or ""
+            self.assertEqual(owner, mine,
+                             f"{r['poid']} belongs to {owner or '(unassigned)'}, not {mine}")
+
+
+class TestReplacementLeavesTheNewLineUsable(FrappeTestCase):
+    """After the move the new line must look like what it now carries."""
+
+    def setUp(self):
+        frappe.set_user("Administrator")
+        _cleanup()
+        self.old = _disposable_line("-U1")
+        project = frappe.db.get_value("PO Dispatch", self.old, "project_code")
+        self.new = _disposable_line("-U2", project_code=project)
+        frappe.db.set_value("PO Dispatch", self.new, "im",
+                            frappe.db.get_value("PO Dispatch", self.old, "im"))
+        frappe.db.set_value("PO Dispatch", self.old, "line_amount", 512)
+        frappe.db.set_value("PO Dispatch", self.new, "line_amount", 165)
+        frappe.db.commit()
+
+    def tearDown(self):
+        _cleanup()
+
+    def _move(self):
+        from inet_app.api.command_center import _apply_po_replacement
+        return _apply_po_replacement([_po_replacement_snapshot(self.old)],
+                                     _po_replacement_snapshot(self.new))
+
+    def test_a_line_that_gains_a_plan_reads_planned(self):
+        """Left at Dispatched it sits in the still-to-be-planned queue while
+        holding a live plan — an invitation to plan the same job twice."""
+        rp, _de = _plan_with_execution(self.old)
+        self._move()
+        self.assertEqual(frappe.db.get_value("PO Dispatch", self.new, "dispatch_status"),
+                         "Planned")
+        self.assertEqual(frappe.db.get_value("PO Dispatch", self.old, "dispatch_status"),
+                         "Cancelled")
+
+    def test_a_line_that_gains_a_work_done_reads_completed(self):
+        _work_done(self.old)
+        self._move()
+        self.assertEqual(frappe.db.get_value("PO Dispatch", self.new, "dispatch_status"),
+                         "Completed")
+
+    def test_the_moved_plan_is_revalued_against_the_new_line(self):
+        """target_amount IS the line's value — completion_pct is
+        achieved_amount / target_amount — so a plan carrying the old line's
+        money measures completion against the wrong bar."""
+        rp, _de = _plan_with_execution(self.old)
+        frappe.db.set_value("Rollout Plan", rp, "target_amount", 512)
+        frappe.db.commit()
+        self._move()
+        self.assertAlmostEqual(
+            flt(frappe.db.get_value("Rollout Plan", rp, "target_amount")), 165.0, 2)
+
+    def test_a_partial_plan_stays_partial(self):
+        rp, _de = _plan_with_execution(self.old)
+        frappe.db.set_value("Rollout Plan", rp, "target_amount", 256)  # half of 512
+        frappe.db.commit()
+        self._move()
+        self.assertAlmostEqual(
+            flt(frappe.db.get_value("Rollout Plan", rp, "target_amount")), 82.5, 2)
+
+    def test_a_worthless_old_line_takes_the_new_lines_value(self):
+        """The stranded case: work recorded against a line worth nothing."""
+        frappe.db.set_value("PO Dispatch", self.old, "line_amount", 0)
+        rp, _de = _plan_with_execution(self.old)
+        frappe.db.set_value("Rollout Plan", rp, "target_amount", 0)
+        frappe.db.commit()
+        self._move()
+        self.assertAlmostEqual(
+            flt(frappe.db.get_value("Rollout Plan", rp, "target_amount")), 165.0, 2)
+
+    def test_the_moved_records_take_the_new_lines_item_and_region(self):
+        """item_code and region_type are copies of the line's own values —
+        item_code matches its dispatch on 3,958 of 3,976 Work Done rows — so
+        they are maintained, not snapshots, and must follow the move."""
+        # item_code is a Link to Item, so the fixture needs two real ones.
+        items = frappe.get_all("Item", pluck="name", limit_page_length=2)
+        if len(items) < 2:
+            self.skipTest("need two Items on this site")
+        old_item, new_item = items[0], items[1]
+        frappe.db.set_value("PO Dispatch", self.new,
+                            {"item_code": new_item, "region_type": "Hard"})
+        frappe.db.set_value("PO Dispatch", self.old,
+                            {"item_code": old_item, "region_type": "Standard"})
+        frappe.db.commit()
+        rp, de = _plan_with_execution(self.old)
+        frappe.db.set_value("Rollout Plan", rp, "region_type", "Standard")
+        frappe.db.set_value("Daily Execution", de, "region_type", "Standard")
+        wd = _work_done(self.old)
+        frappe.db.commit()
+
+        self._move()
+
+        self.assertEqual(frappe.db.get_value("Work Done", wd, "item_code"), new_item)
+        self.assertEqual(frappe.db.get_value("Work Done", wd, "region_type"), "Hard")
+        self.assertEqual(frappe.db.get_value("Rollout Plan", rp, "region_type"), "Hard")
+        self.assertEqual(frappe.db.get_value("Daily Execution", de, "region_type"), "Hard")
+
+    def test_rate_follows_the_line_but_quantity_does_not(self):
+        """Money is a property of the line; quantity is a fact about the work.
+        The new POID orders a different quantity in 178 of 258 real pairs, so
+        rescaling executed_qty would rewrite history to match a number it
+        never had."""
+        frappe.db.set_value("PO Dispatch", self.old, {"qty": 3, "rate": 170.67})
+        frappe.db.set_value("PO Dispatch", self.new, {"qty": 1, "rate": 165})
+        frappe.db.commit()
+        wd = _work_done(self.old, qty=3)
+        frappe.db.set_value("Work Done", wd, "billing_rate_sar", 170.67)
+        frappe.db.commit()
+
+        self._move()
+
+        self.assertAlmostEqual(
+            flt(frappe.db.get_value("Work Done", wd, "billing_rate_sar")), 165.0, 2,
+            "rate is the line's and must follow")
+        self.assertAlmostEqual(
+            flt(frappe.db.get_value("Work Done", wd, "executed_qty")), 3.0, 4,
+            "executed quantity is what was done and must NOT be rescaled")
+
+    def test_a_quantity_change_is_surfaced_not_hidden(self):
+        frappe.db.set_value("PO Dispatch", self.old, "qty", 3)
+        frappe.db.set_value("PO Dispatch", self.new, "qty", 1)
+        frappe.db.commit()
+        res = check_po_replacement([self.old], self.new)
+        self.assertIsNone(res["target_error"])
+        self.assertTrue(res["warnings"], "a qty change must be reported")
+        self.assertIn("orders 1", " ".join(res["warnings"]))
+
+    def test_no_warning_when_nothing_changes(self):
+        for f in ("qty", "rate", "line_amount"):
+            frappe.db.set_value("PO Dispatch", self.new, f,
+                                frappe.db.get_value("PO Dispatch", self.old, f))
+        frappe.db.commit()
+        self.assertEqual(check_po_replacement([self.old], self.new)["warnings"], [])

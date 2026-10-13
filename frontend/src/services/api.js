@@ -836,6 +836,25 @@ export const pmApi = {
   listPoTransferRequests: (scope, status) => call("inet_app.api.command_center.list_po_transfer_requests", { scope: scope || "all", status: status || "" }),
   listMyPendingPoTransferPoids: () => call("inet_app.api.command_center.list_my_pending_po_transfer_poids", {}),
   listIMMastersForTransferPicker: (search) => call("inet_app.api.command_center.list_im_masters_for_transfer_picker", { search: search || "", limit: 200 }),
+  // PO Replacement Request — the customer re-issued a POID; the plan, execution
+  // and Work Done move onto the new line and the old one becomes a tombstone.
+  // Separate from Cancel: a cancellation abandons the work, a replacement keeps it.
+  checkPoReplacement: (poDispatches, newPoDispatch) => call("inet_app.api.command_center.check_po_replacement", {
+    po_dispatches: JSON.stringify(Array.isArray(poDispatches) ? poDispatches : [poDispatches]),
+    new_po_dispatch: newPoDispatch,
+  }),
+  requestPoReplacement: (poDispatches, newPoDispatch, reason) => call("inet_app.api.command_center.request_po_replacement", {
+    po_dispatches: JSON.stringify(Array.isArray(poDispatches) ? poDispatches : [poDispatches]),
+    new_po_dispatch: newPoDispatch, reason: reason || "",
+  }),
+  pmDecidePoReplacement: (request, action, remark) => call("inet_app.api.command_center.pm_decide_po_replacement", { request, action, remark: remark || "" }),
+  cancelPoReplacement: (request) => call("inet_app.api.command_center.cancel_po_replacement", { request }),
+  listPoReplacementRequests: (scope, status) => call("inet_app.api.command_center.list_po_replacement_requests", { scope: scope || "all", status: status || "" }),
+  listMyPendingPoReplacementPoids: () => call("inet_app.api.command_center.list_my_pending_po_replacement_poids", {}),
+  listPoReplacementTargets: (poDispatches, search) => call("inet_app.api.command_center.list_po_replacement_targets", {
+    po_dispatches: JSON.stringify(Array.isArray(poDispatches) ? poDispatches : [poDispatches]),
+    search: search || "", limit: 50,
+  }),
   // Data Integrity (PM/Admin) — categories: "completed_no_evidence", "closed_unresolved_milestone"
   listDataIntegrityIssues: (category) => call("inet_app.api.command_center.list_data_integrity_issues", { category }),
   fixDataIntegrityCompletedNoEvidence: (po_dispatches) => call("inet_app.api.command_center.fix_data_integrity_completed_no_evidence", {

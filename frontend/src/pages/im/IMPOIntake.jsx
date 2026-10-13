@@ -186,7 +186,7 @@ function FieldRow({ label, children }) {
 }
 
 export default function IMPOIntake() {
-  const { imName } = useAuth();
+  const { imName, role } = useAuth();
   const { rowLimit, setRowLimit } = useTableRowLimit();
 
   // ── Tab ─────────────────────────────────────────────────────────────────
@@ -416,6 +416,21 @@ export default function IMPOIntake() {
   const [cancelSubTab, setCancelSubTab] = useState("pending"); // "pending" | "history"
   const [viewCancelTarget, setViewCancelTarget] = useState(null);
   const [cancelRefreshKey, setCancelRefreshKey] = useState(0);
+  // Replacement requests. Same shape as Cancels — IM asks, PM decides — but a
+  // different thing: a cancellation abandons the work, a replacement moves it
+  // onto the POID the customer re-issued.
+  const [replListRows, setReplListRows] = useState([]);
+  const [replListLoading, setReplListLoading] = useState(false);
+  const [replListError, setReplListError] = useState(null);
+  const [replSubTab, setReplSubTab] = useState("pending"); // "pending" | "history"
+  const [replRefreshKey, setReplRefreshKey] = useState(0);
+  const [replBusy, setReplBusy] = useState(null);
+  // Who may approve is the server's rule, not ours — role is
+  // admin|im|field|pic|warehouse (never "pm"), and is_pm is deliberately
+  // false for an admin because it drives sidebar hiding.
+  const [replCanDecide, setReplCanDecide] = useState(false);
+  const [viewReplTarget, setViewReplTarget] = useState(null);
+  const [replDecideRemark, setReplDecideRemark] = useState("");
   // Direct Close approvals. Mirrors the cancel tab above — same shape, with
   // one difference that matters: `dcCanDecide` comes from the server, because
   // the approver is an ADMIN and a PM raising these cannot decide them.
@@ -736,6 +751,29 @@ export default function IMPOIntake() {
     return () => { cancelled = true; };
   }, [imName, cancelRefreshKey]);
 
+  // ── Replacement requests load ────────────────────────────────────────
+  // Not gated on the active tab, same reason as Cancels: the badge count has
+  // to be right before anyone opens the tab.
+  useEffect(() => {
+    if (!imName) return;
+    let cancelled = false;
+    setReplListLoading(true);
+    setReplListError(null);
+    (async () => {
+      try {
+        const res = await pmApi.listPoReplacementRequests("all");
+        if (cancelled) return;
+        setReplListRows(Array.isArray(res) ? res : (res?.rows || []));
+        setReplCanDecide(!!res?.can_decide);
+      } catch (err) {
+        if (!cancelled) setReplListError(err.message || "Failed to load replacement requests");
+      } finally {
+        if (!cancelled) setReplListLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [imName, replRefreshKey]);
+
   // ── Direct Close requests load ───────────────────────────────────────
   // Not gated on the active tab, same reason as Cancels: the badge count has
   // to be right before anyone opens the tab.
@@ -787,6 +825,52 @@ export default function IMPOIntake() {
     [cancelListRows],
   );
   const cancelVisibleRows = cancelSubTab === "pending" ? cancelPendingRows : cancelHistoryRows;
+
+  const replPendingRows = useMemo(
+    () => replListRows.filter((r) => r.request_status === "Pending PM Approval"),
+    [replListRows],
+  );
+  const replHistoryRows = useMemo(
+    () => replListRows.filter((r) => r.request_status !== "Pending PM Approval")
+      .sort((a, b) => new Date(b.approved_at || b.creation || 0) - new Date(a.approved_at || a.creation || 0)),
+    [replListRows],
+  );
+  const replVisibleRows = replSubTab === "pending" ? replPendingRows : replHistoryRows;
+  const loadRepl = () => setReplRefreshKey((k) => k + 1);
+
+  async function decideReplacement(request, action) {
+    setReplBusy(request);
+    try {
+      await pmApi.pmDecidePoReplacement(request, action, replDecideRemark);
+      setViewReplTarget(null);
+      setReplDecideRemark("");
+      setToastMsg(action === "approve"
+        ? "Replacement approved — the work has moved."
+        : "Replacement rejected.");
+      setTimeout(() => setToastMsg(null), 5000);
+      loadRepl();
+      load();
+      loadOv();
+    } catch (err) {
+      setReplListError(err.message || "Decision failed");
+      setViewReplTarget(null);
+    } finally {
+      setReplBusy(null);
+    }
+  }
+
+  async function withdrawReplacement(request) {
+    setReplBusy(request);
+    try {
+      await pmApi.cancelPoReplacement(request);
+      setViewReplTarget(null);
+      loadRepl();
+    } catch (err) {
+      setReplListError(err.message || "Withdraw failed");
+    } finally {
+      setReplBusy(null);
+    }
+  }
 
   const dcPendingRows = useMemo(
     () => dcListRows.filter((r) => r.request_status === "Pending Admin Approval"),
@@ -1067,6 +1151,86 @@ export default function IMPOIntake() {
         ? new Set()
         : new Set(ovSelectableRows.map((r) => r.name)),
     );
+  }
+
+  // ── Replace POID ─────────────────────────────────────────────────────
+  // The customer cancelled these POIDs and issued another for the same work.
+  // The preview is a server call, not a local guess: the refusal rules live
+  // in one place and the IM should see them by POID before submitting.
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState("");
+  const [replaceReason, setReplaceReason] = useState("");
+  const [replaceBusy, setReplaceBusy] = useState(false);
+  const [replaceError, setReplaceError] = useState(null);
+  const [replacePreview, setReplacePreview] = useState(null);
+  const [replacePreviewLoading, setReplacePreviewLoading] = useState(false);
+
+  const replaceSelectedRows = useMemo(
+    () => ovRows.filter((r) => ovSelected.has(r.name)),
+    [ovRows, ovSelected],
+  );
+  // Candidates come from the server, already filtered to the ones that can
+  // actually receive the work — offering a POID and then refusing it is worse
+  // than not offering it, and the rules live in one place either way.
+  const [replaceTargets, setReplaceTargets] = useState([]);
+  const [replaceTargetSearch, setReplaceTargetSearch] = useState("");
+  const [replaceTargetsLoading, setReplaceTargetsLoading] = useState(false);
+  const replaceTargetRow = useMemo(
+    () => replaceTargets.find((r) => r.name === replaceTarget) || null,
+    [replaceTargets, replaceTarget],
+  );
+
+  useEffect(() => {
+    if (!replaceOpen) return;
+    let cancelled = false;
+    setReplaceTargetsLoading(true);
+    pmApi.listPoReplacementTargets(Array.from(ovSelected), replaceTargetSearch)
+      .then((res) => { if (!cancelled) setReplaceTargets(Array.isArray(res) ? res : []); })
+      .catch(() => { if (!cancelled) setReplaceTargets([]); })
+      .finally(() => { if (!cancelled) setReplaceTargetsLoading(false); });
+    return () => { cancelled = true; };
+  }, [replaceOpen, replaceTargetSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function openReplaceModal() {
+    if (ovSelected.size < 1) return;
+    setReplaceTarget("");
+    setReplaceReason("");
+    setReplaceError(null);
+    setReplacePreview(null);
+    setReplaceTargets([]);
+    setReplaceTargetSearch("");
+    setReplaceOpen(true);
+  }
+
+  useEffect(() => {
+    if (!replaceOpen || !replaceTarget) { setReplacePreview(null); return; }
+    let cancelled = false;
+    setReplacePreviewLoading(true);
+    setReplaceError(null);
+    pmApi.checkPoReplacement(Array.from(ovSelected), replaceTarget)
+      .then((res) => { if (!cancelled) setReplacePreview(res); })
+      .catch((err) => { if (!cancelled) setReplaceError(err.message || "Check failed"); })
+      .finally(() => { if (!cancelled) setReplacePreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [replaceOpen, replaceTarget]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submitReplace() {
+    if (!replaceTarget) return;
+    setReplaceBusy(true);
+    setReplaceError(null);
+    try {
+      await pmApi.requestPoReplacement(Array.from(ovSelected), replaceTarget, replaceReason);
+      setReplaceOpen(false);
+      setOvSelected(new Set());
+      setToastMsg("Replacement requested — waiting for PM approval.");
+      setTimeout(() => setToastMsg(null), 5000);
+      loadRepl();
+      loadOv();
+    } catch (err) {
+      setReplaceError(err.message || "Request failed");
+    } finally {
+      setReplaceBusy(false);
+    }
   }
 
   function openCancelPoidModal() {
@@ -1354,6 +1518,7 @@ export default function IMPOIntake() {
           {tab === "transfers" && <ExportExcelButton filename="po-transfers" rows={transferVisibleRows} />}
           {tab === "cancels" && <ExportExcelButton filename="po-cancel-requests" rows={cancelVisibleRows} />}
           {tab === "directcloses" && <ExportExcelButton filename="po-direct-close-requests" rows={dcVisibleRows} />}
+          {tab === "replacements" && <ExportExcelButton filename="po-replacement-requests" rows={replVisibleRows} />}
           {tab === "dummy" && (
             <button
               type="button"
@@ -1365,9 +1530,9 @@ export default function IMPOIntake() {
             </button>
           )}
           <button type="button" className="btn-secondary"
-            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : tab === "cancels" ? loadCancels : tab === "directcloses" ? (() => setDcRefreshKey((k) => k + 1)) : load}
-            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : tab === "directcloses" ? dcListLoading : ovLoading}>
-            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : tab === "directcloses" ? dcListLoading : ovLoading) ? "Loading…" : "Refresh"}
+            onClick={tab === "dummy" ? loadDummy : tab === "overview" ? loadOv : tab === "transfers" ? loadTransfers : tab === "cancels" ? loadCancels : tab === "directcloses" ? (() => setDcRefreshKey((k) => k + 1)) : tab === "replacements" ? loadRepl : load}
+            disabled={tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : tab === "directcloses" ? dcListLoading : tab === "replacements" ? replListLoading : ovLoading}>
+            {(tab === "intake" ? loading : tab === "dummy" ? dummyLoading : tab === "transfers" ? transferListLoading : tab === "cancels" ? cancelListLoading : tab === "directcloses" ? dcListLoading : tab === "replacements" ? replListLoading : ovLoading) ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
@@ -1398,6 +1563,12 @@ export default function IMPOIntake() {
           Direct Close
           {dcPendingRows.length > 0 && tab !== "directcloses" && (
             <span style={{ marginLeft: 6, background: "#fef3c7", color: "#92400e", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{dcPendingRows.length}</span>
+          )}
+        </button>
+        <button type="button" style={tabStyle(tab === "replacements")} onClick={() => setTab("replacements")}>
+          Replacements
+          {replPendingRows.length > 0 && tab !== "replacements" && (
+            <span style={{ marginLeft: 6, background: "#fef3c7", color: "#92400e", borderRadius: 999, padding: "0px 7px", fontSize: 11, fontWeight: 700 }}>{replPendingRows.length}</span>
           )}
         </button>
       </div>
@@ -1541,6 +1712,15 @@ export default function IMPOIntake() {
           >
             Cancel POID ({ovSelected.size})
           </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={ovSelected.size < 1}
+            onClick={openReplaceModal}
+            style={{ borderColor: "#93c5fd", color: "#1d4ed8", fontSize: "0.78rem", padding: "5px 12px" }}
+          >
+            Replace POID ({ovSelected.size})
+          </button>
           <button type="button" className="btn-secondary" disabled={ovSelected.size === 0} onClick={() => copyPoids(ovRows, ovSelected)}
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}>
             Copy POIDs{ovSelected.size > 0 ? ` (${ovSelected.size})` : ""}
@@ -1610,6 +1790,36 @@ export default function IMPOIntake() {
         </div>
       )}
 
+      {tab === "replacements" && (
+        <div className="toolbar">
+          <div role="tablist" style={{ display: "inline-flex", padding: 3, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", flexShrink: 0 }}>
+            {[
+              { id: "pending", label: "Pending Approval", count: replPendingRows.length },
+              { id: "history", label: "History" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setReplSubTab(opt.id)}
+                style={{
+                  padding: "5px 14px", fontSize: "0.8rem", fontWeight: replSubTab === opt.id ? 700 : 500,
+                  border: "none", borderRadius: 6, cursor: "pointer",
+                  background: replSubTab === opt.id ? "#fff" : "transparent",
+                  color: replSubTab === opt.id ? "#0f172a" : "#64748b",
+                  boxShadow: replSubTab === opt.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+              >
+                {opt.label}
+                {!!opt.count && (
+                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 16, height: 16, padding: "0 5px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "#f59e0b", color: "#fff" }}>{opt.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {tab === "directcloses" && (
         <div className="toolbar">
           <div role="tablist" style={{ display: "inline-flex", padding: 3, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", flexShrink: 0 }}>
@@ -1642,6 +1852,7 @@ export default function IMPOIntake() {
 
       {tab === "cancels" && cancelListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {cancelListError}</div>}
       {tab === "directcloses" && dcListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dcListError}</div>}
+      {tab === "replacements" && replListError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {replListError}</div>}
       {tab === "intake" && error && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {error}</div>}
       {tab === "dummy" && dummyError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {dummyError}</div>}
       {tab === "overview" && ovError && <div className="notice error" style={{ margin: "0 16px 8px" }}><span>!</span> {ovError}</div>}
@@ -1650,8 +1861,8 @@ export default function IMPOIntake() {
       {/* ── ONE page-content always rendered (fixes tab-switch CSS) ────── */}
       <div className="page-content">
         <DataTableWrapper scrollRef={tableScrollRef}
-          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : tab === "cancels" ? (cancelListLoading ? null : cancelVisibleRows.length) : tab === "directcloses" ? (dcListLoading ? null : dcVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
-          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : tab === "cancels" ? cancelVisibleRows.length : tab === "directcloses" ? dcVisibleRows.length : ovDisplayedCount}
+          loadedCount={tab === "intake" ? (loading ? null : intakeDisplayedCount) : tab === "dummy" ? (dummyLoading ? null : Math.min(dummyRows.length, dummyDisplayLimit)) : tab === "transfers" ? (transferListLoading ? null : transferVisibleRows.length) : tab === "cancels" ? (cancelListLoading ? null : cancelVisibleRows.length) : tab === "directcloses" ? (dcListLoading ? null : dcVisibleRows.length) : tab === "replacements" ? (replListLoading ? null : replVisibleRows.length) : (ovLoading ? null : Math.min(ovRows.length, ovDisplayLimit))}
+          filteredCount={tab === "intake" ? intakeDisplayedCount : tab === "dummy" ? dummyDisplayedCount : tab === "transfers" ? transferVisibleRows.length : tab === "cancels" ? cancelVisibleRows.length : tab === "directcloses" ? dcVisibleRows.length : tab === "replacements" ? replVisibleRows.length : ovDisplayedCount}
           filterActive={tab === "intake" ? !!hasFilters : tab === "dummy" ? (hasDummyFilters || filteredDummyRows.length !== dummyRows.length) : (tab === "transfers" || tab === "cancels") ? false : (hasOvFilters || ovFilteredRows.length !== ovRows.length)}
           loading={
             tab === "intake" ? (loading && rows.length > 0) :
@@ -1663,7 +1874,77 @@ export default function IMPOIntake() {
           rowLimitValue={tab === "dummy" ? effectiveDummyRowLimit : tab === "overview" ? effectiveOvRowLimit : undefined}
           onRowLimitChange={tab === "dummy" || tab === "overview" ? confirmRowLimit : undefined}
         >
-          {tab === "cancels" ? (
+          {tab === "replacements" ? (
+              <table key="im-po-replacements" className="data-table" data-table-key="im-po-replacements">
+                <thead>
+                  <tr>
+                    <th>Request</th>
+                    <th style={{ textAlign: "right" }}>Old POIDs</th>
+                    <th>Replaced By</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Status</th>
+                    <th>IM</th>
+                    <th style={{ minWidth: 200 }}>Reason</th>
+                    <th style={{ minWidth: 180 }}>PM Remark</th>
+                    <th>Raised</th>
+                    <th>Decided</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {replVisibleRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} style={{ padding: 0 }}>
+                        {replListLoading ? (
+                          <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
+                        ) : (
+                          <div className="empty-state">
+                            <div className="empty-icon">🔁</div>
+                            <h3>{replSubTab === "pending" ? "No replacements waiting" : "No replacement history"}</h3>
+                            <p>{replSubTab === "pending"
+                              ? "When the customer cancels a POID and issues another, raise one here so the planned work moves across."
+                              : "Decided requests show up here."}</p>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : replVisibleRows.map((r) => {
+                    const st = (r.request_status || "");
+                    const tone = st === "Approved" ? { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" }
+                      : st.startsWith("Rejected") ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
+                      : st === "Cancelled" ? { bg: "#f1f5f9", fg: "#475569", bd: "#cbd5e1" }
+                      : { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+                    const pending = st === "Pending PM Approval";
+                    return (
+                      <tr key={r.name}>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.78rem", whiteSpace: "nowrap" }}>{r.name}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{r.poid_count ?? (r.lines || []).length}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.76rem", whiteSpace: "nowrap", color: "#1d4ed8" }}>{r.new_poid || "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.total_amount || 0)}</td>
+                        <td>
+                          <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: "0.7rem", fontWeight: 700, whiteSpace: "nowrap", background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}` }}>{st}</span>
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "#475569", whiteSpace: "nowrap" }}>{r.im_name || r.im || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#475569", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.reason || ""}>{r.reason || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: r.pm_remark ? "#1d4ed8" : "#cbd5e1", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.pm_remark || ""}>{r.pm_remark || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+                          {r.creation ? new Date(r.creation).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "#64748b", whiteSpace: "nowrap" }}>
+                          {r.approved_at ? new Date(r.approved_at).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        </td>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem", padding: "3px 10px" }}
+                            onClick={() => { setReplDecideRemark(""); setViewReplTarget(r); }}>
+                            {pending && replCanDecide ? "Review" : "View"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+          ) : tab === "cancels" ? (
               <table key="im-po-cancels" className="data-table" data-table-key="im-po-cancels">
                 <thead>
                   <tr>
@@ -1978,6 +2259,18 @@ export default function IMPOIntake() {
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 600 }}>
                           {row.poid || row.name}
                           {isDummy && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#fed7aa", color: "#92400e" }}>Dummy</span>}
+                          {row.replaced_by && (
+                            <span title={`Cancelled — replaced by ${row.replaced_by}`}
+                              style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#e0e7ff", color: "#3730a3", cursor: "help" }}>
+                              Replaced
+                            </span>
+                          )}
+                          {row.replaces_poids && (
+                            <span title={`Replaces ${row.replaces_poids}`}
+                              style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 999, fontSize: "0.65rem", fontWeight: 700, background: "#dcfce7", color: "#166534", cursor: "help" }}>
+                              Successor
+                            </span>
+                          )}
                         </td>
                         <td>
                           <StatusBadge value={row.dispatch_status || "Pending"} bg={sc.bg} fg={sc.fg} bd={sc.bd} />
@@ -2417,6 +2710,148 @@ export default function IMPOIntake() {
           </div>
         </div>
       </Modal>
+
+      {/* ── REPLACE POID MODAL ───────────────────────────────────────────── */}
+      {replaceOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 16, overflowY: "auto" }}
+             onClick={() => !replaceBusy && setReplaceOpen(false)}>
+          {/* The scroll lives on the OVERLAY, not the card: SearchableSelect
+              drops an absolutely-positioned list, and a card with
+              overflow:auto clips it to a couple of visible rows. */}
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: "min(620px, 96vw)", margin: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 4px", fontSize: "1rem" }}>Replace POID</h3>
+            <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: 10 }}>
+              Their plan, execution and Work Done move to the new POID; the old
+              ones are marked Cancelled / Replaced.
+            </div>
+
+            <div style={{ marginBottom: 14, border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ padding: "6px 10px", background: "#f8fafc", fontSize: "0.72rem", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Replacing {replaceSelectedRows.length} POID{replaceSelectedRows.length !== 1 ? "s" : ""}
+              </div>
+              <div style={{ maxHeight: 132, overflowY: "auto" }}>
+                {replaceSelectedRows.map((r) => (
+                  <div key={r.name} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "5px 10px", borderTop: "1px solid #f1f5f9", fontSize: "0.76rem" }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#0f172a" }}>{r.poid || r.name}</span>
+                    <span style={{ color: "#64748b", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.site_code || "—"}{r.item_code ? ` · ${r.item_code}` : ""}
+                    </span>
+                    <span style={{ color: "#475569", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {money.format(r.line_amount || 0)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {replaceError && <div className="notice error" style={{ marginBottom: 12 }}>{replaceError}</div>}
+
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: 5 }}>
+              New POID *
+            </label>
+            <SearchableSelect
+              value={replaceTarget}
+              onChange={setReplaceTarget}
+              onSearch={setReplaceTargetSearch}
+              options={replaceTargets.map((r) => ({
+                id: r.name,
+                label: [r.poid, r.site_code, r.item_code,
+                        `SAR ${money.format(r.line_amount || 0)}`]
+                  .filter(Boolean).join("  ·  "),
+              }))}
+              placeholder={replaceTargetsLoading ? "Loading eligible POIDs…"
+                : replaceTargets.length ? "Search the POID the customer issued…"
+                : "No POID on this project can take this work"}
+              style={{ width: "100%" }}
+              triggerStyle={{ width: "100%", minWidth: "unset", boxSizing: "border-box" }}
+            />
+            <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 4 }}>
+              Only POIDs on the same project with no plan, execution or Work Done
+              of their own are listed.
+            </div>
+
+            {replaceTargetRow && (
+              <div style={{ marginTop: 10, padding: "8px 12px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.78rem" }}>
+                <div style={{ fontFamily: "monospace", fontWeight: 700, color: "#1d4ed8" }}>
+                  {replaceTargetRow.poid || replaceTargetRow.name}
+                </div>
+                <div style={{ color: "#475569", marginTop: 2 }}>
+                  {replaceTargetRow.site_code || "—"}
+                  {replaceTargetRow.item_description ? ` · ${replaceTargetRow.item_description}` : ""}
+                </div>
+                <div style={{ color: "#475569", marginTop: 2 }}>
+                  Qty {qty.format(replaceTargetRow.qty || 0)} · {money.format(replaceTargetRow.line_amount || 0)} SAR
+                  {replaceTargetRow.dispatch_status ? ` · ${replaceTargetRow.dispatch_status}` : ""}
+                </div>
+              </div>
+            )}
+
+            {replacePreviewLoading && (
+              <div style={{ marginTop: 12, fontSize: "0.8rem", color: "#94a3b8" }}>Checking…</div>
+            )}
+
+            {replacePreview && !replacePreviewLoading && (
+              <div style={{ marginTop: 12 }}>
+                {replacePreview.target_error ? (
+                  <div className="notice error">{replacePreview.target_error}</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: "0.78rem", color: "#047857", fontWeight: 600, marginBottom: 6 }}>
+                      {replacePreview.eligible.length} POID(s) will move to {replacePreview.new_poid}
+                    </div>
+                    {(replacePreview.warnings || []).length > 0 && (
+                      <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, marginBottom: 8 }}>
+                        <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#92400e", marginBottom: 4 }}>
+                          Check before you request
+                        </div>
+                        {replacePreview.warnings.map((w, i) => (
+                          <div key={i} style={{ fontSize: "0.74rem", color: "#7c2d12" }}>{w}</div>
+                        ))}
+                        <div style={{ fontSize: "0.72rem", color: "#92400e", marginTop: 4 }}>
+                          The quantity already executed is kept as recorded — only the money
+                          follows the new line.
+                        </div>
+                      </div>
+                    )}
+                                        {replacePreview.blocked.length > 0 && (
+                      <div style={{ padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8 }}>
+                        <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "#92400e", marginBottom: 6 }}>
+                          {replacePreview.blocked.length} cannot be replaced:
+                        </div>
+                        {replacePreview.blocked.map((b) => (
+                          <div key={b.po_dispatch} style={{ fontSize: "0.74rem", color: "#7c2d12", marginBottom: 3 }}>
+                            <span style={{ fontFamily: "monospace" }}>{b.poid}</span> — {b.error}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", margin: "14px 0 5px" }}>
+              Reason
+            </label>
+            <textarea rows={2} value={replaceReason} onChange={(e) => setReplaceReason(e.target.value)}
+              placeholder="Why the customer re-issued this line"
+              style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: "0.82rem", fontFamily: "inherit" }} />
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button type="button" className="btn-secondary" disabled={replaceBusy}
+                onClick={() => setReplaceOpen(false)}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitReplace}
+                disabled={replaceBusy || replacePreviewLoading || !replaceTarget
+                          || !!replacePreview?.target_error
+                          || !(replacePreview?.eligible || []).length}>
+                {replaceBusy ? "Requesting…"
+                  : `Request Replacement (${(replacePreview?.eligible || []).length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── CANCEL POID MODAL ────────────────────────────────────────────── */}
       {cancelPoidOpen && (
@@ -3107,6 +3542,121 @@ export default function IMPOIntake() {
               : "Direct Close request rejected.");
           }}
         />
+      )}
+
+      {/* ── REPLACEMENT REQUEST — VIEW / REVIEW ──────────────────────────── */}
+      {viewReplTarget && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+             onClick={() => !replBusy && setViewReplTarget(null)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: "min(860px, 100%)", maxHeight: "92dvh", overflowY: "auto", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>{viewReplTarget.name}</h3>
+              <button type="button" onClick={() => setViewReplTarget(null)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
+            </div>
+            <div style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: 12 }}>
+              {viewReplTarget.poid_count} POID{viewReplTarget.poid_count !== 1 ? "s" : ""} → <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#1d4ed8" }}>{viewReplTarget.new_poid}</span>
+              {" · "}SAR {money.format(viewReplTarget.total_amount || 0)}
+              {" · "}<span style={{ fontWeight: 700 }}>{viewReplTarget.request_status}</span>
+              {viewReplTarget.im_name ? ` · ${viewReplTarget.im_name}` : ""}
+            </div>
+
+            {viewReplTarget.new_line && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.82rem" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#3b82f6", marginBottom: 2 }}>REPLACED BY</div>
+                <div style={{ fontFamily: "monospace", fontWeight: 700, color: "#1d4ed8" }}>
+                  {viewReplTarget.new_line.poid || viewReplTarget.new_poid}
+                </div>
+                <div style={{ color: "#475569", marginTop: 2 }}>
+                  {viewReplTarget.new_line.site_code || "—"}
+                  {viewReplTarget.new_line.item_code ? ` · ${viewReplTarget.new_line.item_code}` : ""}
+                  {viewReplTarget.new_line.item_description ? ` · ${viewReplTarget.new_line.item_description}` : ""}
+                </div>
+                <div style={{ color: "#475569", marginTop: 2 }}>
+                  Qty {qty.format(viewReplTarget.new_line.qty || 0)}
+                  {" · "}{money.format(viewReplTarget.new_line.line_amount || 0)} SAR
+                  {viewReplTarget.new_line.dispatch_status ? ` · ${viewReplTarget.new_line.dispatch_status}` : ""}
+                </div>
+              </div>
+            )}
+            {viewReplTarget.reason && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.82rem", color: "#334155" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>REASON</div>
+                {viewReplTarget.reason}
+              </div>
+            )}
+            {viewReplTarget.pm_remark && (
+              <div style={{ marginBottom: 10, padding: "8px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: "0.82rem", color: "#1e3a8a" }}>
+                <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#3b82f6", marginBottom: 2 }}>PM REMARK</div>
+                {viewReplTarget.pm_remark}
+              </div>
+            )}
+
+            <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8 }}>
+              <table className="data-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>POID being replaced</th>
+                    <th>DUID</th>
+                    <th>Project</th>
+                    <th>Item Code</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: "right" }}>Qty</th>
+                    <th style={{ textAlign: "right" }}>Amount (SAR)</th>
+                    <th>Outcome</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(viewReplTarget.lines || []).map((l, i) => (
+                    <tr key={l.po_dispatch || i}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.76rem" }}>{l.poid || l.po_dispatch}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{l.site_code || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{l.project_code || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{l.item_code || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>{l.item_description || "—"}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{qty.format(l.qty || 0)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(l.line_amount || 0)}</td>
+                      <td style={{ fontSize: "0.76rem", fontWeight: 600, color: l.line_status === "Replaced" ? "#047857" : "#b45309" }}>
+                        {l.line_status || "Pending"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {viewReplTarget.request_status === "Pending PM Approval" && replCanDecide && (
+              <>
+                <div style={{ marginTop: 14, padding: "8px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: "0.78rem", color: "#92400e" }}>
+                  Approving moves every plan, execution and Work Done above onto{" "}
+                  <strong>{viewReplTarget.new_poid}</strong> and marks these POIDs Cancelled / Replaced.
+                </div>
+                <textarea rows={2} value={replDecideRemark} onChange={(e) => setReplDecideRemark(e.target.value)}
+                  placeholder="Remark (optional)"
+                  style={{ width: "100%", boxSizing: "border-box", marginTop: 10, padding: "7px 10px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: "0.82rem", fontFamily: "inherit" }} />
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                  <button type="button" className="btn-secondary" disabled={replBusy === viewReplTarget.name}
+                    onClick={() => decideReplacement(viewReplTarget.name, "reject")}>Reject</button>
+                  <button type="button" className="btn-primary" disabled={replBusy === viewReplTarget.name}
+                    onClick={() => decideReplacement(viewReplTarget.name, "approve")}>
+                    {replBusy === viewReplTarget.name ? "Working…" : "Approve & Move Work"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {viewReplTarget.request_status === "Pending PM Approval" && !replCanDecide && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
+                <span style={{ fontSize: "0.78rem", color: "#b45309" }}>Waiting for PM approval.</span>
+                <button type="button" className="btn-secondary" disabled={replBusy === viewReplTarget.name}
+                  style={{ borderColor: "#fca5a5", color: "#b91c1c" }}
+                  onClick={() => withdrawReplacement(viewReplTarget.name)}>
+                  {replBusy === viewReplTarget.name ? "…" : "Withdraw request"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {viewCancelTarget && (

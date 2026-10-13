@@ -42,12 +42,14 @@ export default function TeamAllocationApprovals() {
     setLoading(true);
     setErr(null);
     try {
-      const [teamList, cancelList, transferList, poidCancelList, directCloseRes] = await Promise.all([
+      const [teamList, cancelList, transferList, poidCancelList, directCloseRes,
+             replacementRes] = await Promise.all([
         pmApi.listTeamAllocationRequests("all"),
         pmApi.listAllCancelRequests(),
         pmApi.listPoTransferRequests("all"),
         pmApi.listPoCancelRequests().catch(() => []),
         pmApi.listDirectCloseRequests().catch(() => ({ rows: [], can_decide: false })),
+        pmApi.listPoReplacementRequests("all").catch(() => ({ rows: [], can_decide: false })),
       ]);
       setCanDecideDirectClose(!!directCloseRes?.can_decide);
       const all = [
@@ -66,6 +68,9 @@ export default function TeamAllocationApprovals() {
         // Direct Close tab in PO Control, which is where they track them.
         ...(directCloseRes?.can_decide && Array.isArray(directCloseRes?.rows)
           ? directCloseRes.rows : []).map((r) => ({ ...r, _type: "direct_close" })),
+        // Same rule as Direct Close: only for someone who can decide one.
+        ...(replacementRes?.can_decide && Array.isArray(replacementRes?.rows)
+          ? replacementRes.rows : []).map((r) => ({ ...r, _type: "poid_replacement" })),
       ];
       all.sort((a, b) => new Date(b.cancel_requested_at || b.creation || 0) - new Date(a.cancel_requested_at || a.creation || 0));
       setRows(all);
@@ -122,6 +127,21 @@ export default function TeamAllocationApprovals() {
           setMsg(parts.join(" "));
         } else {
           setMsg("POID cancellation rejected.");
+        }
+      } else if (decideTarget._type === "poid_replacement") {
+        const res = await pmApi.pmDecidePoReplacement(decideTarget.name, decideAction, decideRemark);
+        if (decideAction === "approve") {
+          const m = res?.moved || {};
+          const bits = [];
+          if (m.plans) bits.push(`${m.plans} plan(s)`);
+          if (m.executions) bits.push(`${m.executions} execution(s)`);
+          if (m.work_done_moved || m.work_done_merged) {
+            bits.push(`${(m.work_done_moved || 0) + (m.work_done_merged || 0)} Work Done`);
+          }
+          if (m.material_requests) bits.push(`${m.material_requests} material request(s)`);
+          setMsg(`Replacement approved — ${bits.length ? bits.join(", ") + " moved" : "work moved"} to ${decideTarget.new_poid}.`);
+        } else {
+          setMsg("Replacement rejected.");
         }
       } else if (decideTarget._type === "transfer") {
         await pmApi.pmDecidePoTransfer(decideTarget.name, decideAction, decideRemark);
@@ -253,6 +273,7 @@ export default function TeamAllocationApprovals() {
                   const isPoidCancel = r._type === "poid_cancel";
                   const isTransfer = r._type === "transfer";
                   const isDirectClose = r._type === "direct_close";
+                  const isReplacement = r._type === "poid_replacement";
                   const statusField = isCancel ? r.cancel_request_status : r.request_status;
                   const tone = statusTone(statusField);
                   const noteCellStyle = { fontSize: "0.78rem", color: "#475569", maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
@@ -260,9 +281,12 @@ export default function TeamAllocationApprovals() {
                   const typeLabel = isCancel ? "Plan Cancel"
                     : isPoidCancel ? "POID Cancel"
                     : isDirectClose ? "Direct Close"
+                    : isReplacement ? "POID Replacement"
                     : isTransfer ? "POID Transfer" : "Team Transfer";
                   const typeTone = isCancel
                     ? { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" }
+                    : isReplacement
+                    ? { bg: "#e0e7ff", fg: "#3730a3", bd: "#c7d2fe" }
                     : isPoidCancel
                     ? { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" }
                     : isDirectClose
@@ -282,7 +306,7 @@ export default function TeamAllocationApprovals() {
                       </td>
                       <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.76rem", whiteSpace: "nowrap" }}>{r.name}</td>
                       <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {(isTransfer || isPoidCancel || isDirectClose) ? `${r.poid_count ?? r.lines?.length ?? "?"} POID(s)`
+                        {(isTransfer || isPoidCancel || isDirectClose || isReplacement) ? `${r.poid_count ?? r.lines?.length ?? "?"} POID(s)`
                           : (r.team_name || r.team || "—")}
                       </td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -292,6 +316,8 @@ export default function TeamAllocationApprovals() {
                           <>SAR {money.format(r.total_amount || 0)} · IM: {r.im_full_name || r.im || "—"} · {r.poid_list || "—"}</>
                         ) : isDirectClose ? (
                           <>SAR {money.format(r.total_amount || 0)} · {r.close_type || "—"}{r.milestone ? ` ${r.milestone}` : " full"} · {r.subcontractor || "—"} · {r.poid_list || "—"}</>
+                        ) : isReplacement ? (
+                          <>SAR {money.format(r.total_amount || 0)} · IM: {r.im_name || r.im || "—"} · replaced by {r.new_poid || "—"}</>
                         ) : isTransfer ? (
                           <>{r.from_im_name || r.from_im || "—"} → {r.to_im_name || r.to_im || "—"} · {r.poid_list || "—"}</>
                         ) : (
@@ -379,9 +405,9 @@ export default function TeamAllocationApprovals() {
       {/* PM decide modal */}
       {decideTarget && decideTarget._type !== "direct_close" && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => !busy && setDecideTarget(null)}>
-          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: (decideTarget._type === "transfer" || decideTarget._type === "poid_cancel") ? "min(760px, 96vw)" : "min(520px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: (decideTarget._type === "transfer" || decideTarget._type === "poid_cancel" || decideTarget._type === "poid_replacement") ? "min(760px, 96vw)" : "min(520px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 12px", fontSize: "1.05rem" }}>
-              {decideAction === "view" ? "View" : decideAction === "approve" ? "Approve" : "Reject"} {decideTarget._type === "cancel" ? "plan cancellation" : decideTarget._type === "poid_cancel" ? "POID cancellation" : decideTarget._type === "transfer" ? "POID transfer" : "team transfer"}
+              {decideAction === "view" ? "View" : decideAction === "approve" ? "Approve" : "Reject"} {decideTarget._type === "cancel" ? "plan cancellation" : decideTarget._type === "poid_cancel" ? "POID cancellation" : decideTarget._type === "transfer" ? "POID transfer" : decideTarget._type === "poid_replacement" ? "POID replacement" : "team transfer"}
             </h3>
             <div style={{ fontSize: "0.84rem", color: "#475569", marginBottom: 12 }}>
               {decideTarget._type === "cancel" ? (
@@ -474,6 +500,67 @@ export default function TeamAllocationApprovals() {
                     )}
                   </div>
                 </>
+              ) : decideTarget._type === "poid_replacement" ? (
+                <>
+                  <div style={{ marginBottom: 6 }}>
+                    IM: <strong>{decideTarget.im_name || decideTarget.im || "—"}</strong>
+                    {" · "}{decideTarget.poid_count ?? decideTarget.lines?.length ?? 0} POID(s),
+                    {" "}SAR {money.format(decideTarget.total_amount || 0)}
+                  </div>
+                  <div style={{ padding: "8px 10px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, marginBottom: 8 }}>
+                    <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#3b82f6", marginBottom: 2 }}>REPLACED BY</div>
+                    <span style={{ fontFamily: "ui-monospace, monospace", fontWeight: 700, color: "#1d4ed8" }}>
+                      {decideTarget.new_line?.poid || decideTarget.new_poid || decideTarget.new_po_dispatch || "—"}
+                    </span>
+                    {decideTarget.new_line && (
+                      <div style={{ color: "#475569", marginTop: 3, fontSize: "0.76rem" }}>
+                        {decideTarget.new_line.site_code || "—"}
+                        {decideTarget.new_line.item_code ? ` · ${decideTarget.new_line.item_code}` : ""}
+                        {decideTarget.new_line.item_description ? ` · ${decideTarget.new_line.item_description}` : ""}
+                        {" · Qty "}{decideTarget.new_line.qty ?? "—"}
+                        {" · "}{money.format(decideTarget.new_line.line_amount || 0)} SAR
+                        {decideTarget.new_line.dispatch_status ? ` · ${decideTarget.new_line.dispatch_status}` : ""}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#94a3b8", marginBottom: 2 }}>POIDS BEING REPLACED</div>
+                  <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+                    {(decideTarget.lines || []).length > 0 ? (
+                      <table className="data-table" style={{ margin: 0, fontSize: "0.76rem" }}>
+                        <thead>
+                          <tr>
+                            <th>POID</th>
+                            <th>DUID</th>
+                            <th>Project</th>
+                            <th>Item</th>
+                            <th>Description</th>
+                            <th style={{ textAlign: "right" }}>Qty</th>
+                            <th style={{ textAlign: "right" }}>Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {decideTarget.lines.map((l, i) => (
+                            <tr key={l.po_dispatch || i}>
+                              <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.poid || l.po_dispatch}</td>
+                              <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.site_code || "—"}</td>
+                              <td>{l.project_code || "—"}</td>
+                              <td style={{ fontFamily: "ui-monospace, monospace" }}>{l.item_code || "—"}</td>
+                              <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.item_description || ""}>{l.item_description || "—"}</td>
+                              <td style={{ textAlign: "right" }}>{l.qty ?? "—"}</td>
+                              <td style={{ textAlign: "right" }}>{money.format(l.line_amount || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={{ padding: "6px 8px", fontSize: "0.78rem", color: "#94a3b8" }}>—</div>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 8, padding: "7px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: "0.76rem", color: "#92400e" }}>
+                    Approving moves every plan, execution and Work Done above onto the new POID
+                    and marks these Cancelled / Replaced.
+                  </div>
+                </>
               ) : decideTarget._type === "transfer" ? (
                 <>
                   <strong>{decideTarget.from_im_name || decideTarget.from_im}</strong> → <strong>{decideTarget.to_im_name || decideTarget.to_im}</strong>
@@ -558,7 +645,7 @@ export default function TeamAllocationApprovals() {
                     onClick={submitDecide}
                     style={decideAction === "approve" ? { background: "#059669" } : { background: "#b91c1c" }}
                   >
-                    {busy ? "…" : (decideAction === "approve" ? ((decideTarget._type === "cancel" || decideTarget._type === "poid_cancel") ? "Approve cancellation" : "Approve transfer") : "Reject")}
+                    {busy ? "…" : (decideAction === "approve" ? ((decideTarget._type === "cancel" || decideTarget._type === "poid_cancel") ? "Approve cancellation" : decideTarget._type === "poid_replacement" ? "Approve & move work" : "Approve transfer") : "Reject")}
                   </button>
                 </div>
               </>

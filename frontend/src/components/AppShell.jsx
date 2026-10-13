@@ -281,7 +281,8 @@ export default function AppShell() {
     const poll = async () => {
       try {
         if (role === "admin") {
-          const [teamList, cancelList, transferList, poidCancelList, directCloseRes] = await Promise.all([
+          const [teamList, cancelList, transferList, poidCancelList, directCloseRes,
+                 replacementRes] = await Promise.all([
             pmApi.listTeamAllocationRequests("pending_pm"),
             pmApi.listPendingCancelRequests("Pending PM Approval"),
             pmApi.listPoTransferRequests("pending_pm"),
@@ -291,6 +292,9 @@ export default function AppShell() {
             // `can_decide` for the caller, so a PM's dot does not count work
             // they cannot do anything about.
             pmApi.listDirectCloseRequests("Pending Admin Approval").catch(() => ({ rows: [], can_decide: false })),
+            // Same shape and the same reason: the endpoint answers can_decide
+            // for the caller, so nobody's dot counts work they cannot do.
+            pmApi.listPoReplacementRequests("pending_pm").catch(() => ({ rows: [], can_decide: false })),
           ]);
           const teamCount = (Array.isArray(teamList) ? teamList.length : 0);
           const cancelCount = (Array.isArray(cancelList) ? cancelList.length : 0);
@@ -298,7 +302,10 @@ export default function AppShell() {
           const poidCancelCount = (Array.isArray(poidCancelList) ? poidCancelList.length : 0);
           const directCloseCount = directCloseRes?.can_decide
             ? (Array.isArray(directCloseRes?.rows) ? directCloseRes.rows.length : 0) : 0;
-          if (!cancelled) setApprovalDotCount(teamCount + cancelCount + transferCount + poidCancelCount + directCloseCount);
+          const replacementCount = replacementRes?.can_decide
+            ? (Array.isArray(replacementRes?.rows) ? replacementRes.rows.length : 0) : 0;
+          if (!cancelled) setApprovalDotCount(teamCount + cancelCount + transferCount
+            + poidCancelCount + directCloseCount + replacementCount);
         } else {
           const list = await pmApi.listTeamAllocationRequests("incoming");
           const pending = (Array.isArray(list) ? list : []).filter(
