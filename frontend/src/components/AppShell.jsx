@@ -224,7 +224,7 @@ function ChevronLeft() {
 export default function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, role, isPm, logout } = useAuth();
+  const { user, role, availableRoles, switchRole, isPm, logout } = useAuth();
   // Desk is only part of the job for the admin (housekeeping), the PIC
   // (invoicing) and the warehouse (stock entries). An IM or field user works
   // entirely in the portal, so the link is noise for them.
@@ -533,6 +533,34 @@ export default function AppShell() {
 
         {/* User footer */}
         <div className="sidebar-footer" ref={menuRef}>
+          {/* An account holding more than one portal role switches here
+              instead of logging out and back in as someone else. A view
+              switch only — every endpoint still checks roles server-side. */}
+          {!collapsed && (availableRoles || []).length > 1 && (
+            <div style={{ display: "flex", gap: 4, padding: "0 10px 8px", flexWrap: "wrap" }}>
+              {availableRoles.map((r) => {
+                const label = { admin: "PM", im: "IM", pic: "PIC" }[r] || r;
+                const on = role === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => switchRole(r)}
+                    title={on ? `Viewing the ${label} portal` : `Switch to the ${label} portal`}
+                    style={{
+                      flex: 1, minWidth: 44, padding: "4px 8px", borderRadius: 6,
+                      fontSize: 11, fontWeight: 700, cursor: on ? "default" : "pointer",
+                      border: `1px solid ${on ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)"}`,
+                      background: on ? "rgba(255,255,255,0.18)" : "transparent",
+                      color: on ? "#fff" : "rgba(255,255,255,0.6)",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div className="sidebar-user">
             <span className="sidebar-user-avatar">{initials}</span>
             {!collapsed && (

@@ -500,12 +500,22 @@ def get_logged_user():
     # is the server-side twin of this flag, so portal and server agree.
     is_pm = is_pm_only(user)
 
+    # The portal this account lands on, by precedence. Unchanged.
     if set(user_roles) & PM_LEVEL_ROLES:
         app_role = "admin"
     elif "INET PIC" in user_roles:
         app_role = "pic"
     elif "INET IM" in user_roles:
         app_role = "im"
+    elif "INET Field Team" in user_roles:
+        app_role = "field"
+
+    # The IM lookup used to sit inside an if/elif chain under app_role, so an
+    # account holding BOTH an admin role and INET IM stopped at "admin" and
+    # never ran it — im_name stayed unset, and every IM page keys off it. It
+    # runs on its own now, which is what lets such an account switch.
+    im_master_found = False
+    if "INET IM" in user_roles:
         try:
             # ignore_permissions: session-init lookup must not be blocked by
             # role/user permissions. Use DocType existence check (registry)
@@ -524,6 +534,7 @@ def get_logged_user():
                     )
                 if im_rec:
                     im_name = im_rec[0].name
+                    im_master_found = True
         except Exception:
             pass
         if not im_name:
@@ -536,8 +547,26 @@ def get_logged_user():
         )
         if im_teams:
             team_id = im_teams[0].team_id
-    elif "INET Field Team" in user_roles:
-        app_role = "field"
+
+    # Which portals the switcher offers. Not the same question as app_role:
+    #  * Field is deliberately absent — a field account has one portal and
+    #    nobody switches INTO it.
+    #  * IM only when a real IM Master stands behind the account. Without one
+    #    im_name falls back to the user's full name, which matches nothing, so
+    #    every IM page would be empty — offering that switch is offering a
+    #    dead end.
+    # app_role is always included so the view currently on screen is listed.
+    available_roles = []
+    if set(user_roles) & PM_LEVEL_ROLES:
+        available_roles.append("admin")
+    if "INET PIC" in user_roles:
+        available_roles.append("pic")
+    if "INET IM" in user_roles and im_master_found:
+        available_roles.append("im")
+    if app_role not in available_roles:
+        available_roles.insert(0, app_role)
+
+    if "INET Field Team" in user_roles and not team_id:
         # Primary: exact match by field_user (User link on INET Team)
         ft = frappe.get_all(
             "INET Team",
@@ -553,6 +582,7 @@ def get_logged_user():
         "full_name": full_name,
         "authenticated": True,
         "app_role": app_role,
+        "available_roles": available_roles or [app_role],
         "is_pm": is_pm,
         "im_name": im_name,
         "team_id": team_id,

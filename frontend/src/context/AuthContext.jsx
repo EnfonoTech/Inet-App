@@ -13,6 +13,13 @@ export function AuthProvider({ children }) {
   const [isPm, setIsPm] = useState(false);
   const [imName, setImName] = useState(null);
   const [teamId, setTeamId] = useState(null);
+  // An account can hold more than one portal role — an IM who is also a PM is
+  // normal here. The server used to resolve only the highest one, so such a
+  // person could never reach the other portal without logging in as someone
+  // else. `availableRoles` is every portal they may use; `role` is the one
+  // they are looking at, remembered per account so a shared browser does not
+  // hand one person another's last choice.
+  const [availableRoles, setAvailableRoles] = useState([]);
 
   const checkSession = useCallback(async () => {
     setLoading(true);
@@ -20,19 +27,28 @@ export function AuthProvider({ children }) {
       const res = await pmApi.getLoggedUser();
       if (res && res.authenticated === true && res.user && res.user !== "Guest") {
         const resolvedRole = res.app_role || "field";
+        const avail = Array.isArray(res.available_roles) && res.available_roles.length
+          ? res.available_roles : [resolvedRole];
+        let active = resolvedRole;
+        try {
+          const saved = localStorage.getItem(`inet:portal-role:${res.user}`);
+          if (saved && avail.includes(saved)) active = saved;
+        } catch { /* private window / blocked storage — fall back to the default */ }
         setUser({ email: res.user, full_name: res.full_name || "" });
-        setRole(resolvedRole);
+        setAvailableRoles(avail);
+        setRole(active);
         setIsPm(!!res.is_pm);
         setImName(res.im_name || null);
         setTeamId(res.team_id || null);
         setLoading(false);
-        return { ok: true, role: resolvedRole };
+        return { ok: true, role: active };
       }
     } catch {
       // treat as logged out
     }
     setUser(null);
     setRole(null);
+    setAvailableRoles([]);
     setIsPm(false);
     setImName(null);
     setTeamId(null);
@@ -55,6 +71,7 @@ export function AuthProvider({ children }) {
           if (!res?.authenticated) {
             setUser(null);
             setRole(null);
+            setAvailableRoles([]);
             setIsPm(false);
             setImName(null);
             setTeamId(null);
@@ -99,13 +116,25 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
     setRole(null);
+    setAvailableRoles([]);
     setIsPm(false);
     setImName(null);
     setTeamId(null);
   }, []);
 
+  // A view switch, not an escalation: every endpoint still checks roles on
+  // the server. This only decides which portal's pages are offered.
+  const switchRole = useCallback((next) => {
+    if (!next || !availableRoles.includes(next)) return;
+    setRole(next);
+    try {
+      if (user?.email) localStorage.setItem(`inet:portal-role:${user.email}`, next);
+    } catch { /* storage blocked — the switch still applies for this session */ }
+  }, [availableRoles, user]);
+
   return (
-    <AuthContext.Provider value={{ user, loading, role, isPm, imName, teamId, login, logout, checkSession }}>
+    <AuthContext.Provider value={{ user, loading, role, availableRoles, switchRole,
+                                   isPm, imName, teamId, login, logout, checkSession }}>
       {children}
     </AuthContext.Provider>
   );
