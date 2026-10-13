@@ -23,6 +23,7 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { DOC_REQUIREMENTS } from "../../utils/docRequirements";
+import { TeamRatingCell, TeamRatingModal } from "../../components/TeamRating";
 import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
          SubcontractorSplitTable } from "../pic/picShared";
 
@@ -407,6 +408,9 @@ export default function IMWorkDone() {
   const [bulkErr, setBulkErr] = useState(null);
   const [bulkResult, setBulkResult] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  // Team rating, opened from the Team Rating column. Kept readable here
+  // because a confirmed execution has already left the Rollout Work Done page.
+  const [ratingFor, setRatingFor] = useState(null);
   const [submissionPick, setSubmissionPick] = useState("");
   // Confirmed quantity, captured at the IM -> PIC handoff. What becomes of any
   // leftover is decided separately, later — from the row itself or the banner.
@@ -1341,6 +1345,7 @@ export default function IMWorkDone() {
                   <th style={{ textAlign: "right" }} title="Attempt / visit number">Attempt #</th>
                   <th>CIAG</th>
                   <th>QC</th>
+                  <th title="The IM's rating of the team on this job">Team Rating</th>
                   <th>Execution Remarks</th>
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
@@ -1433,6 +1438,11 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{r.visit_number != null ? r.visit_number : "—"}</td>
                     <td><StatusPill value={r.ciag_status} /></td>
                     <td><StatusPill value={r.qc_status} /></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {r.execution
+                        ? <TeamRatingCell row={r} onClick={() => setRatingFor(r)} />
+                        : <span style={{ color: "#cbd5e1" }}>—</span>}
+                    </td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.execution_remarks || ""}>{r.execution_remarks || "—"}</td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.general_remark} tone="general" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.general_remark = v; }} /></td>
                     <td onClick={(e) => e.stopPropagation()}><RemarksCell value={r.manager_remark} tone="manager" poDispatch={r.po_dispatch || r.poid} poid={r.poid || r.po_dispatch} onSaved={(v) => { r.manager_remark = v; }} /></td>
@@ -1501,7 +1511,7 @@ export default function IMWorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#0f172a" }}>
                       {money.format(totals.lineAmount)}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 12px", color: "#047857" }}>
                       {money.format(totals.revenue)}
                     </td>
@@ -1529,6 +1539,17 @@ export default function IMWorkDone() {
           onChange={confirmRowLimit}
         />
       </div>
+
+      {ratingFor && (
+        <TeamRatingModal
+          row={ratingFor}
+          onClose={() => setRatingFor(null)}
+          onSaved={(saved) => {
+            Object.assign(ratingFor, saved);
+            setRows((prev) => prev.map((r) => (r.execution === saved.name ? { ...r, ...saved, name: r.name } : r)));
+          }}
+        />
+      )}
 
       {detailRow && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setDetailRow(null)}>

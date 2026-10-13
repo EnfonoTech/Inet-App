@@ -8121,6 +8121,115 @@ def update_execution(payload):
     return {"name": doc.name, "status": doc.execution_status}
 
 
+# ─── Team rating ────────────────────────────────────────────────────────────
+# The IM scores the team that did the work, on one execution. A Daily
+# Execution is already one row per team per job per date, which is exactly
+# the grain the rating is asked for — so the scores live on it rather than in
+# a doctype of their own, and the history is kept by the execution itself.
+#
+# 1..5, with 0 meaning "not rated". Int, not Frappe's Rating fieldtype: that
+# one stores a 0..1 fraction, which every report would have to multiply back
+# out before it read like a star again.
+TEAM_RATING_FIELDS = (
+    ("rating_execution", "Execution Performance"),
+    ("rating_quality", "Quality"),
+    ("rating_safety", "Safety Compliance"),
+    ("rating_timeliness", "Timeliness"),
+    ("rating_overall", "Overall Performance"),
+)
+
+
+# What the Rating cell draws, as SQL — the Overall stars, or the words the
+# cell shows in their place while nothing has been scored. The column filter
+# has to offer what the cell renders, not the stored 0.
+_TEAM_RATING_NONE = "Not rated"
+
+
+def team_rating_filter_sql(alias="de"):
+    any_rated = " + ".join(f"IFNULL({alias}.{f}, 0)" for f, _ in TEAM_RATING_FIELDS)
+    return (
+        f"IF(({any_rated}) = 0, '{_TEAM_RATING_NONE}', "
+        f"CAST(IFNULL({alias}.rating_overall, 0) AS CHAR))"
+    )
+
+
+def _team_rating_columns_exist():
+    return frappe.db.has_column("Daily Execution", "rating_overall")
+
+
+@frappe.whitelist()
+def rate_execution(execution, ratings=None, remark=None):
+    """Score one execution's team on the five criteria.
+
+    `ratings` is {field: 1..5}. A field left out keeps its current score, so
+    the modal can save one star without clearing the other four; 0 clears one
+    back to unrated.
+    """
+    execution = cstr(execution or "").strip()
+    if not execution:
+        frappe.throw("No execution given.")
+    if not _team_rating_columns_exist():
+        frappe.throw("Team rating is not available on this site yet — run migrate.")
+
+    doc = frappe.get_doc("Daily Execution", execution)
+    # Rating is a judgement about the team, so it is the IM's to make. The
+    # field user reaches update_execution with mode "qc_ciag" and must not
+    # reach this at all — a team cannot score itself.
+    if _user_execution_update_mode(frappe.session.user, doc) != "full":
+        frappe.throw("Only an IM or PM can rate a team.", frappe.PermissionError)
+
+    if isinstance(ratings, str):
+        ratings = frappe.parse_json(ratings)
+    ratings = ratings or {}
+
+    valid = {f for f, _ in TEAM_RATING_FIELDS}
+    unknown = set(ratings) - valid
+    if unknown:
+        frappe.throw(f"Not a rating field: {', '.join(sorted(unknown))}")
+
+    touched = False
+    for field in valid:
+        if field not in ratings:
+            continue
+        score = cint(ratings.get(field) or 0)
+        if score < 0 or score > 5:
+            frappe.throw(f"{field} must be between 0 and 5.")
+        if cint(doc.get(field) or 0) != score:
+            touched = True
+        doc.set(field, score)
+
+    if remark is not None:
+        new_remark = cstr(remark or "").strip()
+        if cstr(doc.get("rating_remark") or "").strip() != new_remark:
+            touched = True
+        doc.rating_remark = new_remark
+
+    # Who rated and when — stamped only while a score is actually standing, so
+    # clearing every star back to 0 leaves no phantom "rated by" behind it.
+    if any(cint(doc.get(f) or 0) > 0 for f, _ in TEAM_RATING_FIELDS):
+        if touched:
+            doc.rated_by = frappe.session.user
+            doc.rated_on = now_datetime()
+    else:
+        doc.rated_by = None
+        doc.rated_on = None
+
+    doc.flags.ignore_permissions = True
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return _execution_rating_payload(doc)
+
+
+def _execution_rating_payload(doc):
+    out = {f: cint(doc.get(f) or 0) for f, _ in TEAM_RATING_FIELDS}
+    out["rating_remark"] = cstr(doc.get("rating_remark") or "")
+    out["rated_by"] = doc.get("rated_by") or ""
+    out["rated_by_name"] = frappe.utils.get_fullname(doc.rated_by) if doc.get("rated_by") else ""
+    out["rated_on"] = cstr(doc.get("rated_on") or "")
+    out["name"] = doc.name
+    return out
+
+
 @frappe.whitelist()
 def bulk_update_execution_field(names, field, value):
     """
@@ -10194,6 +10303,8 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
     if frappe.db.has_column("PO Dispatch", "im"):
         im_filter_parts.append("IFNULL(rim_pd.full_name,'')")
     col_filter_map["inet_im"] = "CONCAT_WS(' ', " + ", ".join(im_filter_parts) + ")"
+    if _team_rating_columns_exist():
+        col_filter_map["team_rating"] = team_rating_filter_sql("de")
     if frappe.db.has_column("Daily Execution", "ciag_status"):
         col_filter_map["ciag"] = "IFNULL(de.ciag_status,'')"
     if frappe.db.has_column("Work Done", "submission_status"):
@@ -10409,6 +10520,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
         de_fields = ["name", "rollout_plan", "execution_date", "execution_status", "team", "qc_status", "remarks"]
         if frappe.db.has_column("Daily Execution", "ciag_status"):
             de_fields.append("ciag_status")
+        # The IM's team rating. The execution leaves Rollout Work Done the
+        # moment it is confirmed, so this page is where the score has to stay
+        # readable afterwards.
+        if _team_rating_columns_exist():
+            de_fields.extend([f for f, _ in TEAM_RATING_FIELDS])
+            de_fields.extend(["rating_remark", "rated_by", "rated_on"])
         ex_rows = frappe.get_all(
             "Daily Execution",
             filters={"name": ["in", exec_names]},
@@ -10577,6 +10694,11 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
                 "qc_status": ex.get("qc_status") if ex else None,
                 "ciag_status": ex.get("ciag_status") if ex else None,
                 "execution_remarks": ex.get("remarks") if ex else None,
+                **({f: (ex.get(f) if ex else 0) for f, _ in TEAM_RATING_FIELDS}
+                   if _team_rating_columns_exist() else {}),
+                "rating_remark": (ex.get("rating_remark") if ex else None),
+                "rated_by": (ex.get("rated_by") if ex else None),
+                "rated_on": (ex.get("rated_on") if ex else None),
                 "plan_date": rp.plan_date if rp else None,
                 "visit_type": rp.visit_type if rp else None,
                 "visit_number": rp.get("visit_number") if rp else None,
@@ -10842,6 +10964,10 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
     col_filter_map["activity_type"] = (
         "IFNULL((SELECT activity_type FROM `tabItem` WHERE name = pd.item_code), '')"
     )
+    # No execution behind these rows, so there is nowhere for a rating to
+    # live — the cell reads "Not rated", and the filter has to agree.
+    if _team_rating_columns_exist():
+        col_filter_map["team_rating"] = f"'{_TEAM_RATING_NONE}'"
     col_filter_map["subcontract"] = f"IFNULL({_subcon_expr_sub},'')"
     col_filter_map["contract_model"] = f"IFNULL({_contract_model_expr_sub},'')"
     column_filters = f.get("column_filters")
@@ -15932,6 +16058,86 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
 
 
 @frappe.whitelist()
+def get_team_rating_report(from_date=None, to_date=None, **kwargs):
+    """Team Rating — what the IMs scored each team, over a period.
+
+    One row per team: the average of each criterion across the jobs that were
+    actually rated, plus how many jobs went unrated, because an average over
+    three of a team's ninety jobs is not a performance figure and the report
+    has to say so rather than quietly present it as one.
+    """
+    fd, td = _perf_date_range(from_date, to_date)
+    if not _team_rating_columns_exist():
+        return {"columns": [], "data": [], "totals": {}}
+
+    avg_cols = ", ".join(
+        f"AVG(NULLIF(de.{f}, 0)) AS avg_{f[len('rating_'):]}"
+        for f, _ in TEAM_RATING_FIELDS
+    )
+    rows = frappe.db.sql(
+        f"""
+        SELECT de.team,
+               COALESCE(it.team_name, de.team) AS team_name,
+               COUNT(*) AS jobs,
+               SUM(CASE WHEN IFNULL(de.rating_overall, 0) > 0
+                        OR IFNULL(de.rating_execution, 0) > 0
+                        OR IFNULL(de.rating_quality, 0) > 0
+                        OR IFNULL(de.rating_safety, 0) > 0
+                        OR IFNULL(de.rating_timeliness, 0) > 0
+                   THEN 1 ELSE 0 END) AS rated,
+               {avg_cols}
+        FROM `tabDaily Execution` de
+        LEFT JOIN `tabINET Team` it ON it.name = de.team
+        WHERE de.execution_date BETWEEN %s AND %s
+          AND IFNULL(de.team, '') != ''
+        GROUP BY de.team
+        """,
+        (fd, td),
+        as_dict=True,
+    )
+
+    data = []
+    for r in rows or []:
+        rated = cint(r.get("rated") or 0)
+        jobs = cint(r.get("jobs") or 0)
+        row = {
+            "team": r.get("team_name") or r.get("team"),
+            "jobs": jobs,
+            "rated": rated,
+            "not_rated": jobs - rated,
+            "rated_pct": round(rated / jobs * 100, 1) if jobs else None,
+        }
+        for f, _ in TEAM_RATING_FIELDS:
+            key = f[len("rating_"):]
+            val = r.get(f"avg_{key}")
+            row[key] = round(float(val), 2) if val is not None else None
+        data.append(row)
+
+    # Unrated teams last, then worst overall first — the report is read to
+    # find a problem, not to admire the top of the list.
+    data.sort(key=lambda x: (x["overall"] is None, x["overall"] if x["overall"] is not None else 0))
+
+    columns = [
+        {"fieldname": "team",        "label": "Team",            "fieldtype": "Data"},
+        {"fieldname": "jobs",        "label": "Jobs",            "fieldtype": "Int"},
+        {"fieldname": "rated",       "label": "Rated",           "fieldtype": "Int"},
+        {"fieldname": "not_rated",   "label": "Not Rated",       "fieldtype": "Int"},
+        {"fieldname": "rated_pct",   "label": "Rated %",         "fieldtype": "Percent"},
+        {"fieldname": "execution",   "label": "Execution",       "fieldtype": "Float"},
+        {"fieldname": "quality",     "label": "Quality",         "fieldtype": "Float"},
+        {"fieldname": "safety",      "label": "Safety",          "fieldtype": "Float"},
+        {"fieldname": "timeliness",  "label": "Timeliness",      "fieldtype": "Float"},
+        {"fieldname": "overall",     "label": "Overall",         "fieldtype": "Float"},
+    ]
+    total_jobs = sum(d["jobs"] for d in data)
+    total_rated = sum(d["rated"] for d in data)
+    totals = {
+        "rated_pct": round(total_rated / total_jobs * 100, 1) if total_jobs else None,
+    }
+    return {"columns": columns, "data": data, "totals": totals}
+
+
+@frappe.whitelist()
 def get_top_teams_report(from_date=None, to_date=None, **kwargs):
     """Top Teams — ranked by revenue.
     Team Cost:
@@ -18737,6 +18943,15 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     # the page says so rather than pretending otherwise.
     future_planned_clause = "AND NOT (rp.plan_status = 'Planned' AND rp.plan_date > CURDATE())"
     extended_clause = "AND rp.plan_status != 'Extended'"
+    # A visit the line has already moved past. Live work belongs to the
+    # latest visit, so an earlier one is not shown — except when the page is
+    # being read as history (see the rating filter below).
+    superseded_clause = (
+        "AND NOT EXISTS ("
+        " SELECT 1 FROM `tabRollout Plan` rp_later"
+        " WHERE rp_later.po_dispatch = rp.po_dispatch"
+        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0))"
+    )
     issue_block_clause = (
         "AND NOT ("
         " IFNULL(rp.issue_status,'') = 'Reported'"
@@ -18760,6 +18975,25 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         future_planned_clause = ""
         extended_clause = ""
         issue_block_clause = ""
+    # Filtering the Rating column turns this page into a history view. Each
+    # clause below hides an execution the IM has no live work left on, which
+    # is most of the ones worth looking back at — so "show me the 2-star
+    # jobs" would otherwise search only today's work and find almost nothing.
+    # Only a filter that picks actual scores does this: narrowing to
+    # "Not rated" is a question about live work, not about history.
+    _rating_col_ex = (pf.get("column_filters") or {}).get("rating")
+    _rating_history_ex = False
+    if _team_rating_columns_exist() and _column_filter_is_active(_rating_col_ex):
+        _picked_ex = _rating_col_ex.get("values") if isinstance(_rating_col_ex, dict) else [_rating_col_ex]
+        _rating_history_ex = any(
+            str(v or "").strip() and str(v).strip().lower() != _TEAM_RATING_NONE.lower()
+            for v in (_picked_ex or [])
+        )
+    if _rating_history_ex:
+        future_planned_clause = ""
+        extended_clause = ""
+        issue_block_clause = ""
+        superseded_clause = ""
     _closure_ex = (pf.get("closure") or "all").strip().lower()
     if _closure_ex in ("open", "closed"):
         portal_clause += " AND " + ("NOT " if _closure_ex == "open" else "") + _execution_closed_exists_sql()
@@ -18855,7 +19089,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     outstanding_guard = (
         " (" + " OR ".join(settled_tests) + ") AND" if settled_tests else ""
     )
-    portal_clause += "" if _bucket_ex else (
+    portal_clause += "" if (_bucket_ex or _rating_history_ex) else (
         " AND NOT ("
         + outstanding_guard +
         " de.execution_status = 'Completed'"
@@ -18926,6 +19160,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_ex.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_ex.huawei_im, '')",
     }
+    if _team_rating_columns_exist():
+        col_filter_map["rating"] = team_rating_filter_sql("de")
     if frappe.db.has_column("Daily Execution", "ciag_status"):
         col_filter_map["ciag"] = "IFNULL(de.ciag_status,'')"
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
@@ -19044,6 +19280,20 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         im_ex_extras.append("0 AS is_internal_work")
         im_ex_extras.append("NULL AS internal_work_type")
         im_ex_extras.append("NULL AS internal_domain")
+    # The IM's team rating, so the grid can show the stars already given
+    # without a second call per row.
+    if _team_rating_columns_exist():
+        for _rf, _ in TEAM_RATING_FIELDS:
+            im_ex_extras.append(f"IFNULL(de.{_rf}, 0) AS {_rf}")
+        im_ex_extras.append("IFNULL(de.rating_remark, '') AS rating_remark")
+        im_ex_extras.append("IFNULL(de.rated_by, '') AS rated_by")
+        im_ex_extras.append("de.rated_on AS rated_on")
+    else:
+        for _rf, _ in TEAM_RATING_FIELDS:
+            im_ex_extras.append(f"0 AS {_rf}")
+        im_ex_extras.append("'' AS rating_remark")
+        im_ex_extras.append("'' AS rated_by")
+        im_ex_extras.append("NULL AS rated_on")
     im_ex_extra_sql = ", " + ", ".join(im_ex_extras)
     qc_req_sel = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
     ciag_req_sel = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
@@ -19071,6 +19321,25 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         # Day-to-day execution: what is in progress right now, what completed,
         # and what is parked (hold / cancelled).
         _es = "IFNULL(de.execution_status,'')"
+        _metrics_ex = [
+            {"key": "executions", "label": "Executions", "agg": "count"},
+            {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+             "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+            {"key": "teams", "label": "Teams", "agg": "count_distinct",
+             "expr": "NULLIF(IFNULL(de.team,''), '')"},
+            {"key": "in_progress", "label": "In progress", "agg": "count_if", "group": "Status",
+             "cond": f"{_es} = 'In Progress'", "tone": "info", "hide_if_zero": True},
+            {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Status",
+             "cond": f"{_es} = 'Completed'", "tone": "good", "hide_if_zero": True},
+            {"key": "hold", "label": "On hold", "agg": "count_if", "group": "Status",
+             "cond": f"{_es} = 'Hold'", "tone": "warn", "hide_if_zero": True},
+            {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Status",
+             "cond": f"{_es} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
+        ]
+        # No rating chip here on purpose: these chips count a wider set than
+        # the table beneath them — they skip the superseded / extended / issue
+        # filters the row query applies, so an "unrated" figure read 43
+        # against 14 unrated rows on screen.
         return summary_from_query(
             "`tabDaily Execution` de "
             "INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan "
@@ -19080,21 +19349,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             f"{rp_im_join_ex} "
             "LEFT JOIN `tabIM Master` im_pd ON im_pd.name = pd.im"
             f"{bucket_join_ex}",
-            f"pd.im IN ({ph}){status_clause}{portal_clause}", params, [
-                {"key": "executions", "label": "Executions", "agg": "count"},
-                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
-                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
-                {"key": "teams", "label": "Teams", "agg": "count_distinct",
-                 "expr": "NULLIF(IFNULL(de.team,''), '')"},
-                {"key": "in_progress", "label": "In progress", "agg": "count_if", "group": "Status",
-                 "cond": f"{_es} = 'In Progress'", "tone": "info", "hide_if_zero": True},
-                {"key": "completed", "label": "Completed", "agg": "count_if", "group": "Status",
-                 "cond": f"{_es} = 'Completed'", "tone": "good", "hide_if_zero": True},
-                {"key": "hold", "label": "On hold", "agg": "count_if", "group": "Status",
-                 "cond": f"{_es} = 'Hold'", "tone": "warn", "hide_if_zero": True},
-                {"key": "cancelled", "label": "Cancelled", "agg": "count_if", "group": "Status",
-                 "cond": f"{_es} = 'Cancelled'", "tone": "bad", "hide_if_zero": True},
-            ])
+            f"pd.im IN ({ph}){status_clause}{portal_clause}", params, _metrics_ex)
 
     # `source` is an app-owned column; a site that has not migrated has no
     # such column and would 500 on the subquery below.
@@ -19187,11 +19442,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         -- TL logs activity, the sync logic flips this to In Execution and
         -- it reappears here normally.
         {extended_clause}
-        AND NOT EXISTS (
-            SELECT 1 FROM `tabRollout Plan` rp_later
-            WHERE rp_later.po_dispatch = rp.po_dispatch
-            AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)
-        )
+        {superseded_clause}
         {issue_block_clause}
         ORDER BY de.execution_date DESC, de.creation DESC
         {_sql_limit_suffix(lim_de)}

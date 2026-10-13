@@ -28,6 +28,7 @@ import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import { money } from "../../utils/numberFormat";
 
 import { SitePhotosView } from "../../components/AttachmentsSection";
+import { TeamRatingCell, TeamRatingModal, TeamRatingView, isRated } from "../../components/TeamRating";
 const CIAG_STATUS_OPTIONS = ["Open", "Approved", "Not Applicable"];
 
 const RESCHEDULE_TL_STATUSES = new Set(["Not Attended", "Hold", "Cancelled", "Postponed"]);
@@ -226,6 +227,8 @@ export default function IMExecution() {
   const [tlStatusBusy, setTlStatusBusy] = useState(false);
   const [tlStatusErr, setTlStatusErr] = useState(null);
   const [issueCatFor, setIssueCatFor] = useState(null);
+  // The team rating modal, opened from the Rating column.
+  const [ratingFor, setRatingFor] = useState(null);
   const [issueCatPick, setIssueCatPick] = useState("");
   const [issueCatBusy, setIssueCatBusy] = useState(false);
   const [issueCatErr, setIssueCatErr] = useState(null);
@@ -464,7 +467,6 @@ export default function IMExecution() {
     if (!dummyFilter) return activeRows;
     return activeRows.filter((e) => dummyFilter === "Dummy Only" ? !!e.is_dummy_po : !e.is_dummy_po);
   }, [executions, dummyFilter]);
-
   const internalDoneExecutions = useMemo(
     () => executions.filter((e) => !!Number(e.is_internal_work || 0) && e.execution_status === "Completed"),
     [executions],
@@ -1042,6 +1044,19 @@ export default function IMExecution() {
             <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setTlStatusFor(null)}>Cancel</button>
           </div>
         </div>
+      )}
+
+      {ratingFor && (
+        <TeamRatingModal
+          row={ratingFor}
+          onClose={() => setRatingFor(null)}
+          onSaved={(saved) => {
+            // Patch the row in place. A refetch would re-apply the "nothing
+            // left to do" filter and could drop the row the IM is looking at.
+            Object.assign(ratingFor, saved);
+            setExecutions((prev) => prev.map((r) => (r.name === saved.name ? { ...r, ...saved } : r)));
+          }}
+        />
       )}
 
       {issueCatFor && (
@@ -1622,6 +1637,7 @@ export default function IMExecution() {
                   <th>CIAG</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }} title="Which visit this execution is (1, 2, 3…)">Visit #</th>
+                  <th title="The IM's rating of the team on this job">Rating</th>
                   <th title="Remark set by PM">General</th>
                   <th title="Remark set by IM">Manager</th>
                   <th title="Remark set by Field Team Lead">Team Lead</th>
@@ -1782,6 +1798,7 @@ export default function IMExecution() {
                     </td>
                     <td style={{ textAlign: "right" }}>{e.achieved_qty || 0}</td>
                     <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{e.visit_number != null ? e.visit_number : "—"}</td>
+                    <td><TeamRatingCell row={e} onClick={() => setRatingFor(e)} /></td>
                     <td><RemarksCell value={e.general_remark} tone="general" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.general_remark = v; }} /></td>
                     <td><RemarksCell value={e.manager_remark} tone="manager" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.manager_remark = v; }} /></td>
                     <td><RemarksCell value={e.team_lead_remark} tone="team_lead" poDispatch={e.system_id || e.poid} poid={e.poid || e.system_id} onSaved={(v) => { e.team_lead_remark = v; }} /></td>
@@ -1854,6 +1871,7 @@ export default function IMExecution() {
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
                       {money.format(totalAchieved)}
                     </td>
+                    <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
                     <td style={{ background: "#f8fafc", borderTop: "1px solid #e2e8f0" }} />
@@ -2027,6 +2045,20 @@ export default function IMExecution() {
               </div>
               <SitePhotosView before={detailRow.photos_before} after={detailRow.photos_after}
                               beforeAt={detailRow.photos_before_at} afterAt={detailRow.photos_after_at} />
+              <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em" }}>Team Rating</div>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+                    onClick={() => setRatingFor(detailRow)}
+                  >
+                    {isRated(detailRow) ? "Edit" : "Rate"}
+                  </button>
+                </div>
+                <TeamRatingView row={detailRow} />
+              </div>
               {parseAttachments(detailRow.photos).length > 0 && (
                 <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>

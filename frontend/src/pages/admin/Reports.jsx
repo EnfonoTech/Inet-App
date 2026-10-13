@@ -55,6 +55,15 @@ const REPORTS = [
     filterType: "teamdate",
   },
   {
+    key: "team_rating",
+    category: "Teams & Utilization",
+    title: "Team Rating",
+    api: "reportTeamRating",
+    description: "IM ratings per team — execution, quality, safety, timeliness, overall",
+    hasFilters: true,
+    filterType: "dateonly",
+  },
+  {
     key: "im_performance",
     category: "Performance",
     title: "IM Performance",

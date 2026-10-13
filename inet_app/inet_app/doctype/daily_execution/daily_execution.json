@@ -32,6 +32,16 @@
   "revisit_flag",
   "section_break_yvjh",
   "remarks",
+  "section_team_rating",
+  "rating_execution",
+  "rating_quality",
+  "rating_safety",
+  "column_break_rating",
+  "rating_timeliness",
+  "rating_overall",
+  "rating_remark",
+  "rated_by",
+  "rated_on",
   "section_team_members",
   "execution_team_members",
   "material_usage_section",
@@ -229,6 +239,58 @@
    "fieldname": "photos_after_at",
    "fieldtype": "Datetime",
    "label": "After Photos Uploaded",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_team_rating",
+   "fieldtype": "Section Break",
+   "label": "Team Rating"
+  },
+  {
+   "fieldname": "rating_execution",
+   "fieldtype": "Int",
+   "label": "Execution Performance"
+  },
+  {
+   "fieldname": "rating_quality",
+   "fieldtype": "Int",
+   "label": "Quality"
+  },
+  {
+   "fieldname": "rating_safety",
+   "fieldtype": "Int",
+   "label": "Safety Compliance"
+  },
+  {
+   "fieldname": "column_break_rating",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rating_timeliness",
+   "fieldtype": "Int",
+   "label": "Timeliness"
+  },
+  {
+   "fieldname": "rating_overall",
+   "fieldtype": "Int",
+   "label": "Overall Performance"
+  },
+  {
+   "fieldname": "rating_remark",
+   "fieldtype": "Small Text",
+   "label": "Rating Remark"
+  },
+  {
+   "fieldname": "rated_by",
+   "fieldtype": "Link",
+   "label": "Rated By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rated_on",
+   "fieldtype": "Datetime",
+   "label": "Rated On",
    "read_only": 1
   }
  ],

@@ -26,6 +26,7 @@ import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubcontractorCell,
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
 
 import { DOC_REQUIREMENTS } from "../../utils/docRequirements";
+import { TeamRatingCell, isRated } from "../../components/TeamRating";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 /* Money must not be rounded away. `fmt` above drops the decimals entirely,
    which hid real halalas: ms2_amount alone is fractional on 1,550 of 1,983
@@ -1342,6 +1343,7 @@ export default function WorkDone() {
                   <th>IM</th>
                   <th>Exec Date</th>
                   <th style={{ textAlign: "right" }} title="Which visit this work-done is (1, 2, 3…)">Visit #</th>
+                  <th title="The IM's rating of the team on this job">Team Rating</th>
                   <th style={{ textAlign: "right" }}>Qty</th>
                   <th style={{ textAlign: "right" }}>Ordered</th>
                   <th style={{ textAlign: "right" }}>Confirmed</th>
@@ -1410,6 +1412,13 @@ export default function WorkDone() {
                       <td>{row.im_full_name || row.im || "—"}</td>
                       <td>{row.execution_date || "—"}</td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{row.visit_number != null ? row.visit_number : "—"}</td>
+                      {/* Read-only here: rating a team is the IM's call, and
+                          the endpoint refuses anyone who is not IM or PM. */}
+                      <td>
+                        {isRated(row)
+                          ? <TeamRatingCell row={row} />
+                          : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                      </td>
                       <td style={{ textAlign: "right" }}>{row.executed_qty != null ? qtyFmt.format(row.executed_qty) : "—"}</td>
                       <td style={{ textAlign: "right" }}>{row.ordered_qty != null ? qtyFmt.format(row.ordered_qty) : "—"}</td>
                       <td
@@ -1492,7 +1501,7 @@ export default function WorkDone() {
                     <td style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.75rem", padding: "8px 16px", whiteSpace: "nowrap" }}>
                       {displayedCount} rows
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px" }}>{qtyFmt.format(totals.qty)}</td>
                     <td /><td />{/* Ordered · Confirmed */}
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
