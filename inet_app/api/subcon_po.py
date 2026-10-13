@@ -786,7 +786,12 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         # Header labels that slug differently from the keys above.
         "rate": "CAST(pd.rate AS CHAR)",
         "po_status": "IFNULL(pd.dispatch_status,'')",
-        "subcon_status": "IFNULL(pd.subcon_status,'')",
+        # The "Subcon Status" column renders pd.sub_po_status through
+        # SubPoStatusBadge — the overall sub-PO state, Not Ordered through
+        # Closed. It was mapped to pd.subcon_status, a different field whose
+        # only values are Pending and Work Done, so the dropdown offered two
+        # labels that never appear in the column and none that do.
+        "subcon_status": "IF(IFNULL(pd.sub_po_status,'') = '', 'Not Ordered', pd.sub_po_status)",
         "amount": "CAST(pd.line_amount AS CHAR)",
         "payout": "CAST(sm.sub_payout_pct AS CHAR)",
         # Remaining header slugs on SubconPO.jsx. These mirror the SELECT's
@@ -849,9 +854,20 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         "ms2": "CAST(pd.ms2_pct AS CHAR)",
         "ms1_amt": "CAST(pd.ms1_amount AS CHAR)",
         "ms2_amt": "CAST(pd.ms2_amount AS CHAR)",
-        "sub_po_status": "IFNULL(pd.sub_po_status,'')",
-        "sub_po_status_ms1": _ms_status_sql(1),
-        "sub_po_status_ms2": _ms_status_sql(2),
+        # SubPoStatusBadge shows "Not Ordered" for an empty status, so the
+        # options have to as well — the same reason subcon_ms1/ms2 above
+        # already do. Without it the dropdown offers "(Blanks)" for cells that
+        # visibly read "Not Ordered", and never offers the label on screen.
+        # _ms_status_sql itself is left alone: twelve stage filters depend on
+        # it meaning the raw value.
+        "sub_po_status": "IF(IFNULL(pd.sub_po_status,'') = '', 'Not Ordered', pd.sub_po_status)",
+        "sub_po_status_ms1": f"IF({_ms_status_sql(1)} = '', 'Not Ordered', {_ms_status_sql(1)})",
+        # MS2 renders an em dash, not a status, when the line has no MS2 value
+        # — that is "not applicable", which belongs under (Blanks).
+        "sub_po_status_ms2": (
+            f"IF(IFNULL(pd.ms2_amount,0) <= 0, '', "
+            f"IF({_ms_status_sql(2)} = '', 'Not Ordered', {_ms_status_sql(2)}))"
+        ),
         "sub_po_amount_ms1": "CAST(pd.sub_po_amount_ms1 AS CHAR)",
         "sub_po_amount_ms2": "CAST(pd.sub_po_amount_ms2 AS CHAR)",
         # Both legs concatenated, so one Manage-Table filter finds a remark

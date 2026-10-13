@@ -2276,9 +2276,26 @@ export default function IMPOIntake() {
                           <StatusBadge value={row.dispatch_status || "Pending"} bg={sc.bg} fg={sc.fg} bd={sc.bd} />
                         </td>
                         <td>
-                          {row.direct_close_by
-                            ? <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }}>Direct Close</span>
-                            : <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>}
+                          {/* The route the line was closed by, from
+                              Work Done.source. This used to read
+                              direct_close_by alone, so it only ever said
+                              "Direct Close" — Rollout Execution and Backend
+                              closed lines showed an em dash as if nothing had
+                              happened. */}
+                          {(() => {
+                            const via = row.closed_via || (row.direct_close_by ? "Direct Close" : "");
+                            if (!via) return <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>;
+                            const tone = via === "Direct Close"
+                              ? { bg: "#dbeafe", fg: "#0369a1", bd: "#93c5fd" }
+                              : via === "Backend"
+                              ? { bg: "#fef3c7", fg: "#92400e", bd: "#fde68a" }
+                              : { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" };
+                            return (
+                              <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}`, whiteSpace: "nowrap" }}>
+                                {via}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td>
                           <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: row.dispatch_mode === "Auto" ? "rgba(99,102,241,0.12)" : "rgba(100,116,139,0.12)", color: row.dispatch_mode === "Auto" ? "#6366f1" : "#475569" }}>

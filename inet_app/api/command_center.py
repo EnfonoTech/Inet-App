@@ -365,6 +365,9 @@ PO_DISPATCH_LIST_COLS = frozenset((
     # Replacement: the badge on All POIDs reads both ends of the link, and
     # without naming them here _shrink_rows drops them silently.
     "replaced_by", "replaced_on", "replaces_poids",
+    # How the line was closed — derived from Work Done.source below, not a
+    # stored column, so it has to be named here or _shrink_rows drops it.
+    "closed_via",
     "is_internal_work", "internal_work_type", "internal_domain",
     "general_remark", "manager_remark", "team_lead_remark",
     "ms1_amount", "ms2_amount",
@@ -540,6 +543,20 @@ def _po_dispatch_excel_expr(col_key, fields):
             "INNER JOIN `tabDaily Execution` de ON de.name = wd.execution "
             "WHERE de.rollout_plan = rp.name AND IFNULL(wd.issue_flag, '') != '' LIMIT 1)"
         )
+    if col_key == "closed_via" and "direct_close_by" in fields:
+        # The route the line was closed by, matching the enrichment in
+        # list_po_dispatches: Work Done.source first — Rollout Execution,
+        # Backend or Direct Close — with direct_close_by as the fallback for
+        # legacy rows whose Work Done predates that field. The filter used to
+        # offer the raw direct_close_by names, which appear nowhere in the
+        # column, and knew nothing of the other two routes.
+        return (
+            "COALESCE(NULLIF((SELECT wd.source FROM `tabWork Done` wd "
+            "WHERE wd.system_id = `tabPO Dispatch`.`name` "
+            "AND IFNULL(wd.source, '') != '' ORDER BY wd.modified DESC LIMIT 1), ''), "
+            "IF(IFNULL(`direct_close_by`, '') != '', 'Direct Close', ''))"
+        )
+
     if col_key == "billing_status" and "pic_status" in fields:
         return (
             "(CASE WHEN `pic_status` IN ('Commercial Invoice Closed', 'PO Line Canceled') THEN 'Closed' "
@@ -5021,7 +5038,8 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
         if pd_names:
             ph = ", ".join(["%s"] * len(pd_names))
             wd_ms_rows = frappe.db.sql(
-                f"SELECT system_id, ms1_closed, ms2_closed, ms1_closed_at, ms2_closed_at, subcontractor"
+                f"SELECT system_id, ms1_closed, ms2_closed, ms1_closed_at, ms2_closed_at,"
+                f" subcontractor, source"
                 f" FROM `tabWork Done` WHERE system_id IN ({ph})",
                 tuple(pd_names), as_dict=True,
             )
@@ -5033,6 +5051,15 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
                 r["ms1_closed_at"] = wd_ms.get("ms1_closed_at")
                 r["ms2_closed_at"] = wd_ms.get("ms2_closed_at")
                 r["wd_subcontractor"] = wd_ms.get("subcontractor") or None
+                # How the line was closed: Rollout Execution / Backend /
+                # Direct Close, straight off the Work Done that closed it.
+                # The column used to read direct_close_by alone, so it only
+                # ever said "Direct Close" or nothing — the other two routes
+                # were invisible even though they close 1,841 of the lines on
+                # the production copy. direct_close_by is the fallback for
+                # legacy rows whose Work Done predates `source`.
+                r["closed_via"] = (wd_ms.get("source") or "").strip() or (
+                    "Direct Close" if (r.get("direct_close_by") or "") else "")
 
     return _shrink_rows(rows, "PO Dispatch", keep=PO_DISPATCH_LIST_COLS)
 
