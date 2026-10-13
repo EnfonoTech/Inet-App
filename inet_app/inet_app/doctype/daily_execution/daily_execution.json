@@ -20,6 +20,12 @@
   "achieved_amount",
   "gps_location",
   "photos",
+  "section_site_photos",
+  "photos_before",
+  "photos_before_at",
+  "column_break_sitephoto",
+  "photos_after",
+  "photos_after_at",
   "qc_status",
   "ciag_status",
   "ciag_status_date",
@@ -78,28 +84,28 @@
    "search_index": 1
   },
   {
+   "description": "Server-stamped date of the last real update_execution call for this record \u2014 distinct from Execution Date (the original planned/logged day, never overwritten). Used to detect a multi-day plan that's gone quiet on the current day, without losing the original date.",
    "fieldname": "last_progress_date",
    "fieldtype": "Date",
    "label": "Last Progress Date",
-   "read_only": 1,
-   "description": "Server-stamped date of the last real update_execution call for this record — distinct from Execution Date (the original planned/logged day, never overwritten). Used to detect a multi-day plan that's gone quiet on the current day, without losing the original date."
+   "read_only": 1
   },
   {
    "default": "In Progress",
+   "description": "Status reported by the field Team Lead (also editable by the IM).",
    "fieldname": "tl_status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "TL Status",
-   "description": "Status reported by the field Team Lead (also editable by the IM).",
    "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed\nNot Attended"
   },
   {
    "default": "In Progress",
+   "description": "Status confirmed by the Implementation Manager.",
    "fieldname": "execution_status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Execution Status",
-   "description": "Status confirmed by the Implementation Manager.",
    "options": "In Progress\nCompleted\nHold\nCancelled\nPostponed"
   },
   {
@@ -145,11 +151,11 @@
    "options": "Open\nApproved\nNot Applicable"
   },
   {
+   "description": "Server-stamped whenever CIAG Status changes \u2014 the Site Verify report's \"pending days\" is measured from this, not from Execution Date.",
    "fieldname": "ciag_status_date",
    "fieldtype": "Datetime",
    "label": "CIAG Status Date",
-   "read_only": 1,
-   "description": "Server-stamped whenever CIAG Status changes — the Site Verify report's \"pending days\" is measured from this, not from Execution Date."
+   "read_only": 1
   },
   {
    "default": "0",
@@ -193,6 +199,37 @@
    "fieldtype": "Table",
    "label": "Material Usage",
    "options": "Daily Execution Material"
+  },
+  {
+   "fieldname": "section_site_photos",
+   "fieldtype": "Section Break",
+   "label": "Site Photos"
+  },
+  {
+   "fieldname": "photos_before",
+   "fieldtype": "Small Text",
+   "label": "Before Photos"
+  },
+  {
+   "fieldname": "column_break_sitephoto",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "photos_after",
+   "fieldtype": "Small Text",
+   "label": "After Photos"
+  },
+  {
+   "fieldname": "photos_before_at",
+   "fieldtype": "Datetime",
+   "label": "Before Photos Uploaded",
+   "read_only": 1
+  },
+  {
+   "fieldname": "photos_after_at",
+   "fieldtype": "Datetime",
+   "label": "After Photos Uploaded",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

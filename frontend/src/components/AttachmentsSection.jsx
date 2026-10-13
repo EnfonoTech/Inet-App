@@ -9,8 +9,39 @@
  *   noCamera : bool — desktop mode: compact list UI, no Camera button
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchPortalSession, getCsrf } from "../services/api";
+
+/**
+ * Upload one file and return its file_url.
+ *
+ * Exported so the compact site-photo capture reuses this exact path rather
+ * than a second copy: the CSRF retry below is the whole reason uploads work
+ * after the Desk has rotated the token in another tab, and a duplicate would
+ * quietly lack it.
+ */
+export async function uploadPortalFile(file) {
+  await fetchPortalSession().catch(() => {});
+  let token = getCsrf();
+  const doFetch = (body) =>
+    fetch("/api/method/upload_file", {
+      method: "POST", credentials: "include",
+      headers: { "X-Frappe-CSRF-Token": token }, body,
+    });
+  let res = await doFetch(buildUploadForm(file));
+  let json = await res.json();
+  const errText = `${json.message || ""} ${json.exc || ""}`.toLowerCase();
+  if ((!res.ok || json.exc) && (errText.includes("invalid request") || errText.includes("csrf"))) {
+    await fetchPortalSession().catch(() => {});
+    token = getCsrf();
+    res = await doFetch(buildUploadForm(file));
+    json = await res.json();
+  }
+  if (!res.ok || json.exc) throw new Error(json.message || "Upload failed");
+  const fileUrl = json.message?.file_url;
+  if (!fileUrl) throw new Error("No file URL received");
+  return fileUrl;
+}
 
 function buildUploadForm(file) {
   const form = new FormData();
@@ -101,6 +132,11 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const previewMapRef = useRef({});
+  // Images open in-page; a PDF or .msg cannot render in an <img>, so those
+  // keep their link. The portal is a standalone PWA, and every link leaving
+  // it risks a reload that takes a half-filled form with it — so the rule is
+  // "leave only when there is no other way to show the file".
+  const [lightbox, setLightbox] = useState(null);
 
   async function uploadFile(file) {
     if (!file) return;
@@ -156,6 +192,7 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
   if (noCamera) {
     return (
       <div style={{ marginTop: 14 }}>
+        <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>{title}</span>
           {!readOnly && (
@@ -212,12 +249,21 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
                   background: "#f8fafc", border: "1px solid #e2e8f0",
                 }}>
                   {isImg ? <ImgIcon /> : <SmallFileIcon />}
-                  <a href={url} target="_blank" rel="noopener noreferrer" style={{
-                    flex: 1, fontSize: "0.8rem", color: "#1d4ed8", overflow: "hidden",
-                    textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none",
-                  }}
-                    title={fileName}
-                  >{fileName}</a>
+                  {isImg ? (
+                    <button type="button" onClick={() => setLightbox(url)} title={fileName}
+                      style={{
+                        flex: 1, fontSize: "0.8rem", color: "#1d4ed8", overflow: "hidden",
+                        textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left",
+                        background: "none", border: "none", padding: 0, cursor: "zoom-in",
+                      }}>{fileName}</button>
+                  ) : (
+                    <a href={url} target="_blank" rel="noopener noreferrer" style={{
+                      flex: 1, fontSize: "0.8rem", color: "#1d4ed8", overflow: "hidden",
+                      textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none",
+                    }}
+                      title={fileName}
+                    >{fileName}</a>
+                  )}
                   {!readOnly && (
                     <button type="button" onClick={() => removeFile(idx)} style={{
                       background: "none", border: "none", cursor: "pointer",
@@ -237,6 +283,7 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
   /* ── Mobile / PWA mode (default) ────────────────────────────── */
   return (
     <div className="exec-section">
+      <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div className="exec-section-title" style={{ marginBottom: 0 }}>{title}</div>
         {totalCount > 0 && (
@@ -297,7 +344,8 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
             return (
               <div key={`${url}-${idx}`} className="photo-thumb" style={{ position: "relative" }}>
                 {isImg ? (
-                  <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: "contents" }}>
+                  <button type="button" onClick={() => setLightbox(url)}
+                    style={{ display: "contents", background: "none", border: "none", padding: 0, cursor: "zoom-in" }}>
                     <img
                       src={previewMapRef.current[url] || url}
                       alt={`File ${idx + 1}`}
@@ -308,7 +356,7 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
                       <FileIcon />
                       <span style={{ fontSize: "0.6rem", color: "#64748b", textAlign: "center", wordBreak: "break-all", lineHeight: 1.2 }}>{fileName}</span>
                     </div>
-                  </a>
+                  </button>
                 ) : (
                   <a href={url} target="_blank" rel="noopener noreferrer"
                     style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 4, padding: 8, textDecoration: "none" }}>
@@ -328,6 +376,106 @@ export default function AttachmentsSection({ urls = [], onChange, title = "Docum
       {totalCount === 0 && readOnly && (
         <div style={{ color: "#94a3b8", fontSize: "0.8rem" }}>No documents attached.</div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Full-size photo overlay, in-page.
+ *
+ * Not `target="_blank"`: the portal is an installed PWA (display:
+ * standalone), so opening a link leaves the app for the system browser, and
+ * coming back can reload it from start_url — taking a half-filled execution
+ * form with it. A TL who taps a thumbnail to check their photo must not risk
+ * losing the quantity and remarks they already typed.
+ */
+export function PhotoLightbox({ url, onClose }) {
+  useEffect(() => {
+    if (!url) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [url, onClose]);
+  if (!url) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 11000, background: "rgba(0,0,0,0.88)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 12,
+      }}
+    >
+      <img src={url} alt="" onClick={(e) => e.stopPropagation()}
+           style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6 }} />
+      <button type="button" onClick={onClose} aria-label="Close"
+        style={{
+          position: "absolute", top: 14, right: 16, width: 36, height: 36,
+          borderRadius: 999, border: "none", background: "rgba(255,255,255,0.18)",
+          color: "#fff", fontSize: 22, lineHeight: "36px", padding: 0, cursor: "pointer",
+        }}>&times;</button>
+    </div>
+  );
+}
+
+
+/**
+ * Read-only before/after site photos, for the IM and PM line views.
+ *
+ * Thumbnails rather than a list of filenames: the point of these two is that
+ * someone can see the site at a glance and judge whether the work was done,
+ * not open eight files one at a time. Clicking one opens it in-page.
+ *
+ * Renders nothing when neither group has a photo, so a line recorded before
+ * the field app started asking for them looks exactly as it did.
+ */
+export function SitePhotosView({ before, after, beforeAt, afterAt, title = "Site Photos" }) {
+  const when = (v) => {
+    if (!v) return null;
+    const d = new Date(String(v).replace(" ", "T"));
+    return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("en", {
+      day: "numeric", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  };
+  const [lightbox, setLightbox] = useState(null);
+  const groups = [
+    { label: "Before", urls: parseFileList(before), at: when(beforeAt) },
+    { label: "After", urls: parseFileList(after), at: when(afterAt) },
+  ].filter((g) => g.urls.length);
+  if (!groups.length) return null;
+  return (
+    <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
+      <PhotoLightbox url={lightbox} onClose={() => setLightbox(null)} />
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+        {title}
+      </div>
+      {/* Side by side when there is room, stacked when there is not — the
+          two are meant to be compared, and comparing them is harder when one
+          is a scroll away from the other. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+      {groups.map((g) => (
+        <div key={g.label} style={{ flex: "1 1 260px", minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 5 }}>
+            {g.label} <span style={{ color: "#94a3b8", fontWeight: 500 }}>({g.urls.length})</span>
+            {g.at && (
+              <span style={{ color: "#94a3b8", fontWeight: 500, marginLeft: 8 }}>
+                · uploaded {g.at}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {g.urls.map((url, i) => (
+              <button key={`${url}-${i}`} type="button" onClick={() => setLightbox(url)}
+                 title="View full size"
+                 style={{ display: "block", width: 92, height: 92, borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f8fafc", padding: 0, cursor: "zoom-in" }}>
+                <img src={url} alt={`${g.label} ${i + 1}`} loading="lazy"
+                     style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+      </div>
     </div>
   );
 }

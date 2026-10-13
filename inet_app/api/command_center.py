@@ -7041,7 +7041,9 @@ def get_field_execution_for_rollout(rollout_plan):
         rows = frappe.get_all(
             "Daily Execution",
             filters={"rollout_plan": rollout_plan},
-            fields=["name", "qc_status", "ciag_status", "execution_status", "photos"],
+            fields=["name", "qc_status", "ciag_status", "execution_status", "photos",
+                    "photos_before", "photos_after",
+                    "photos_before_at", "photos_after_at"],
             order_by="modified desc",
             limit_page_length=1,
         )
@@ -7053,7 +7055,9 @@ def get_field_execution_for_rollout(rollout_plan):
         rows = frappe.get_all(
             "Daily Execution",
             filters={"rollout_plan": rollout_plan, "team": team_id},
-            fields=["name", "qc_status", "ciag_status", "execution_status", "photos"],
+            fields=["name", "qc_status", "ciag_status", "execution_status", "photos",
+                    "photos_before", "photos_after",
+                    "photos_before_at", "photos_after_at"],
             order_by="modified desc",
             limit_page_length=1,
         )
@@ -7717,6 +7721,20 @@ def update_execution(payload):
     }
 
     # Apply updatable fields
+    # Stamped here, not sent by the client: the phone's clock is not evidence,
+    # and this is read back as "when was the site photographed". Must run
+    # BEFORE the loop below overwrites the stored value it compares against.
+    for _photo_field, _stamp_field in (("photos_before", "photos_before_at"),
+                                       ("photos_after", "photos_after_at")):
+        if _photo_field not in payload or not hasattr(doc, _stamp_field):
+            continue
+        _new = cstr(payload.get(_photo_field) or "").strip()
+        _old = cstr(doc.get(_photo_field) or "").strip()
+        if _new and _new != _old:
+            setattr(doc, _stamp_field, now_datetime())
+        elif not _new:
+            setattr(doc, _stamp_field, None)
+
     for field in [
         "execution_date",
         "execution_status",
@@ -7725,6 +7743,10 @@ def update_execution(payload):
         "achieved_amount",
         "gps_location",
         "photos",
+        # Before/after site photos. `photos` stays for the general evidence
+        # the TL already attaches; these two are the specific pair.
+        "photos_before",
+        "photos_after",
         "qc_status",
         "issue_category",
         "ciag_status",
@@ -9369,7 +9391,8 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     _de_fields = [
         "name", "rollout_plan", "execution_date", "execution_status",
         "tl_status", "issue_category", "achieved_qty", "achieved_amount",
-        "qc_status", "photos", "gps_location", "modified",
+        "qc_status", "photos", "photos_before", "photos_after",
+        "photos_before_at", "photos_after_at", "gps_location", "modified",
     ]
     if frappe.db.has_column("Daily Execution", "ciag_status"):
         _de_fields.append("ciag_status")
@@ -9508,6 +9531,10 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
                 "qc_status": ex.qc_status if ex else None,
                 "ciag_status": ex.get("ciag_status") if ex else None,
                 "photos": ex.photos if ex else None,
+                "photos_before": (ex.get("photos_before") if ex else None),
+                "photos_after": (ex.get("photos_after") if ex else None),
+                "photos_before_at": (ex.get("photos_before_at") if ex else None),
+                "photos_after_at": (ex.get("photos_after_at") if ex else None),
                 "gps_location": ex.gps_location if ex else None,
                 "modified": p.modified,
                 "customer": d.get("customer") if d else None,
@@ -18960,6 +18987,16 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             portal_clause += f" AND {clause}"
             params.extend(cparams)
     ciag_sel = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "NULL"
+    # Guarded: a site that has not migrated has no such column, and selecting
+    # it would 500 the whole grid rather than just hide the photos.
+    before_sel = ("de.photos_before"
+                  if frappe.db.has_column("Daily Execution", "photos_before") else "NULL")
+    after_sel = ("de.photos_after"
+                 if frappe.db.has_column("Daily Execution", "photos_after") else "NULL")
+    before_at_sel = ("de.photos_before_at"
+                     if frappe.db.has_column("Daily Execution", "photos_before_at") else "NULL")
+    after_at_sel = ("de.photos_after_at"
+                    if frappe.db.has_column("Daily Execution", "photos_after_at") else "NULL")
     im_ex_extras = []
     if frappe.db.has_column("Daily Execution", "region_type"):
         im_ex_extras.append("de.region_type AS region_type")
@@ -19052,6 +19089,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                de.execution_status, de.tl_status, de.issue_category,
                de.achieved_qty, de.achieved_amount, de.gps_location,
                de.qc_status, {ciag_sel} AS ciag_status, de.revisit_flag, de.photos,
+               {before_sel} AS photos_before, {after_sel} AS photos_after,
+               {before_at_sel} AS photos_before_at, {after_at_sel} AS photos_after_at,
                {qc_req_sel} AS qc_required,
                {ciag_req_sel} AS ciag_required,
                {access_time_sel} AS access_time,

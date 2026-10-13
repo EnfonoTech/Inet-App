@@ -26,6 +26,7 @@ import { copySelectedPoids } from "../../utils/selectedPoids";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money } from "../../utils/numberFormat";
 
+import { SitePhotosView } from "../../components/AttachmentsSection";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
 const PLAN_STATUS_OPTIONS = ["", "Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Extended", "Completed", "Cancelled"];
@@ -1156,6 +1157,8 @@ export default function ExecutionMonitor() {
               rolloutPlan={detailRow.name}
               currentPlanName={detailRow.name}
             />
+            <SitePhotosView before={detailRow.photos_before} after={detailRow.photos_after}
+                              beforeAt={detailRow.photos_before_at} afterAt={detailRow.photos_after_at} />
             {parseAttachments(detailRow.photos).length > 0 && (
               <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>

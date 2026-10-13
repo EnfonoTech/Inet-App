@@ -27,6 +27,7 @@ import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { accessTimeBadge } from "../../utils/executionTimerDisplay";
 import { money } from "../../utils/numberFormat";
 
+import { SitePhotosView } from "../../components/AttachmentsSection";
 const CIAG_STATUS_OPTIONS = ["Open", "Approved", "Not Applicable"];
 
 const RESCHEDULE_TL_STATUSES = new Set(["Not Attended", "Hold", "Cancelled", "Postponed"]);
@@ -2024,6 +2025,8 @@ export default function IMExecution() {
                   </div>
                 )}
               </div>
+              <SitePhotosView before={detailRow.photos_before} after={detailRow.photos_after}
+                              beforeAt={detailRow.photos_before_at} afterAt={detailRow.photos_after_at} />
               {parseAttachments(detailRow.photos).length > 0 && (
                 <div style={{ marginTop: 12, background: "#fff", borderRadius: 10, padding: 12, border: "1px solid #eef2f7" }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Attachments</div>

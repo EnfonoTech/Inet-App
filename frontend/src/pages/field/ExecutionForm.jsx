@@ -16,6 +16,7 @@ import AttachmentsSection, { parseFileList } from "../../components/AttachmentsS
 import Modal from "../../components/Modal";
 import { HuaweiBadge, CompanyBadge } from "../../components/MaterialItemPicker";
 
+import SitePhotoCapture from "../../components/SitePhotoCapture";
 // Treat 0/false/"0"/"false" as the not-required signal. null/undefined
 // (legacy plans without the flag) defaults to required.
 function isNotRequired(v) {
@@ -703,6 +704,14 @@ export default function ExecutionForm() {
   const [existingExec, setExistingExec] = useState(null);
   const [materialUsage, setMaterialUsage] = useState([]);
   const [attachments, setAttachments] = useState([]);        // uploaded file URLs
+  // Before/after site photos, kept separate from the general `attachments`
+  // so the IM can see the pair rather than one undifferentiated pile.
+  const [photosBefore, setPhotosBefore] = useState([]);
+  const [photosAfter, setPhotosAfter] = useState([]);
+  // Server-stamped on save; shown small under each tile so the TL can see
+  // when the pair was actually taken.
+  const [photosBeforeAt, setPhotosBeforeAt] = useState(null);
+  const [photosAfterAt, setPhotosAfterAt] = useState(null);
 
   // ── Inline expense tracking ────────────────────────────────────────────────
   const [expenseTypes, setExpenseTypes] = useState([]);
@@ -777,6 +786,10 @@ export default function ExecutionForm() {
       setExistingExec(ex || null);
       if (ex) {
         setAttachments(parseFileList(ex.photos));
+        setPhotosBefore(parseFileList(ex.photos_before));
+        setPhotosAfter(parseFileList(ex.photos_after));
+        setPhotosBeforeAt(ex.photos_before_at || null);
+        setPhotosAfterAt(ex.photos_after_at || null);
         // Pre-fill QC / CIAG selects from existing execution so a return
         // visit doesn't overwrite values silently.
         if (ex.qc_status) setQcStatus(ex.qc_status);
@@ -939,6 +952,22 @@ export default function ExecutionForm() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!id) { setSubmitError("No rollout plan selected."); return; }
+    // Before is required for any real visit — the team arrived and started.
+    // After only once the work is Completed: a visit left In Progress, on
+    // Hold or Postponed has no "after" to photograph yet, and demanding one
+    // would push the TL into taking a meaningless picture to get past the
+    // form. "Not Attended" means nobody went, so neither applies.
+    if (execStatus !== "Not Attended") {
+      const missingPhotos = [
+        ...(photosBefore.length ? [] : ["Before"]),
+        ...(execStatus === "Completed" && !photosAfter.length ? ["After"] : []),
+      ];
+      if (missingPhotos.length) {
+        setSubmitError(
+          `${missingPhotos.join(" and ")} site photo${missingPhotos.length > 1 ? "s are" : " is"} required.`);
+        return;
+      }
+    }
     setSubmitting(true); setSubmitError(null);
     try {
       // "Not Attended" — no execution happened, mark plan directly, skip DE creation.
@@ -961,6 +990,8 @@ export default function ExecutionForm() {
         // a TL clears them.
         team_lead_remark: tlRemark,
         photos: attachments.length ? attachments.join("\n") : undefined,
+        photos_before: photosBefore.join("\n"),
+        photos_after: photosAfter.join("\n"),
         // material_usage child table rows — auto-saved from MaterialsSection on submit
         material_usage: materialUsage.length ? materialUsage : undefined,
       };
@@ -1451,6 +1482,26 @@ export default function ExecutionForm() {
               </>
             )}
           </div>
+
+          {/* ── Site photos ──────────────────────────────────── */}
+          {/* Immediately above Location because this is the same moment: the
+              TL is standing at the site with the phone out. Camera only — a
+              photo picked from the gallery is not evidence of being there. */}
+          {execStatus !== "Not Attended" && (
+            <div className="exec-section">
+              <div className="exec-section-title">Site Photos</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                <SitePhotoCapture
+                  label="Before" required
+                  urls={photosBefore} onChange={setPhotosBefore} at={photosBeforeAt}
+                />
+                <SitePhotoCapture
+                  label="After" required={execStatus === "Completed"}
+                  urls={photosAfter} onChange={setPhotosAfter} at={photosAfterAt}
+                />
+              </div>
+            </div>
+          )}
 
           {/* ── Location ─────────────────────────────────────── */}
           <div className="exec-section">
