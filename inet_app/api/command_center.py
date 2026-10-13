@@ -935,6 +935,15 @@ def _excel_options_cache_key(*parts):
     return "inet:excel_opts:" + hashlib.md5(raw.encode()).hexdigest()
 
 
+def _excel_filter_is_blanks_only(raw_val):
+    """True when an Excel filter asks for blanks and nothing else."""
+    if not isinstance(raw_val, dict) or not raw_val.get("blanks"):
+        return False
+    vals = raw_val.get("values")
+    has_vals = isinstance(vals, list) and any(str(x or "").strip() for x in vals)
+    return not has_vals and not str(raw_val.get("contains") or "").strip()
+
+
 def excel_filter_clause(expr, raw_val):
     """WHERE clause + params for ONE Excel-style (dict) column filter.
 
@@ -10846,7 +10855,18 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
             # Excel-style value filter — handled before _sql_like_pattern(),
             # which cannot take a dict. See excel_filter_clause().
             if isinstance(raw_val, dict):
-                _c, _p = excel_filter_clause(col_filter_map.get(col_key), raw_val)
+                _expr_sub = col_filter_map.get(col_key)
+                if not _expr_sub:
+                    # Unknown column + an active filter. The substring branch
+                    # below already excludes these rows in that case; this one
+                    # dropped the filter instead and let all 18 of them through
+                    # under every Excel filter on the page. A blanks-only
+                    # filter still keeps them — a column they do not carry is
+                    # genuinely blank on these rows.
+                    if _column_filter_is_active(raw_val) and not _excel_filter_is_blanks_only(raw_val):
+                        where.append("1=0")
+                    continue
+                _c, _p = excel_filter_clause(_expr_sub, raw_val)
                 if _c:
                     where.append(_c)
                     params.extend(_p)
