@@ -411,7 +411,15 @@ export default function IMIssuesRisks() {
             ...(validExtras.some((r) => r.team === planTeam)
               ? []
               : [{ team: planTeam, assigned_qty: 0 }]),
-            ...validExtras.map((r) => ({ team: r.team, assigned_qty: Number(r.assigned_qty) || 0 })),
+            // ONE plan is created per selected line and this payload goes to
+            // every one of them, so a typed QUANTITY only means something on a
+            // single line — sending "1" to two lines of different size put the
+            // wrong split on both. Across several lines the share travels as a
+            // PERCENTAGE, which the backend resolves against each line's own
+            // quantity; left blank it stays 0 and each line divides evenly.
+            ...validExtras.map((r) => (planSingleLine
+              ? { team: r.team, assigned_qty: Number(r.assigned_qty) || 0 }
+              : { team: r.team, assigned_pct: Number(r.assigned_pct) || 0 })),
           ]
         : [];
       await pmApi.createRolloutPlans({
@@ -466,6 +474,9 @@ export default function IMIssuesRisks() {
 
   const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
   const selectedIssueRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+  // A share typed as a quantity is only meaningful when one line is being
+  // planned — see the payload in createPlansFromIssues.
+  const planSingleLine = selectedIssueRows.length === 1;
   const createPlanTotalQty = selectedIssueRows.reduce((s, r) => s + Number(r.qty || 0), 0);
   const planTeamsAssignedQty = (planTeams || []).reduce((s, r) => s + (Number(r.assigned_qty) || 0), 0);
   const planTeamsRemaining = createPlanTotalQty - planTeamsAssignedQty;
@@ -770,13 +781,17 @@ export default function IMIssuesRisks() {
                         type="text"
                         inputMode="decimal"
                         pattern="[0-9]*\.?[0-9]*"
-                        value={row.assigned_qty ?? ""}
+                        value={(planSingleLine ? row.assigned_qty : row.assigned_pct) ?? ""}
+                        title={planSingleLine
+                          ? "This team's share of the line, as a quantity."
+                          : "This team's share as a percentage, applied to each selected line's own quantity. Leave blank to divide every line evenly."}
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
-                          setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: v } : x));
+                          const field = planSingleLine ? "assigned_qty" : "assigned_pct";
+                          setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, [field]: v } : x));
                         }}
-                        placeholder="Qty"
+                        placeholder={planSingleLine ? "Qty" : "% · even"}
                         style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
                       />
                       <button

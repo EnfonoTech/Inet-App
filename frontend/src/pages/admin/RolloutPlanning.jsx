@@ -16,6 +16,7 @@ import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/R
 import PoidMaterialsDispatched from "../../components/PoidMaterialsDispatched";
 import MaterialItemPicker from "../../components/MaterialItemPicker";
 import DuidBillMaterialsModal from "../../components/DuidBillMaterialsModal";
+import RolloutPlanModal from "../../components/RolloutPlanModal";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
@@ -157,30 +158,13 @@ export default function RolloutPlanning() {
 
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
-  const [planDate, setPlanDate] = useState(todayDate());
-  const [planEndDate, setPlanEndDate] = useState(todayDate());
-  const [planTeam, setPlanTeam] = useState("");
-  // Multi-team assignment: list of {team, assigned_qty}. Empty rows are
-  // ignored on submit. Single-team plans send teams = [{team: planTeam, ...}]
-  // automatically (back-compat).
-  const [planTeams, setPlanTeams] = useState([]);
-  const [accessTime, setAccessTime] = useState("");
-  const [accessPeriod, setAccessPeriod] = useState("");
-  const [huaweiImOverride, setHuaweiImOverride] = useState("");
   const [huaweiIms, setHuaweiIms] = useState([]);
-  const [projectDomainOverride, setProjectDomainOverride] = useState("");
   const [projectDomains, setProjectDomains] = useState([]);
-  const [qcRequired, setQcRequired] = useState(true);
-  const [ciagRequired, setCiagRequired] = useState(true);
   const [teamsList, setTeamsList] = useState([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
-  const [visitType, setVisitType] = useState("Execution");
-  const [creating, setCreating] = useState(false);
   const [successMsg, setSuccessMsg] = useState(null);
   const [copyErr, setCopyErr] = useState(null);
-  const [createError, setCreateError] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
-  const [managerRemark, setManagerRemark] = useState("");
 
   // Optional materials dispatch, grouped per DUID — same feature as
   // IMDispatch.jsx's "Create Plan" modal (Huawei stock is DUID-scoped, so
@@ -431,24 +415,8 @@ export default function RolloutPlanning() {
   }
 
   function openCreateModal() {
-    setCreateError(null);
-    // Team is always chosen by IM at planning (not copied from dispatch / project).
-    setPlanTeam("");
-    setPlanTeams([]);
-    setPlanEndDate(planDate);
-    setAccessTime("");
-    setAccessPeriod("");
-    // Pre-fill with the current value only when every selected row already
-    // agrees on it (own override or project default); otherwise leave blank
-    // so submitting doesn't silently overwrite a mixed batch with one value.
-    const selRows = rows.filter((r) => selected.has(r.name));
-    const huaweiVals = [...new Set(selRows.map((r) => r.huawei_im).filter(Boolean))];
-    setHuaweiImOverride(huaweiVals.length === 1 ? huaweiVals[0] : "");
-    const domainVals = [...new Set(selRows.map((r) => r.project_domain).filter(Boolean))];
-    setProjectDomainOverride(domainVals.length === 1 ? domainVals[0] : "");
-    setQcRequired(true);
-    setCiagRequired(true);
-    setManagerRemark("");
+    // The plan form seeds itself from the selected rows when it opens — only
+    // this page's own materials state is reset here.
     setMaterialItemsByDuid({});
     setExpandedMaterialDuid("");
     setMaterialPickupDate("");
@@ -456,110 +424,38 @@ export default function RolloutPlanning() {
     setShowModal(true);
   }
 
-  async function handleCreate() {
-    if (selected.size === 0 || !planDate || !planEndDate || !visitType || !planTeam) return;
-    if (planEndDate < planDate) {
-      setCreateError("Planned end date cannot be before start date.");
-      return;
-    }
-    const noIm = missingImRows(rows, selected);
-    if (noIm.length > 0) {
-      setCreateError(imRequiredMessage(noIm, "plan"));
-      return;
-    }
-    // Internal work has no customer engagement behind it, so Huawei IM and
-    // Project Domain have nothing to point at and are not required — matching
-    // _require_line_attributes, which exempts is_internal_work lines. Asked
-    // per selection: a mixed batch still needs them for the customer lines.
-    const customerLines = rows.some(
-      (r) => selected.has(r.name) && !Number(r.is_internal_work || 0),
-    );
-    const missing = missingFields({
-      "Plan Date": planDate,
-      "Planned End Date": planEndDate,
-      "Visit Type": visitType,
-      "Team": planTeam,
-      "Access Time": accessTime,
-      "Access Period": accessPeriod,
-      ...(customerLines
-        ? { "Huawei IM": huaweiImOverride, "Project Domain": projectDomainOverride }
-        : {}),
-    });
-    if (missing.length > 0) {
-      setCreateError(missingFieldsMessage(missing, "plan"));
-      return;
-    }
-    setCreating(true);
-    setCreateError(null);
-    setSuccessMsg(null);
-    try {
-      const dispatches = Array.from(selected);
-      // When the IM has added extra teams in the table, send the full
-      // list. Otherwise send a one-row list using planTeam (back-compat).
-      const validExtras = (planTeams || []).filter((r) => r.team);
-      const teamsPayload = validExtras.length > 0
-        ? [
-            ...(validExtras.some((r) => r.team === planTeam)
-              ? []
-              : [{ team: planTeam, assigned_qty: 0 }]),
-            ...validExtras.map((r) => ({
-              team: r.team,
-              assigned_qty: Number(r.assigned_qty) || 0,
-            })),
-          ]
-        : [];
-      const result = await pmApi.createRolloutPlans({
-        dispatches,
-        plan_date: planDate,
-        plan_end_date: planEndDate,
-        team: planTeam,
-        teams: teamsPayload,
-        access_time: accessTime,
-        access_period: accessPeriod,
-        huawei_im: huaweiImOverride || undefined,
-        project_domain: projectDomainOverride || undefined,
-        qc_required: qcRequired ? 1 : 0,
-        ciag_required: ciagRequired ? 1 : 0,
-        visit_type: visitType,
-        manager_remark: managerRemark || undefined,
-      });
-      const count = result?.created ?? selected.size;
-      let msg = `Created ${count} rollout plan${count !== 1 ? "s" : ""} successfully.`;
+  async function handlePlansCreated(result, { team, dispatches } = {}) {
+    const count = result?.created ?? (dispatches || []).length;
+    let msg = `Created ${count} rollout plan${count !== 1 ? "s" : ""} successfully.`;
 
-      // Dispatch any materials selected per-DUID — a separate call from
-      // plan creation, so a failed material request doesn't roll back plans
-      // that DID get created.
-      const matGroups = createPlanDuidGroups.filter((g) => (materialItemsByDuid[g.duid] || []).length > 0);
-      if (matGroups.length > 0) {
-        const matResults = [];
-        for (const g of matGroups) {
-          try {
-            const res = await pmApi.createMaterialRequest({
-              poid: g.poid || undefined,
-              duid: g.duid,
-              team: planTeam,
-              items: materialItemsByDuid[g.duid],
-              pickup_date: materialPickupDate || undefined,
-              pickup_time: materialPickupTime || undefined,
-            });
-            matResults.push({ duid: g.duid, ok: true, name: res?.name });
-          } catch (e) {
-            matResults.push({ duid: g.duid, ok: false, error: e.message || "Failed" });
-          }
+    // Materials are dispatched after the plans, in a separate call, so a
+    // failed material request cannot roll back plans that were created.
+    const matGroups = createPlanDuidGroups.filter((g) => (materialItemsByDuid[g.duid] || []).length > 0);
+    if (matGroups.length > 0) {
+      const matResults = [];
+      for (const g of matGroups) {
+        try {
+          const res = await pmApi.createMaterialRequest({
+            poid: g.poid || undefined,
+            duid: g.duid,
+            team,
+            items: materialItemsByDuid[g.duid],
+            pickup_date: materialPickupDate || undefined,
+            pickup_time: materialPickupTime || undefined,
+          });
+          matResults.push({ duid: g.duid, ok: true, name: res?.name });
+        } catch (e) {
+          matResults.push({ duid: g.duid, ok: false, error: e.message || "Failed" });
         }
-        const okCount = matResults.filter((r) => r.ok).length;
-        msg += ` Material requests: ${okCount}/${matResults.length} created.`;
       }
-
-      setSuccessMsg(msg);
-      setSelected(new Set());
-      setShowModal(false);
-      await Promise.all([loadData(), loadMeta()]);
-    } catch (err) {
-      setCreateError(err.message || "Failed to create plans");
-    } finally {
-      setCreating(false);
+      const okCount = matResults.filter((r) => r.ok).length;
+      msg += ` Material requests: ${okCount}/${matResults.length} created.`;
     }
+
+    setSuccessMsg(msg);
+    setSelected(new Set());
+    setShowModal(false);
+    await Promise.all([loadData(), loadMeta()]);
   }
 
   const totalAmt = rows.reduce((s, r) => s + (r.line_amount || 0), 0);
@@ -570,7 +466,6 @@ export default function RolloutPlanning() {
   const createPlanSelRows = rows.filter((r) => selected.has(r.name));
   const createPlanDuids = [...new Set(createPlanSelRows.map((r) => r.site_code || r.name).filter(Boolean))];
   const createPlanIms = [...new Set(createPlanSelRows.map((r) => r.im).filter(Boolean))];
-  const createPlanTotalQty = createPlanSelRows.reduce((s, r) => s + Number(r.qty || 0), 0);
   // Group selected lines by DUID for the optional materials-dispatch
   // section — strictly per DUID, never mixed, even when the batch spans
   // several DUIDs. Rows with no site_code (e.g. a dummy PO not yet mapped
@@ -582,10 +477,6 @@ export default function RolloutPlanning() {
     const groupRows = createPlanSelRows.filter((r) => r.site_code === duid);
     return { duid, poid: groupRows[0]?.poid || groupRows[0]?.name || "", count: groupRows.length };
   });
-  const planTeamsAssignedQty = (planTeams || [])
-    .filter((r) => r.team)
-    .reduce((s, r) => s + (Number(r.assigned_qty) || 0), 0);
-  const planTeamsRemaining = createPlanTotalQty - planTeamsAssignedQty;
 
   return (
     <div>
@@ -1028,365 +919,84 @@ export default function RolloutPlanning() {
       </div>
 
       {/* ── Create Plans Modal ────────────────────────────────── */}
-      <Modal
+      {/* The planning form is one shared component — it carries the
+          per-plan quantity, the percentage split across several lines and
+          the guards that go with them. This page used to hold its own copy,
+          which is how the three drifted apart. Only the materials section,
+          which is this page's own, is passed in. */}
+      <RolloutPlanModal
         open={showModal}
-        onClose={() => !creating && setShowModal(false)}
-        title="Create rollout plans for selected DUIDs"
-        width={840}
-        footer={
+        rows={createPlanSelRows}
+        imName={createPlanIms.length === 1 ? createPlanIms[0] : ""}
+        teamsList={teamsList}
+        teamsLoading={teamsLoading}
+        huaweiIms={huaweiIms}
+        projectDomains={projectDomains}
+        onClose={() => setShowModal(false)}
+        onCreated={handlePlansCreated}
+        materialSlot={
           <>
-            <button className="btn-secondary" onClick={() => setShowModal(false)} disabled={creating}>
-              Cancel
-            </button>
-            <button
-              className="btn-primary"
-              onClick={handleCreate}
-              disabled={creating || !planDate || !planEndDate || !visitType || !planTeam || !accessTime || !accessPeriod}
-            >
-              {creating ? "Creating…" : `Create ${selected.size} plan${selected.size !== 1 ? "s" : ""}`}
-            </button>
+                    {createPlanDuidGroups.length > 0 && (
+                      <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
+                        <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>DISPATCH MATERIALS</div>
+                        <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                          <div style={{ flex: "1 1 140px" }}>
+                            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Date</label>
+                            <input type="date" value={materialPickupDate} onChange={(e) => setMaterialPickupDate(e.target.value)}
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+                          </div>
+                          <div style={{ flex: "1 1 140px" }}>
+                            <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Time</label>
+                            <input type="time" value={materialPickupTime} onChange={(e) => setMaterialPickupTime(e.target.value)}
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
+                          </div>
+                        </div>
+                        {createPlanDuidGroups.map((g) => {
+                          const items = materialItemsByDuid[g.duid] || [];
+                          const expanded = expandedMaterialDuid === g.duid;
+                          return (
+                            <div key={g.duid} style={{ border: "1px solid #e2e8f0", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedMaterialDuid(expanded ? "" : g.duid)}
+                                style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "none", cursor: "pointer", textAlign: "left" }}
+                              >
+                                <span>
+                                  <span style={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>{g.duid}</span>
+                                  <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 8 }}>{g.count} line{g.count !== 1 ? "s" : ""}</span>
+                                </span>
+                                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  {items.length > 0 && (
+                                    <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", background: "#eff6ff", padding: "2px 8px", borderRadius: 999 }}>
+                                      {items.length} item{items.length !== 1 ? "s" : ""} selected
+                                    </span>
+                                  )}
+                                  <span
+                                    role="button"
+                                    title="View bills for this DUID"
+                                    onClick={(e) => { e.stopPropagation(); setViewBillsDuid(g.duid); }}
+                                    style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 999, cursor: "pointer" }}
+                                  >
+                                    Bills
+                                  </span>
+                                  <span style={{ color: "#94a3b8" }}>{expanded ? "▲" : "▼"}</span>
+                                </span>
+                              </button>
+                              <div style={{ padding: 12, borderTop: "1px solid #e2e8f0", display: expanded ? "block" : "none" }}>
+                                <MaterialItemPicker
+                                  duid={g.duid}
+                                  sourceWh={materialSourceWh}
+                                  onItemsChange={(its) => setMaterialItemsByDuid((p) => ({ ...p, [g.duid]: its }))}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
           </>
         }
-      >
-        <>
-              {createError && (
-                <div className="notice error" style={{ marginBottom: 14 }}>
-                  <span>⚠</span> {createError}
-                </div>
-              )}
-              <div style={{ marginBottom: 18 }}>
-                <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 8 }}>SELECTED DUIDs</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 120, overflowY: "auto", padding: 4 }}>
-                  {createPlanDuids.map((d) => (
-                    <span
-                      key={d}
-                      style={{
-                        display: "inline-block",
-                        maxWidth: "100%",
-                        padding: "6px 10px",
-                        borderRadius: 8,
-                        background: "#f1f5f9",
-                        border: "1px solid #e2e8f0",
-                        fontSize: "0.78rem",
-                        fontWeight: 600,
-                        color: "#334155",
-                        fontFamily: "ui-monospace, monospace",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                      title={d}
-                    >
-                      {d}
-                    </span>
-                  ))}
-                </div>
-                <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: 8 }}>
-                  {selected.size} dispatch line{selected.size !== 1 ? "s" : ""} · Qty <strong style={{ color: "#0f172a" }}>{qty.format(createPlanTotalQty)}</strong> · SAR {qty.format(selectedAmt)}
-                  {createPlanIms.length > 0 && (
-                    <span style={{ marginLeft: 10 }}>
-                      IM:
-                      {" "}
-                      {createPlanIms.length === 1
-                        ? (rows.find((x) => x.im === createPlanIms[0])?.im_full_name || createPlanIms[0])
-                        : `${createPlanIms.length} IMs`}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 16 }}>
-                <div>
-                  <label style={labelStyle}>Lead team</label>
-                  <select
-                    value={planTeam}
-                    onChange={(e) => setPlanTeam(e.target.value)}
-                    style={fieldStyle}
-                    disabled={teamsLoading}
-                  >
-                    <option value="">{teamsLoading ? "Loading teams…" : "Select team"}</option>
-                    {teamsList.map((t) => (
-                      <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={labelStyle}>Visit type</label>
-                  <select
-                    value={visitType}
-                    onChange={(e) => setVisitType(e.target.value)}
-                    style={fieldStyle}
-                  >
-                    {VISIT_TYPES.map((vt) => (
-                      <option key={vt} value={vt}>{vt}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Multi-team split (optional). Lead team is selected
-                  above; add extra teams here with their assigned qty.
-                  Single-line POIDs may use just the lead team. */}
-              <div style={{
-                background: "#fafbfc", border: "1px solid #e5e7eb",
-                borderRadius: 8, padding: 12, marginBottom: 16,
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569" }}>
-                    ADDITIONAL TEAMS (optional)
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPlanTeams((arr) => [...arr, { team: "", assigned_qty: 0 }])}
-                    style={{ fontSize: "0.74rem", padding: "4px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 600, color: "#1d4ed8" }}
-                  >
-                    + Add team
-                  </button>
-                </div>
-                <div style={{
-                  fontSize: "0.74rem", color: "#475569", marginBottom: 8,
-                  padding: "6px 8px", borderRadius: 6,
-                  background: planTeamsRemaining < 0 ? "#fef2f2" : "#eef2ff",
-                  border: planTeamsRemaining < 0 ? "1px solid #fecaca" : "1px solid #c7d2fe",
-                }}>
-                  Total qty <strong>{qty.format(createPlanTotalQty)}</strong>
-                  {" · Assigned to extras "}
-                  <strong>{fmt.format(planTeamsAssignedQty)}</strong>
-                  {" · Remaining for lead team "}
-                  <strong style={{ color: planTeamsRemaining < 0 ? "#b91c1c" : "#1d4ed8" }}>
-                    {fmt.format(planTeamsRemaining)}
-                  </strong>
-                  {planTeamsRemaining < 0 && (
-                    <span style={{ marginLeft: 8, color: "#b91c1c", fontWeight: 700 }}>
-                      ⚠ over total
-                    </span>
-                  )}
-                </div>
-                {planTeams.length === 0 ? (
-                  <div style={{ fontSize: "0.74rem", color: "#94a3b8" }}>
-                    Single-team plan. Add another team to split the line.
-                  </div>
-                ) : (
-                  <div>
-                    {planTeams.map((row, i) => (
-                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                        <select
-                          value={row.team || ""}
-                          onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, team: e.target.value } : x))}
-                          style={{ ...fieldStyle, flex: 2, padding: "6px 10px" }}
-                        >
-                          <option value="">Select team</option>
-                          {teamsList
-                            .filter((t) => t.team_id !== planTeam || row.team === t.team_id)
-                            .map((t) => (
-                              <option key={t.team_id} value={t.team_id}>{t.team_name || t.team_id}</option>
-                            ))}
-                        </select>
-                        <input
-                          // Chrome's <input type="number"> wipes the value to ""
-                          // mid-decimal-entry (e.g. typing "0." returns "" via
-                          // e.target.value), which breaks the controlled input.
-                          // type=text + inputMode=decimal keeps the numeric
-                          // keyboard on mobile and lets every intermediate
-                          // string flow through naturally.
-                          type="text"
-                          inputMode="decimal"
-                          pattern="[0-9]*\.?[0-9]*"
-                          value={row.assigned_qty ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            // Allow only digits + a single dot; preserves
-                            // partial entries like "0." or "1.5".
-                            if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
-                            setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: v } : x));
-                          }}
-                          placeholder="Qty"
-                          style={{ ...fieldStyle, flex: 1, padding: "6px 10px" }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setPlanTeams((arr) => arr.filter((_, j) => j !== i))}
-                          style={{ fontSize: "0.78rem", padding: "4px 8px", borderRadius: 6, border: "1px solid #fecaca", background: "#fff", cursor: "pointer", color: "#b91c1c" }}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                    <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: 4 }}>
-                      Lead team gets the remaining qty if you leave it blank.
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#94a3b8", letterSpacing: "0.06em", marginBottom: 12 }}>ACCESS DETAILS</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px 16px", marginBottom: 20 }}>
-                <div>
-                  <label style={labelStyle}>Planned start date</label>
-                  <input
-                    type="date"
-                    value={planDate}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setPlanDate(v);
-                      setPlanEndDate((ed) => (ed < v ? v : ed));
-                    }}
-                    style={fieldStyle}
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Planned end date</label>
-                  <input
-                    type="date"
-                    value={planEndDate}
-                    min={planDate}
-                    onChange={(e) => setPlanEndDate(e.target.value)}
-                    style={fieldStyle}
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Access time *</label>
-                  <input
-                    type="time"
-                    value={accessTime}
-                    onChange={(e) => setAccessTime(e.target.value)}
-                    style={fieldStyle}
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Access period *</label>
-                  <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", padding: "9px 0" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
-                      <input type="radio" name="access_period_rp" checked={accessPeriod === ""} onChange={() => setAccessPeriod("")} />
-                      Not set
-                    </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
-                      <input type="radio" name="access_period_rp" checked={accessPeriod === "Day"} onChange={() => setAccessPeriod("Day")} />
-                      Day
-                    </label>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.86rem", cursor: "pointer" }}>
-                      <input type="radio" name="access_period_rp" checked={accessPeriod === "Night"} onChange={() => setAccessPeriod("Night")} />
-                      Night
-                    </label>
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>Huawei IM</label>
-                  <SearchableSelect
-                    value={huaweiImOverride}
-                    onChange={setHuaweiImOverride}
-                    options={huaweiIms.map((h) => ({ id: h.name, label: `${h.full_name}${h.email ? ` (${h.email})` : ""}` }))}
-                    placeholder="Defaults from project — set to override"
-                    style={{ width: "100%" }}
-                    minWidth={0}
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Project Domain</label>
-                  <SearchableSelect
-                    value={projectDomainOverride}
-                    onChange={setProjectDomainOverride}
-                    options={projectDomains.map((d) => ({ id: d.name, label: d.domain_name || d.name }))}
-                    placeholder="Defaults from project — set to override"
-                    style={{ width: "100%" }}
-                    minWidth={0}
-                  />
-                </div>
-              </div>
-
-              {/* Per-plan workflow toggles. When unchecked, the field
-                  team isn't asked for that step and the IM can close
-                  the plan to Work Done without recording it. */}
-              <div style={{
-                display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap",
-                padding: "10px 12px", background: "#f8fafc",
-                border: "1px solid #e2e8f0", borderRadius: 6,
-                marginTop: 12, marginBottom: 12,
-              }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
-                  <input type="checkbox" checked={qcRequired} onChange={(e) => setQcRequired(e.target.checked)} />
-                  QC Required
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
-                  <input type="checkbox" checked={ciagRequired} onChange={(e) => setCiagRequired(e.target.checked)} />
-                  CIAG Required
-                </label>
-              </div>
-
-              {/* Single remark — saved as the Manager remark on every
-                  selected POID. Planning is normally done by the IM, so we
-                  collapse the 3-way panel into one Manager-tone textarea. */}
-              <div className="form-group">
-                <label>Remark</label>
-                <textarea
-                  rows={3}
-                  value={managerRemark}
-                  onChange={(e) => setManagerRemark(e.target.value)}
-                  placeholder="Remark for these rollout plans…"
-                  style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "0.86rem", border: "1px solid #e2e8f0", borderRadius: 6, resize: "vertical", minHeight: 60 }}
-                />
-              </div>
-
-              {createPlanDuidGroups.length > 0 && (
-                <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
-                  <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>DISPATCH MATERIALS</div>
-                  <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-                    <div style={{ flex: "1 1 140px" }}>
-                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Date</label>
-                      <input type="date" value={materialPickupDate} onChange={(e) => setMaterialPickupDate(e.target.value)}
-                        style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
-                    </div>
-                    <div style={{ flex: "1 1 140px" }}>
-                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Time</label>
-                      <input type="time" value={materialPickupTime} onChange={(e) => setMaterialPickupTime(e.target.value)}
-                        style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
-                    </div>
-                  </div>
-                  {createPlanDuidGroups.map((g) => {
-                    const items = materialItemsByDuid[g.duid] || [];
-                    const expanded = expandedMaterialDuid === g.duid;
-                    return (
-                      <div key={g.duid} style={{ border: "1px solid #e2e8f0", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedMaterialDuid(expanded ? "" : g.duid)}
-                          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "none", cursor: "pointer", textAlign: "left" }}
-                        >
-                          <span>
-                            <span style={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>{g.duid}</span>
-                            <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 8 }}>{g.count} line{g.count !== 1 ? "s" : ""}</span>
-                          </span>
-                          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            {items.length > 0 && (
-                              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", background: "#eff6ff", padding: "2px 8px", borderRadius: 999 }}>
-                                {items.length} item{items.length !== 1 ? "s" : ""} selected
-                              </span>
-                            )}
-                            <span
-                              role="button"
-                              title="View bills for this DUID"
-                              onClick={(e) => { e.stopPropagation(); setViewBillsDuid(g.duid); }}
-                              style={{ fontSize: "0.72rem", fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: 999, cursor: "pointer" }}
-                            >
-                              Bills
-                            </span>
-                            <span style={{ color: "#94a3b8" }}>{expanded ? "▲" : "▼"}</span>
-                          </span>
-                        </button>
-                        <div style={{ padding: 12, borderTop: "1px solid #e2e8f0", display: expanded ? "block" : "none" }}>
-                          <MaterialItemPicker
-                            duid={g.duid}
-                            sourceWh={materialSourceWh}
-                            onItemsChange={(its) => setMaterialItemsByDuid((p) => ({ ...p, [g.duid]: its }))}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-        </>
-
-      </Modal>
+      />
 
       <DuidBillMaterialsModal duid={viewBillsDuid} onClose={() => setViewBillsDuid("")} />
 

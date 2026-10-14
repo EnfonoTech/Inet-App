@@ -440,6 +440,9 @@ export default function IssuesRisks() {
   // section — strictly per DUID, never mixed, even when the batch spans
   // several DUIDs.
   const selectedIssueRows = filteredRows.filter((r) => selected.has(r.rollout_plan));
+  // A share typed as a quantity is only meaningful when one line is being
+  // planned — see the payload in createPlansFromIssues.
+  const planSingleLine = selectedIssueRows.length === 1;
   const createPlanDuids = [...new Set(selectedIssueRows.map((r) => r.site_code).filter(Boolean))];
   const createPlanDuidGroups = createPlanDuids.map((duid) => {
     const groupRows = selectedIssueRows.filter((r) => r.site_code === duid);
@@ -738,9 +741,13 @@ export default function IssuesRisks() {
                     </select>
                     <input
                       type="number" min="0" step="0.0001"
-                      value={row.assigned_qty || ""}
-                      onChange={(e) => setPlanTeams((arr) => arr.map((x, j) => j === i ? { ...x, assigned_qty: e.target.value } : x))}
-                      placeholder="Qty"
+                      value={(planSingleLine ? row.assigned_qty : row.assigned_pct) || ""}
+                      title={planSingleLine
+                        ? "This team's share of the line, as a quantity."
+                        : "This team's share as a percentage, applied to each selected line's own quantity. Leave blank to divide every line evenly."}
+                      onChange={(e) => setPlanTeams((arr) => arr.map((x, j) =>
+                        j === i ? { ...x, [planSingleLine ? "assigned_qty" : "assigned_pct"]: e.target.value } : x))}
+                      placeholder={planSingleLine ? "Qty" : "% · even"}
                       style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}
                     />
                     <button

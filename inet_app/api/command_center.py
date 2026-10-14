@@ -6067,6 +6067,15 @@ def _sync_plan_teams(rollout_plan, teams_payload, primary_team, total_qty, targe
             if not frappe.db.exists("INET Team", tid):
                 frappe.throw(frappe._("Invalid team: {0}").format(tid))
             qty = flt(entry.get("assigned_qty") or 0)
+            # A share can arrive as a PERCENTAGE instead of a quantity, and
+            # that is the only form that works across several lines at once:
+            # one payload is sent to every selected line, so "1 unit" means
+            # different things on a line of 1 and a line of 10, while "60%"
+            # means the same on both. Resolved here, against THIS plan's own
+            # quantity, so each line splits by its own size.
+            pct = flt(entry.get("assigned_pct") or 0)
+            if not qty and pct > 0:
+                qty = flt(total_qty or 0) * pct / 100.0
             if qty < 0:
                 qty = 0
             seen.add(tid)
