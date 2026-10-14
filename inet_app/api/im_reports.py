@@ -332,6 +332,20 @@ def report_top_teams(filters=None):
     return cc._top_teams_report(fd, td, im_ids=im_ids)
 
 
+@frappe.whitelist()
+def report_team_rating(filters=None):
+    """Team Rating across the IM's own work.
+
+    Scoped on the IM stamped on each execution, so an IM sees the ratings
+    given on their own jobs — including ones given by a previous IM on a
+    team they now share, which is the history that explains the average.
+    """
+    _im, im_ids, _teams = _im_session_scope()
+    f = _filters(filters)
+    fd, td = _range(f)
+    return cc._team_rating_report(fd, td, im_ids=im_ids)
+
+
 # -------------------------------------------------------- Project Reports ----
 
 @frappe.whitelist()

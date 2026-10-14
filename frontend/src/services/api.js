@@ -1305,6 +1305,7 @@ export const imReportsApi = {
   // Teams & Utilization
   reportTeamUtilization:      imReport("report_team_utilization"),
   reportMonthlyTeamDetails:   imReport("report_monthly_team_details"),
+  reportTeamRating:           imReport("report_team_rating"),
   reportTeamPVA:              imReport("report_team_pva"),
 
   // Performance

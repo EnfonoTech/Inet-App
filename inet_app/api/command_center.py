@@ -16174,6 +16174,20 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
 def get_team_rating_report(from_date=None, to_date=None, **kwargs):
     """Team Rating — what the IMs scored each team, over a period.
 
+    Company-wide. Never scoped from the browser: the IM's own copy comes
+    through im_reports.report_team_rating, which passes its session scope.
+    """
+    return _team_rating_report(from_date, to_date)
+
+
+def _team_rating_report(from_date=None, to_date=None, im_ids=None):
+    """Builder for get_team_rating_report; `im_ids` narrows it to one IM's
+    own work.
+
+    Scoped on `de.im` — the IM stamped on the execution when it happened, not
+    the team's current manager — so a team moving between IMs does not drag
+    its back-catalogue of ratings with it.
+
     One row per team: the average of each criterion across the jobs that were
     actually rated, plus how many jobs went unrated, because an average over
     three of a team's ninety jobs is not a performance figure and the report
@@ -16183,6 +16197,7 @@ def get_team_rating_report(from_date=None, to_date=None, **kwargs):
     if not _team_rating_columns_exist():
         return {"columns": [], "data": [], "totals": {}}
 
+    scope_sql, scope_params = _im_scope_cond("de.im", im_ids)
     avg_cols = ", ".join(
         f"AVG(NULLIF(de.{f}, 0)) AS avg_{f[len('rating_'):]}"
         for f, _ in TEAM_RATING_FIELDS
@@ -16203,9 +16218,10 @@ def get_team_rating_report(from_date=None, to_date=None, **kwargs):
         LEFT JOIN `tabINET Team` it ON it.name = de.team
         WHERE de.execution_date BETWEEN %s AND %s
           AND IFNULL(de.team, '') != ''
+          {scope_sql}
         GROUP BY de.team
         """,
-        (fd, td),
+        tuple([fd, td] + scope_params),
         as_dict=True,
     )
 

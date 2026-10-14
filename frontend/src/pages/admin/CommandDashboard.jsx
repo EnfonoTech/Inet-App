@@ -474,11 +474,14 @@ export default function CommandDashboard() {
                 hint="Our share of that same invoiced work, at each contract's agreed percentage."
                 color={(subcon.inet_margin_sub ?? 0) >= 0 ? "text-green" : "text-red"}
                 onClick={goSubconPO} />
+              {/* No drill-through: a gap is a shortfall against a commercial
+                  commitment, so no list of rows IS the gap. The old link
+                  opened the revenue rows — the opposite of what the number
+                  says — and they are a click away on the Revenue tile
+                  anyway. The company-level Gap tile has never been
+                  clickable, for the same reason. */}
               <Stat label="Gap"           value={sar(subcon.sub_gap)}        color="text-red"
-                hint="How far subcontract revenue is short of the agreed monthly commitment."
-                onClick={(subcon.contract_names || []).length
-                  ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: subcon.contract_names, fromDate: range.from, toDate: range.to } } })
-                  : undefined} />
+                hint="How far subcontract revenue is short of the agreed monthly commitment." />
             </div>
             {/* Sub-Con revenue vs target progress */}
             {(() => {

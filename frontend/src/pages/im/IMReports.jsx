@@ -91,6 +91,14 @@ const REPORTS = [
     filterType: "teamdate",
   },
   {
+    key: "team_rating",
+    category: "Teams & Utilization",
+    title: "Team Rating",
+    api: "reportTeamRating",
+    description: "Your ratings of each team — execution, quality, safety, timeliness, overall",
+    hasFilters: true,
+  },
+  {
     key: "weekly_performance",
     category: "Performance",
     title: "Weekly Performance",
