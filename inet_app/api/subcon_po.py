@@ -350,6 +350,123 @@ def _payout_shown_sql(n):
     return f"COALESCE(NULLIF(pd.sub_po_amount_ms{n}, 0), {_expected_payout_sql(n)})"
 
 
+# ── When a payout is incurred, and for how much ──────────────────────────
+#
+# The subcontractor is owed for a milestone once INET has invoiced the
+# customer for it. "When" therefore means the customer invoice's own date,
+# and the authoritative source for that is the Sales Invoice itself —
+# `Sales Invoice Item` carries both `poid` and `milestone`, so the link is
+# exact. Reading the document rather than the date copied onto PO Dispatch
+# matters for two reasons: a cancelled invoice simply stops being a row here
+# (no reversal logic to get wrong), and a milestone invoiced in parts gives
+# one row per part, on its own date, for its own share.
+#
+# One row per PART, not per milestone, is the point. A 3-qty line billed 2
+# now and 1 next month is two Sales Invoice Items against the same MS1, and
+# each must carry its own date and its own slice of the payout. Scaling by
+# `sii.amount / pd.msN_amount` does that: the fractions sum to 1 across the
+# parts, so the milestone's whole payout lands, spread over the dates it was
+# actually invoiced on.
+#
+# The fraction divides by the FULL milestone amount, never by
+# `_ms_amount_sql(n)` (this allocation's share of it): the customer invoice
+# line is the whole milestone, while the payout being scaled is already this
+# supplier's own slice. Dividing both by the share would square it.
+# The date chain and the "already invoiced" test live on the customer side,
+# in pic.py, and are imported rather than restated here — the payout and the
+# revenue it comes out of must agree about when a milestone was invoiced.
+from inet_app.api.pic import (  # noqa: E402
+    LEGACY_INVOICE_DATE_SQL as _LEGACY_INVOICE_DATE_SQL,
+    submitted_invoice_exists_sql as _submitted_invoice_exists_sql,
+)
+
+
+def subcon_invoice_window(pf):
+    """``(sql, params)`` restricting to lines with a payout event in a
+    customer-invoice date window — the window the Command Dashboard's
+    Sub-Con figures are built on.
+
+    Deliberately separate from ``_supplier_po_date_filter``, which filters on
+    the SUPPLIER PO date. They answer different questions and a page can
+    carry either; this one is what a drill-through from the dashboard passes,
+    so the page it lands on counts the same money the tile did.
+    """
+    frm = (pf or {}).get("invoice_from_date")
+    to = (pf or {}).get("invoice_to_date")
+    if not frm and not to:
+        return "", []
+    conds = ["ev_w.po_dispatch = pd.name", "ev_w.subcontract = sm.name"]
+    params = []
+    if frm:
+        conds.append("ev_w.event_date >= %s")
+        params.append(frm)
+    if to:
+        conds.append("ev_w.event_date <= %s")
+        params.append(to)
+    return (
+        f"EXISTS (SELECT 1 FROM ({subcon_payout_events_sql()}) ev_w"
+        f" WHERE {' AND '.join(conds)})",
+        params,
+    )
+
+
+def subcon_payout_events_sql():
+    """``(po_dispatch, subcontract, milestone, event_date, revenue, payout,
+    inet_margin)``, one row per payout event, as a UNION ALL subquery.
+
+    All three money columns come out of the same row so a caller cannot put
+    revenue in one period and its own cost in another — the mismatch that
+    made the old revenue-dated expense impossible to reconcile.
+
+    Two legs per milestone:
+
+    * **Invoiced** — one row per submitted Sales Invoice Item, dated by that
+      invoice's ``posting_date`` and carrying its proportional share of the
+      payout. This is the only leg new work can ever land in.
+    * **Legacy** — a milestone whose PIC status says it was billed but which
+      has no submitted Sales Invoice behind it, because it was invoiced
+      before the portal raised invoices. Dated by whatever the Master Tracker
+      import left, and worth the whole milestone payout. On the production
+      copy this is ~91% of billed subcontracted milestones today and shrinks
+      to nothing on its own as new work flows through the invoice.
+
+    The two legs cannot overlap: the legacy leg requires that no submitted
+    invoice exists for that milestone.
+
+    `event_date` can be NULL on the legacy leg — a milestone the sheet left
+    undated. Those rows are deliberately kept rather than dropped, so a
+    caller can count what it cannot place in time instead of silently
+    losing it.
+    """
+    legs = []
+    for n in (1, 2):
+        ms_full = f"IFNULL(pd.ms{n}_amount, 0)"
+        legs.append(f"""
+        SELECT pd.name AS po_dispatch, sm.name AS subcontract, 'MS{n}' AS milestone,
+               si.posting_date AS event_date,
+               ROUND(IFNULL(sii.amount, 0) * ({_ALLOC_SHARE_SQL}), 4) AS revenue,
+               ROUND({_payout_shown_sql(n)} * (IFNULL(sii.amount, 0) / NULLIF({ms_full}, 0)), 4) AS payout,
+               ROUND({_inet_amount_sql(n)} * (IFNULL(sii.amount, 0) / NULLIF({ms_full}, 0)), 4) AS inet_margin
+        {_SUBCON_FROM_JOIN}
+        JOIN `tabSales Invoice Item` sii
+              ON sii.poid = pd.name AND IFNULL(sii.milestone, '') = 'MS{n}'
+        JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus = 1
+        WHERE {' AND '.join(_SUBCON_BASE_WHERE)}
+        """)
+        legs.append(f"""
+        SELECT pd.name AS po_dispatch, sm.name AS subcontract, 'MS{n}' AS milestone,
+               {_LEGACY_INVOICE_DATE_SQL.format(n=n)} AS event_date,
+               {_ms_amount_sql(n)} AS revenue,
+               {_payout_shown_sql(n)} AS payout,
+               {_inet_amount_sql(n)} AS inet_margin
+        {_SUBCON_FROM_JOIN}
+        WHERE {' AND '.join(_SUBCON_BASE_WHERE)}
+          AND {_customer_billed_ms_sql(n)}
+          AND NOT {_submitted_invoice_exists_sql(n)}
+        """)
+    return " UNION ALL ".join(legs)
+
+
 def _inet_amount_sql(n):
     """INET's own share of the milestone — the margin it keeps.
 
@@ -758,6 +875,11 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
     if _po_date_sql:
         where.append(_po_date_sql)
         params.extend(_po_date_params)
+    # Customer-invoice window — what a Command Dashboard drill-through sends.
+    _inv_sql, _inv_params = subcon_invoice_window(pf)
+    if _inv_sql:
+        where.append(_inv_sql)
+        params.extend(_inv_params)
 
     col_filter_map = {
         "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
@@ -937,16 +1059,40 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         # is owed, how much of it has an actual PO raised, and how much has
         # been invoiced back to us.
         from inet_app.api.command_center import summary_from_query
-        return summary_from_query(
-            _SUBCON_FROM_JOIN.strip().replace("FROM ", "", 1), where_sql, params, [
-                {"key": "lines", "label": "Lines", "agg": "count"},
-                {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
-                 "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
-                {"key": "subcons", "label": "Subcons", "agg": "count_distinct",
-                 "expr": "NULLIF(IFNULL(pd.contract,''), '')"},
-                {"key": "value", "label": "Value", "agg": "sum",
-                 "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
-            ])
+        _metrics = [
+            {"key": "lines", "label": "Lines", "agg": "count"},
+            {"key": "duids", "label": "DUIDs", "agg": "count_distinct",
+             "expr": "NULLIF(IFNULL(pd.site_code,''), '')"},
+            {"key": "subcons", "label": "Subcons", "agg": "count_distinct",
+             "expr": "NULLIF(IFNULL(pd.contract,''), '')"},
+            {"key": "value", "label": "Value", "agg": "sum",
+             "expr": "IFNULL(pd.line_amount, 0)", "format": "money", "tone": "good"},
+        ]
+        _summ = summary_from_query(
+            _SUBCON_FROM_JOIN.strip().replace("FROM ", "", 1), where_sql, params, _metrics)
+        # Arriving from the dashboard with an invoice window: show the payout
+        # that window accounts for, beside the counts, instead of restating it
+        # in a banner. It is event-scaled, so a milestone invoiced in parts
+        # contributes only the parts inside the window.
+        if pf.get("invoice_from_date") or pf.get("invoice_to_date"):
+            _w, _wp = ["1=1"], []
+            if pf.get("invoice_from_date"):
+                _w.append("ev.event_date >= %s")
+                _wp.append(pf["invoice_from_date"])
+            if pf.get("invoice_to_date"):
+                _w.append("ev.event_date <= %s")
+                _wp.append(pf["invoice_to_date"])
+            _pr = frappe.db.sql(
+                f"""SELECT COALESCE(SUM(ev.payout), 0) AS payout
+                    FROM ({subcon_payout_events_sql()}) ev
+                    WHERE {' AND '.join(_w)}""", tuple(_wp), as_dict=True)
+            _summ.setdefault("metrics", []).append({
+                "key": "period_payout", "label": "Payout invoiced",
+                "value": round(flt((_pr[0] if _pr else {}).get("payout")), 2),
+                "format": "money", "tone": "good",
+                "hint": "Owed to subcontractors for milestones billed to the customer in this period",
+            })
+        return _summ
 
     # creation DESC, not modified DESC: rows must not reorder under the user
     # when a status update touches one of them mid-review.
@@ -2218,6 +2364,11 @@ def subcon_payout_summary(portal_filters=None):
     if _po_date_sql:
         where.append(_po_date_sql)
         params.extend(_po_date_params)
+    # Customer-invoice window — what a Command Dashboard drill-through sends.
+    _inv_sql, _inv_params = subcon_invoice_window(pf)
+    if _inv_sql:
+        where.append(_inv_sql)
+        params.extend(_inv_params)
     where_sql = " AND ".join(where)
 
     # One UNION leg per milestone: the grain of this report is (line, milestone),
@@ -2317,7 +2468,43 @@ def subcon_payout_summary(portal_filters=None):
         all_params, as_dict=True)
 
     tot = lambda k: round(sum(flt(r[k]) for r in by_status), 2)
+
+    # Payout falling INSIDE the customer-invoice window, when one was given.
+    # The stage totals above are whole-milestone figures on the lines shown;
+    # this one is event-scaled, so a milestone invoiced in two parts
+    # contributes only the part that falls in the window. It is the figure
+    # that must equal the Command Dashboard's Sub-Con Expense tile, which is
+    # why it is computed from the same subcon_payout_events_sql() the tile
+    # uses rather than re-derived here.
+    period_payout = None
+    if pf.get("invoice_from_date") or pf.get("invoice_to_date"):
+        _p_where, _p_params = ["1=1"], []
+        if pf.get("invoice_from_date"):
+            _p_where.append("ev.event_date >= %s")
+            _p_params.append(pf["invoice_from_date"])
+        if pf.get("invoice_to_date"):
+            _p_where.append("ev.event_date <= %s")
+            _p_params.append(pf["invoice_to_date"])
+        _pr = frappe.db.sql(
+            f"""SELECT COALESCE(SUM(ev.payout), 0) AS payout,
+                       COALESCE(SUM(ev.revenue), 0) AS revenue,
+                       COALESCE(SUM(ev.inet_margin), 0) AS inet_margin,
+                       COUNT(*) AS events
+                FROM ({subcon_payout_events_sql()}) ev
+                WHERE {' AND '.join(_p_where)}""",
+            tuple(_p_params), as_dict=True)
+        _pr = (_pr[0] if _pr else {}) or {}
+        period_payout = {
+            "payout": round(flt(_pr.get("payout")), 2),
+            "revenue": round(flt(_pr.get("revenue")), 2),
+            "inet_margin": round(flt(_pr.get("inet_margin")), 2),
+            "events": cint(_pr.get("events")),
+            "from_date": pf.get("invoice_from_date"),
+            "to_date": pf.get("invoice_to_date"),
+        }
+
     return {
+        "period_payout": period_payout,
         "top": {
             "inet_total": tot("inet_amount"),
             "payout_total": tot("payout"),

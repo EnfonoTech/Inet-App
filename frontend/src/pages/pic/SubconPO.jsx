@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -456,7 +457,18 @@ function DocLinks({ csv, base }) {
 
 export default function SubconPO() {
   const { rowLimit } = useTableRowLimit();
-  const [tab, setTab] = useState("to_order");
+  // Set once from the arriving navigation state, so clearing the banner or
+  // re-rendering does not resurrect it.
+  const _navSubcon = useLocation().state?.subconFilters;
+  const [invoiceWindow, setInvoiceWindow] = useState(
+    _navSubcon?.invoiceFrom || _navSubcon?.invoiceTo
+      ? { from: _navSubcon.invoiceFrom || "", to: _navSubcon.invoiceTo || "" }
+      : null,
+  );
+  // A drill-through can name the tab it wants; the dashboard's Sub-Con tiles
+  // count every stage, so they ask for "all" rather than landing on To Order
+  // and showing a fraction of the money they just reported.
+  const [tab, setTab] = useState(_navSubcon?.tab || "to_order");
   const [rows, setRows] = useState([]);
   const [totals, setTotals] = useState({});
   const [totalCount, setTotalCount] = useState(0);
@@ -631,6 +643,12 @@ export default function SubconPO() {
     let cancelled = false;
     (async () => {
       const portal = {};
+      // A Command Dashboard drill-through sends the CUSTOMER-INVOICE window
+      // its Sub-Con tiles were built on. That is a different date from this
+      // page's own from/to (the supplier PO date), so it travels under its
+      // own keys and both can be active at once.
+      if (invoiceWindow?.from) portal.invoice_from_date = invoiceWindow.from;
+      if (invoiceWindow?.to) portal.invoice_to_date = invoiceWindow.to;
       if (searchDebounced.trim()) portal.search = searchDebounced.trim();
       if (projectFilter.length) portal.project_code = projectFilter;
       if (subconFilter.length) portal.subcontract = subconFilter;
@@ -682,7 +700,7 @@ export default function SubconPO() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, searchDebounced, columnFiltersDebounced, projectFilter, subconFilter, supplierFilter, modelFilter,
-      statusFilter, duidFilter, poFilter, dateRange, rowLimit, refreshKey]);
+      statusFilter, duidFilter, poFilter, dateRange, rowLimit, refreshKey, invoiceWindow]);
 
   const projectOptions = options.project_code || [];
   const subconOptions = (options.subcontract || []).map((v) => ({ id: v, label: v }));
@@ -1041,7 +1059,11 @@ export default function SubconPO() {
             POs to subcontractors
           </div>
         </div>
-        <PageSummary source="subcon_po" filters={summaryQuery} />
+        {/* `stage` travels as `extra`, not inside the filters: the summary
+            registry passes it to list_subcon_po_rows as its own argument, and
+            without it every tab showed the same counts — the To Order numbers,
+            whichever tab you were on. */}
+        <PageSummary source="subcon_po" filters={summaryQuery} extra={{ stage: tab }} />
         <div className="page-actions">
           <ExportExcelButton filename={`subcon-po-${tab}`} rows={rows.slice(0, displayedCount)} />
           <button type="button" className="btn-secondary" onClick={load} disabled={loading}>
@@ -1083,6 +1105,24 @@ export default function SubconPO() {
         </div>
       )}
       <div className="toolbar">
+        {/* The window the dashboard sent, shown where the page's own filters
+            live rather than as a banner across the header — it IS a filter.
+            The money it accounts for belongs with the other figures, so it
+            goes to the header summary instead of being restated here. */}
+        {invoiceWindow && (
+          <button
+            type="button"
+            onClick={() => setInvoiceWindow(null)}
+            title="Filtered to milestones invoiced to the customer in this period. Click to clear."
+            style={{
+              fontSize: "0.78rem", padding: "5px 12px", borderRadius: 8, cursor: "pointer",
+              border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Invoiced {invoiceWindow.from || "…"} → {invoiceWindow.to || "…"} ×
+          </button>
+        )}
         <input
           type="search"
           placeholder="Search POID, PO, Item, Project, DUID, Subcontract…"

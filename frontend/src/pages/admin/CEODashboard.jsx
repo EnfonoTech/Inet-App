@@ -45,7 +45,10 @@ export default function CEODashboard() {
 
   const { operational = {}, inet = {}, subcon = {}, backend = {}, company = {}, top_teams = [], im_performance = [], watchlist = [] } = data;
 
-  const totalRevenue = company.total_achieved ?? 0;
+  // Gross: the full value of the work, INET's own and subcontracted alike,
+  // matching the Command Dashboard. total_achieved is INET's retained
+  // share only and read 518,427 where this reads 883,386 on the same range.
+  const totalRevenue = company.total_revenue ?? 0;
   const netProfit = company.profit_loss ?? 0;
   const activeProjects = projKpis?.active_projects ?? 0;
   const pendingInv = (picKpi?.unbilled_ms1 || 0) + (picKpi?.unbilled_ms2 || 0);

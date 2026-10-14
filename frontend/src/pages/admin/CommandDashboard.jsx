@@ -139,6 +139,17 @@ function defaultRange() {
 export default function CommandDashboard() {
   const navigate = useNavigate();
 
+  // Subcon PO, carrying the customer-invoice window these tiles were built
+  // on. The page's own from/to is the SUPPLIER PO date — a different
+  // question — so the window travels under its own keys.
+  function goSubconPO() {
+    // "all": these tiles count every stage, so landing on To Order would show
+    // a fraction of the money they just reported.
+    navigate("/pic-subcon-po", {
+      state: { subconFilters: { invoiceFrom: range.from, invoiceTo: range.to, tab: "all" } },
+    });
+  }
+
   function goTeams(filters) {
     navigate("/teams", { state: { teamFilters: filters } });
   }
@@ -214,6 +225,7 @@ export default function CommandDashboard() {
   const inetMonthlyCost     = inet.inet_monthly_cost || 0;
   const inetMonthlyTarget   = inet.inet_monthly_target || 0;
   const inetTargetToday     = inet.inet_target_today || 0;
+  const inetCostToday       = inet.inet_cost_today ?? 0;
   const inetAchieved        = inet.inet_achieved || 0;
   const inetGapToday        = inetAchieved - inetTargetToday;
   const inetProfitLossToday = inet.inet_profit_loss_today ?? inetGapToday;
@@ -274,35 +286,32 @@ export default function CommandDashboard() {
       <Section title="Company Financial Summary" accent="company" style={{ marginBottom: 14 }}>
         <div className="dash-kpi-grid dash-kpi-grid--7">
           {/* Built from the whole active-team population (INET cost x 1.25
-              plus SUB rollout targets), so the team list is its drill-down.
-              Its pro-rated twin and the gap/coverage figures beside it are
-              arithmetic on top and have no list of their own. */}
-          <Stat label="Total INET Target"  value={sar(company.company_target)}
-            hint="INET's own commitment for the whole period: team cost + 25% margin, plus INET's margin-share of the Sub-Con target (not the Sub-Con's full gross target — kept on the same basis as Total Revenue below the Cost line, so Coverage % compares like with like). Click to see the teams."
+              plus the SUB contracts' own full targets), so the team list is
+              its drill-down. Its pro-rated twin and the gap/coverage figures
+              beside it are arithmetic on top and have no list of their own. */}
+          <Stat label="Total Target"  value={sar(company.company_target)}
+            hint="What the company has committed to earn this period: the field teams' cost plus 25%, and each subcontract's agreed monthly target. Click to see the teams."
             onClick={() => goTeams({})} />
           <Stat label="Target (as of today)"   value={sar(company.total_target_today)}
-            hint={`The full-period target scaled to how much of the range has passed (${Number(company.day_progress_pct ?? 0).toFixed(1)}% so far), so revenue-to-date is compared against a fair, time-adjusted number.`} />
+            hint={`The share of the target that falls in the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far, so earnings to date are compared fairly.`} />
           {/* True gross top-line: every SAR of work recognized this period,
               INET's own and subcontracted alike, at full value — including
-              the share that's owed out to the subcontractor. Not the same
-              number Target/Gap/Coverage % are measured against (see their
-              hints) — those track INET's own retained margin, a deliberately
-              smaller, different figure. */}
+              the share that's owed out to the subcontractor. Target, Gap and
+              Coverage % are all measured against this same gross figure. */}
           <Stat label="Total Revenue"      value={sar(company.total_revenue)}   color="text-green"
-            hint="Gross value of all work completed this period — INET's own work plus subcontracted work at full value (including the subcontractor's payout share). Click to see the underlying Work Done rows."
-            onClick={() => navigate("/work-done", { state: { workDoneFilters: { fromDate: range.from, toDate: range.to } } })} />
+            hint="Everything earned this period. The sections below add up to exactly this figure. Our own work counts on the day it is done; subcontracted work counts on the day the customer is invoiced, so its cost lands in the same month as its income." />
           <Stat label="Gap"                value={sar(company.company_gap)}
-            hint="Total INET Target minus INET's own retained revenue (in-house work plus subcontracting margin) — not Total Revenue above, which is gross."
+            hint="How far the company is short of its target for the period."
             color={(company.company_gap ?? 0) > 0 ? "text-red" : "text-green"} />
           <Stat label="Cost (as of today)"     value={sar(company.total_cost_today)}
-            hint={`Team salary cost for the part of the range already elapsed (${Number(company.day_progress_pct ?? 0).toFixed(1)}%), plus Sub-Con expense (the payout owed to subcontractors). Click to see the teams.`}
+            hint={`Field-team salary for the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far, plus what is owed to subcontractors on the work invoiced in it. Click to see the teams.`}
             onClick={() => goTeams({})} />
           <Stat label="Profit / Loss"      value={sar(company.profit_loss)}
-            hint="Total Revenue minus Total Expense (Cost, including subcontractor payout) — the company's real margin."
+            hint="What is left after the costs beside it — the company's margin for the period."
             color={profitColor(company.profit_loss)} />
           <Stat label="Coverage %"
             value={`${Number(company.coverage_pct ?? 0).toFixed(1)}%`}
-            hint="INET's own retained revenue (in-house + subcontracting margin) against Total INET Target — both on the same margin basis, not against gross Total Revenue."
+            hint="How much of the target has been earned so far."
             color={(company.coverage_pct ?? 0) >= 50 ? "text-green" : (company.coverage_pct ?? 0) >= 20 ? "text-amber" : "text-red"} />
         </div>
       </Section>
@@ -320,10 +329,10 @@ export default function CommandDashboard() {
                 the same basis the PO-vs-Invoice trend buckets by, since
                 publish_date lands on only a minority of lines). */}
             <Stat label="Open PO Lines"  value={fv(operational.total_open_po_lines ?? 0)}
-              hint="The whole open order book as it stood at the end of the selected range — not just lines published inside it. An earlier end date drops lines not yet published by then, and adds back lines that have closed since (dated by payment received, or by i-BUY invoice date where no payment is recorded)."
+              hint="Every PO line still open, as it stood at the end of the selected period — not only the lines published inside it. Click to see them."
               onClick={() => navigate("/po-dump", { state: { poDumpFilters: { showOpen: true, showClosed: false, showCancelled: false } } })} />
             <Stat label="Open PO Value"  value={sar(operational.total_open_po_line_value ?? 0)}
-              hint="Line amount of the open lines above — the full open order book as at the end of the selected range."
+              hint="Value of those open lines — the whole order book still to deliver. Click to see them."
               onClick={() => navigate("/po-dump", { state: { poDumpFilters: { showOpen: true, showClosed: false, showCancelled: false } } })} />
             <Stat label="Planned Activities" value={sar(operational.planned_amount ?? 0)}
               sub={`${operational.planned_activities ?? 0} plans`}
@@ -341,7 +350,7 @@ export default function CommandDashboard() {
                 a list that disagrees with the number. */}
             <Stat label="Closed" value={sar(operational.closed_amount ?? 0)}
               sub={`${operational.closed_activities ?? 0} closed`} color="text-green"
-              hint="Work Done whose every milestone reached a terminal PIC status. No drill-down list matches this set exactly, so it is not clickable." />
+              hint="Lines whose billing is finished — every milestone closed." />
             {/* Empty planStatusFilter = all statuses, matching how the tile
                 counts (it does not restrict plan_status). */}
             <Stat label="Re-Visits" value={fv(operational.revisits ?? 0)}
@@ -356,37 +365,56 @@ export default function CommandDashboard() {
         </Section>
 
         <Section title="INET Teams Performance" accent="inet">
-          {/* Active teams count as a prominent header metric */}
+          {/* The teams this section's money is built from — every team on the
+              payroll during the range, not the status headcount. Those two
+              differ: a team On Vacation or marked Inactive is still paid, so
+              "Active Teams: 15" sat above a cost built from 17 and the
+              arithmetic underneath it did not work. The status count is still
+              shown, as the smaller half of the same line. Drill-through
+              matches: every status except Disbanded, which is the one that
+              stops costing. */}
           <div className="dash-section-metric">
-            <span className="dash-section-metric-label">Active Teams</span>
+            <span className="dash-section-metric-label">Teams on Payroll</span>
             <span className="dash-section-metric-value text-green"
               style={{ cursor: "pointer" }}
-              onClick={() => goTeams({ typeFilter: ["INET"], categoryFilter: ["Field Team"] })}>
-              {fv(inet.active_inet_teams ?? 0)}
+              title={`The teams Monthly Cost is built from. ${fv(inet.active_inet_teams ?? 0)} are Active; the rest are on vacation or inactive and still paid. A Disbanded team is excluded.`}
+              onClick={() => goTeams({ typeFilter: ["INET"], categoryFilter: ["Field Team"], statusFilter: ["Active", "On Vacation", "Inactive"] })}>
+              {fv(inet.inet_cost_teams ?? inet.active_inet_teams ?? 0)}
+              {(inet.inet_paid_not_active ?? 0) > 0 && (
+                <span style={{ fontSize: "0.62rem", fontWeight: 600, color: "var(--text-muted)", marginLeft: 6 }}>
+                  {fv(inet.active_inet_teams ?? 0)} active
+                </span>
+              )}
             </span>
           </div>
           <div className="dash-kpi-grid dash-kpi-grid--2">
             {/* Both are computed straight off the INET field-team list, so
                 that list is the exact drill-down for them. */}
             <Stat label="Monthly Cost"         value={sar(inetMonthlyCost)}
-              hint="Sum of each active INET team's daily cost x the days it was live in the range (capped at 30 - flat monthly salary). Click to see those teams."
+              hint="What the field teams cost for the period. A full month is one month's salary, however many days it has. Click to see the teams."
               onClick={() => goTeams({ typeFilter: ["INET"], categoryFilter: ["Field Team"] })} />
             <Stat label="Monthly Target"       value={sar(inetMonthlyTarget)}
-              hint="Monthly Cost x 1.25, i.e. cost plus a 25% margin. Click to see the teams it is built from."
+              hint="What the field teams need to earn: their cost plus 25%. Click to see the teams."
+              onClick={() => goTeams({ typeFilter: ["INET"], categoryFilter: ["Field Team"] })} />
+            {/* The cost side of the same pro-rated pair, and what Profit /
+                Loss below is built from — it was the one term in this section
+                with no tile of its own. */}
+            <Stat label="Cost (as of today)"       value={sar(inetCostToday)}
+              hint={`What the field teams have cost for the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far. Click to see the teams.`}
               onClick={() => goTeams({ typeFilter: ["INET"], categoryFilter: ["Field Team"] })} />
             <Stat label="Target (as of today)"     value={sar(inetTargetToday)}
-              hint={`Monthly Target scaled to the elapsed part of the range (${Number(company.day_progress_pct ?? 0).toFixed(1)}%).`} />
+              hint={`The share of the target that falls in the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far.`} />
             <Stat label="Achieved"             value={sar(inetAchieved)} color="text-green"
-              hint="Revenue from INET team execution only — excludes Sub-Con work and the teamless closes in the Direct Close section. Opens Work Done filtered to the INET teams; that page hides fully-invoiced work, so it lists fewer rows than this figure covers."
+              hint="Earned by our own field teams this period, counted on the day the work was done. Subcontracted work and closes with no team are shown in their own sections. Click to see the work."
               onClick={(inet.team_names || []).length
                 ? () => navigate("/work-done", { state: { workDoneFilters: { teamFilter: inet.team_names, fromDate: range.from, toDate: range.to } } })
                 : undefined} />
             <Stat label="Gap (as of today)"        value={sar(inetGapToday)}
               color={inetGapToday >= 0 ? "text-green" : "text-red"}
-              hint="Achieved minus Target (as of today). Positive = ahead of the time-adjusted target."
+              hint="How far ahead of, or behind, the target for the days gone so far."
               sub={inetGapToday >= 0 ? "Ahead of target" : "Behind target"} />
             <Stat label="Profit / Loss (as of today)"  value={sar(inetProfitLossToday)}
-              hint="Achieved minus the elapsed share of team cost."
+              hint="What the field teams earned, less what they cost, for the days gone so far."
               color={inetProfitLossToday >= 0 ? "text-green" : "text-red"} />
           </div>
           {/* Monthly achievement progress */}
@@ -426,34 +454,28 @@ export default function CommandDashboard() {
                 sub={(subcon.monthly_target ?? 0) > 0
                   ? `SAR ${money.format(subcon.monthly_target)}/month agreed`
                   : "not set on Subcontract Master"}
-                hint="The monthly commitment agreed per subcontract, scaled to the months this range spans. A commercial figure, so it has to be entered — nothing in the data derives it. Opens Subcontract Master, where it is set."
+                hint="The monthly amount agreed with each subcontractor, for the months this period covers. It is a commercial figure and has to be entered. Click to set it."
                 onClick={() => navigate("/masters?expand=" + encodeURIComponent("Subcontract Master"))} />
               <Stat label="Margin Target" value={sar(subcon.inet_margin_target_sub)}
                 sub={(subcon.monthly_target ?? 0) > 0 ? undefined : "needs Monthly Target"}
-                hint="Margin INET would retain if each contract hit its monthly target, at that contract's own agreed INET Margin %. Opens Subcontract Master, where both the target and the percentage are set."
+                hint="What we would keep if every subcontract met its monthly target. Click to set the targets."
                 onClick={() => navigate("/masters?expand=" + encodeURIComponent("Subcontract Master"))} />
               {/* Filtered to the SUB teams this figure is computed from.
                   Without the team filter this landed on every Work Done row,
                   so a 0 tile opened a list with rows in it. */}
               <Stat label="Revenue"       value={sar(subcon.sub_revenue)}    color="text-green"
                 sub={subcon.contracts_with_activity ? `${fv(subcon.contracts_with_activity)} contracts` : undefined}
-                hint="Work Done revenue on POIDs whose contract is a subcontract (payout > 0). Opens Work Done filtered to those contracts; that page hides fully-invoiced work, so it lists fewer rows than this figure covers."
-                onClick={(subcon.contract_names || []).length
-                  ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: subcon.contract_names, fromDate: range.from, toDate: range.to } } })
-                  : undefined} />
+                hint="Value of subcontracted work invoiced to the customer this period. Click to see those lines; the page shows the same total."
+                onClick={goSubconPO} />
               <Stat label="Expense"       value={sar(subcon.sub_expense)}
-                hint="What INET owes the subcontractors: each line's revenue x its contract's sub_payout_pct, from Subcontract Master. No cost field is read — a SUB team has no daily cost."
-                onClick={(subcon.contract_names || []).length
-                  ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: subcon.contract_names, fromDate: range.from, toDate: range.to } } })
-                  : undefined} />
+                hint="What we owe the subcontractors for the work invoiced this period — the supplier PO amount where one has been raised, the agreed share otherwise. Click to see those lines; the page shows the same total."
+                onClick={goSubconPO} />
               <Stat label="INET Margin"   value={sar(subcon.inet_margin_sub)}
-                hint="Revenue x each line's contract inet_margin_pct, from Subcontract Master."
+                hint="Our share of that same invoiced work, at each contract's agreed percentage."
                 color={(subcon.inet_margin_sub ?? 0) >= 0 ? "text-green" : "text-red"}
-                onClick={(subcon.contract_names || []).length
-                  ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: subcon.contract_names, fromDate: range.from, toDate: range.to } } })
-                  : undefined} />
+                onClick={goSubconPO} />
               <Stat label="Gap"           value={sar(subcon.sub_gap)}        color="text-red"
-                hint="Target minus Revenue — how far this period's subcontract revenue is short of the agreed monthly commitment."
+                hint="How far subcontract revenue is short of the agreed monthly commitment."
                 onClick={(subcon.contract_names || []).length
                   ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: subcon.contract_names, fromDate: range.from, toDate: range.to } } })
                   : undefined} />
@@ -521,7 +543,7 @@ export default function CommandDashboard() {
           <div className="dash-kpi-grid dash-kpi-grid--3">
             <Stat label="Direct Close" value={sar(direct_close.revenue ?? 0)} color="text-green"
               sub={`${fv(direct_close.lines ?? 0)} lines · ${fv(direct_close.projects ?? 0)} projects`}
-              hint="Work Done closed straight on the line by the IM — no plan, no execution, no team. Counts in company Total Revenue. Opens the Work Done page, which lists fewer rows because it hides fully-invoiced work."
+              hint="Work closed directly on the line by the IM, with no plan and no team. Shown in full here; the two tiles beside it say how much is ours and how much is subcontracted. Click to see the work."
               onClick={() => navigate("/work-done", { state: { workDoneFilters: { workTypeFilter: ["Direct Close"], fromDate: range.from, toDate: range.to } } })} />
             {/* Not clickable: the Work Done page can filter BY a
                 subcontractor but cannot express "has one" / "has none", so
@@ -536,13 +558,13 @@ export default function CommandDashboard() {
             <Stat label="Via Sub-Con" value={sar(direct_close.sub_revenue ?? 0)}
               color={(direct_close.sub_revenue ?? 0) > 0 ? "text-amber" : ""}
               sub={`${fv(direct_close.sub_lines ?? 0)} of ${fv(direct_close.lines ?? 0)} lines`}
-              hint="Direct closes whose POID sits on a subcontract (payout > 0). Opens Work Done filtered to those contracts."
+              hint="The subcontracted part. It is counted in Total Revenue through the Sub-Con section, on the day the customer is invoiced, so it is not added again here. Click to see the work."
               onClick={(direct_close.sub_contract_names || []).length
                 ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: direct_close.sub_contract_names, workTypeFilter: ["Direct Close"], fromDate: range.from, toDate: range.to } } })
                 : undefined} />
             <Stat label="Via INET" value={sar(direct_close.inet_revenue ?? 0)} color="text-green"
               sub={`${fv(direct_close.inet_lines ?? 0)} of ${fv(direct_close.lines ?? 0)} lines`}
-              hint="Direct closes on INET's own contracts (payout 0 / margin 100). Opens Work Done filtered to those contracts."
+              hint="Our own part, which counts in Total Revenue on the day it was closed. Click to see the work."
               onClick={(direct_close.inet_contract_names || []).length
                 ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: direct_close.inet_contract_names, workTypeFilter: ["Direct Close"], fromDate: range.from, toDate: range.to } } })
                 : undefined} />
@@ -565,21 +587,41 @@ export default function CommandDashboard() {
             </span>
           </div>
           <div className="dash-kpi-grid dash-kpi-grid--3">
-            <Stat label="Pending"       value={sar(backend.pending_value ?? 0)} color="text-amber"
-              sub={`${backend.assigned_pending ?? 0} lines`}
-              onClick={() => navigate("/backend")} />
-            <Stat label="Completed MTD" value={sar(backend.completed_value ?? 0)} color="text-green"
-              sub={`${backend.completed_mtd ?? 0} lines`}
-              hint="Contracted PO line value for lines whose sub-contract completed in this range."
-              onClick={() => navigate("/backend")} />
+            {/* Pending was here. Dropped in favour of the INET / Sub-Con
+                split below: which side of a close the money belongs to
+                decides whether it counts in Total Revenue, and nothing on
+                screen said so. The pending order book is still a click away
+                on the Backend page. */}
+            {/* Completed MTD was here, next to Pending. Both were order-book
+                measures — contracted line value dated by subcon_completed_on
+                — sitting beside realized revenue on a different date basis,
+                which is what made the section hard to read. The three that
+                remain are one measure and its two parts, exactly like the
+                Direct Close section. Both old figures are on the Backend
+                page. */}
             {/* Backend closes recorded as Work Done — teamless like a
                 direct close, but they belong to this section, not the
                 Direct Close one. Different measure from Completed MTD:
                 realized revenue, not contracted line value. */}
             <Stat label="Close Revenue" value={sar(backend.close_revenue ?? 0)} color="text-green"
               sub={`${fv(backend.close_lines ?? 0)} work done lines`}
-              hint="Revenue from backend work closed without a field team. Counts in company Total Revenue. Opens the Work Done page, which lists fewer rows because it hides fully-invoiced work."
+              hint="Backend work closed without a field team. Shown in full here; the two tiles beside it say how much is ours and how much is subcontracted. Click to see the work."
               onClick={() => navigate("/work-done", { state: { workDoneFilters: { workTypeFilter: ["Backend"], fromDate: range.from, toDate: range.to } } })} />
+            {/* The same two tiles the Direct Close section carries, built
+                from the same split, so both teamless channels read alike. */}
+            <Stat label="Via Sub-Con" value={sar(backend.close_sub_revenue ?? 0)}
+              color={(backend.close_sub_revenue ?? 0) > 0 ? "text-amber" : ""}
+              sub={`${fv(backend.close_sub_lines ?? 0)} of ${fv(backend.close_lines ?? 0)} lines`}
+              hint="The subcontracted part. It is counted in Total Revenue through the Sub-Con section, on the day the customer is invoiced, so it is not added again here. Click to see the work."
+              onClick={(backend.sub_contract_names || []).length
+                ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: backend.sub_contract_names, workTypeFilter: ["Backend"], fromDate: range.from, toDate: range.to } } })
+                : undefined} />
+            <Stat label="Via INET" value={sar(backend.close_inet_revenue ?? 0)} color="text-green"
+              sub={`${fv(backend.close_inet_lines ?? 0)} of ${fv(backend.close_lines ?? 0)} lines`}
+              hint="Our own part, which counts in Total Revenue on the day it was closed. Click to see the work."
+              onClick={(backend.inet_contract_names || []).length
+                ? () => navigate("/work-done", { state: { workDoneFilters: { subconFilter: backend.inet_contract_names, workTypeFilter: ["Backend"], fromDate: range.from, toDate: range.to } } })
+                : undefined} />
           </div>
         </Section>
       </div>

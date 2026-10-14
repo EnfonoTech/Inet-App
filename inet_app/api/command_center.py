@@ -13047,20 +13047,59 @@ def _days_in_month(today=None):
     return calendar.monthrange(today.year, today.month)[1]
 
 
-def _team_cost_days(start_date, end_date, period_from, period_to, cap=30):
+def _month_fraction(period_from, period_to):
+    """How many months a date range is worth, counting each month by its own length.
+
+    A calendar month is 1.0 however many days it has, so January and February
+    are each one month, and a part month is its own share: 13 days of a 31-day
+    October is 13/31, of a 28-day February 13/28. Anything charged or targeted
+    per month — team salary, a subcontract's monthly commitment — has to be
+    pro-rated this way, or the same period is worth different amounts
+    depending on which month it falls in and how the range was asked for.
+    """
+    period_from, period_to = getdate(period_from), getdate(period_to)
+    if period_to < period_from:
+        return 0.0
+    total = 0.0
+    y, m = period_from.year, period_from.month
+    while (y, m) <= (period_to.year, period_to.month):
+        days_in_month = calendar.monthrange(y, m)[1]
+        covered = (
+            min(period_to, date(y, m, days_in_month))
+            - max(period_from, date(y, m, 1))
+        ).days + 1
+        if covered > 0:
+            total += covered / days_in_month
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+    return total
+
+
+def _team_cost_days(start_date, end_date, period_from, period_to, month_units=30):
     """Days of `daily_cost` to charge for a team within [period_from, period_to].
 
-    A team only costs money for the days it actually existed - clip the report
-    period to [start_date, end_date] (either bound blank = unbounded on that
-    side, so an untouched team behaves exactly as before this field existed)
-    before applying the existing flat-monthly-salary cap.
+    A team only costs money for the days it actually existed, so the period is
+    first clipped to [start_date, end_date] (either bound blank = unbounded on
+    that side, so an untouched team behaves as if the field did not exist).
+
+    The salary is flat per MONTH, so a part month is charged as its share of
+    THAT month rather than as a count of days: 13 days of a 31-day October is
+    13/31 of a salary, not 13/30. `month_units` is what one whole month is
+    worth in `daily_cost` units — 30, the convention daily_cost is set on —
+    so a full month always charges exactly one salary whether it has 28, 30
+    or 31 days, and each month of a longer range charges its own.
+
+    This replaces a flat `min(days, 30)`, which made the same period cost
+    different amounts depending on how it was asked for: "October" pro-rated
+    to the 13th gave 30 x 13/31 = 12.58 days, while asking for "1 to 13"
+    directly gave 13. It also charged a two-month range one single salary.
     """
     period_from = getdate(period_from)
     period_to = getdate(period_to)
     overlap_start = max(period_from, getdate(start_date)) if start_date else period_from
     overlap_end = min(period_to, getdate(end_date)) if end_date else period_to
-    days = (overlap_end - overlap_start).days + 1
-    return max(0, min(cap, days))
+    return round(month_units * _month_fraction(overlap_start, overlap_end), 6)
 
 
 # ── Reporting definition of "invoiced" ─────────────────────────────────────
@@ -14475,9 +14514,26 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Teams are monthly-paid (fixed salary): cost = daily_cost × days, where
     # days is however much of [first_day, last_day] this team was actually
     # active for (capped at 30 - the flat-monthly-salary rule), not always 30.
-    inet_monthly_cost = sum(
-        flt(t.daily_cost) * _team_cost_days(t.start_date, t.end_date, first_day, last_day)
+    _inet_cost_days = {
+        t.name: _team_cost_days(t.start_date, t.end_date, first_day, last_day)
         for t in inet_teams
+    }
+    inet_monthly_cost = sum(
+        flt(t.daily_cost) * _inet_cost_days.get(t.name, 0) for t in inet_teams
+    )
+    # How many teams that cost is actually built from — every team that
+    # existed during the range, whatever its status. A team on vacation or
+    # marked Inactive is still being paid; only a Disbanded one stops, and it
+    # stops through its end_date rather than its status. This is deliberately
+    # NOT active_inet_teams: that is a status headcount and read 15 against a
+    # payroll of 17, which made the cost beneath it look like it came from a
+    # different set of teams than it did.
+    inet_cost_teams = sum(1 for t in inet_teams if _inet_cost_days.get(t.name, 0) > 0)
+    # Of those, the ones being paid while not available to work — worth
+    # naming on the tile, because that is the gap between the two counts.
+    inet_paid_not_active = sum(
+        1 for t in inet_teams
+        if _inet_cost_days.get(t.name, 0) > 0 and (t.status or "Active") != "Active"
     )
 
     # Monthly target = cost × 1.25 (25% margin), consistent with Command Dashboard frontend
@@ -14550,20 +14606,31 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     )
     active_sub_teams = cint(_sub_contracts[0].cnt if _sub_contracts else 0)
 
-    # Realized: revenue on subcontracted POIDs, split by the master's pcts.
-    # Dated by the execution where there is one and by wd.creation otherwise,
-    # so a direct-closed subcontracted line is not silently dropped.
+    # Realized: the subcontractor is owed for a milestone once INET has
+    # invoiced the customer for it, so all three figures are dated by that
+    # customer invoice — the Sales Invoice's own posting_date where one
+    # exists, the imported legacy date otherwise. See
+    # subcon_payout_events_sql() for the two legs and why the invoice
+    # document rather than a date copied onto PO Dispatch is the source.
+    #
+    # This replaced a Work Done basis dated by execution-or-creation. Two
+    # things changed with it, both deliberate: work that is finished but not
+    # yet invoiced no longer shows as an expense, and lines invoiced without
+    # a Work Done record in the portal now do — 64% of billed subcontracted
+    # lines have no Work Done, which is why the figure roughly doubles.
+    #
+    # Imported here rather than at module level: subcon_po imports this
+    # module, so a top-level import would be circular.
+    from inet_app.api.subcon_po import subcon_payout_events_sql
+
     _sub_rev_rows = frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM(leg.revenue), 0) AS revenue,
-               COALESCE(SUM(leg.revenue * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS expense,
-               COALESCE(SUM(leg.revenue * IFNULL(sm.inet_margin_pct, 0) / 100.0), 0) AS margin,
-               COUNT(DISTINCT leg.subcontractor) AS contracts
-        FROM ({WORK_DONE_SUPPLIER_LEG_SQL}) leg
-        JOIN `tabSubcontract Master` sm ON sm.name = leg.subcontractor
-        LEFT JOIN `tabDaily Execution` de ON de.name = leg.execution
-        WHERE IFNULL(sm.sub_payout_pct, 0) > 0
-          AND COALESCE(de.execution_date, leg.created_on) BETWEEN %s AND %s
+        SELECT COALESCE(SUM(ev.revenue), 0) AS revenue,
+               COALESCE(SUM(ev.payout), 0) AS expense,
+               COALESCE(SUM(ev.inet_margin), 0) AS margin,
+               COUNT(DISTINCT ev.subcontract) AS contracts
+        FROM ({subcon_payout_events_sql()}) ev
+        WHERE ev.event_date BETWEEN %s AND %s
         """,
         (first_day, last_day), as_dict=True,
     )
@@ -14592,7 +14659,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Margin target uses each contract's agreed `inet_margin_pct`. The sheet
     # instead multiplies by the contract's *realized* margin %, which makes
     # the target move with actual performance — deliberately not copied.
-    _sub_months = (range_days / 30.0) if range_days else 1.0
+    # Each month counts by its own length, so a full October is one month's
+    # commitment and not 31/30 of it — the same rule the team salary uses.
+    _sub_months = _month_fraction(first_day, last_day)
     _sub_tgt_rows = frappe.db.sql(
         """
         SELECT COALESCE(SUM(monthly_target), 0) AS target,
@@ -14648,30 +14717,27 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # real margin, which comes out numerically equal to total_achieved below
     # (checked live) since Expense already nets out exactly the payout
     # portion embedded in this gross figure.
-    _gross_rev_rows = frappe.db.sql(
-        """
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS total
-        FROM `tabWork Done` wd
-        LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
-        WHERE COALESCE(de.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
-        """,
-        (first_day, last_day), as_dict=True,
-    )
-    total_revenue_gross = flt(_gross_rev_rows[0].total if _gross_rev_rows else 0)
-
     day_progress_pct = round(range_elapsed_frac * 100, 1)
 
     # INET cost pro-rated to however much of the selected range has elapsed
     # so far (1.0 / no reduction for a range that's already fully in the past).
     inet_cost_today = round(inet_monthly_cost * range_elapsed_frac, 2)
+
+    # A BACKEND team of type INET carries a daily_cost and is deliberately
+    # NOT charged here, which is why every INET cost query above excludes
+    # team_category = 'Backend Team'. The one such record is an IM, not a
+    # crew — the row exists so backend work can be assigned, not because a
+    # team is being paid for it — so charging its daily_cost would invent an
+    # expense the company does not have. Do not "fix" this by folding it in
+    # without checking what the record actually represents.
     inet_profit_loss_today = round(inet_achieved - inet_cost_today, 2)
 
-    # Sub-Con target pro-rated the same way, on the margin-adjusted figure —
-    # the Company-level Target (as of today) needs the same basis as
-    # total_achieved (margin-only on the sub side), not the sub-con's own
-    # gross target. See company_target's comment below for why.
-    inet_margin_target_sub_today = round(inet_margin_target_sub * range_elapsed_frac, 2)
-    total_target_today = round(inet_target_today + inet_margin_target_sub_today, 2)
+    # Sub-Con target pro-rated the same way, at its own FULL gross value —
+    # the Company Financial Summary is read as the whole value passing
+    # through the company, not INET's retained slice of it, so every figure
+    # in that section sits on the gross basis Total Revenue already used.
+    sub_target_today = round(sub_target * range_elapsed_frac, 2)
+    total_target_today = round(inet_target_today + sub_target_today, 2)
 
     # Direct Close revenue — has no team at all, so it's invisible to
     # inet_achieved/sub_revenue above (both require a Daily Execution ->
@@ -14802,29 +14868,58 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # Revenue by its own margin a second time (SAR 109) on top of counting
     # its full SAR 726 — this is what turned up under "how is Total Revenue
     # calculated".
-    # company_target uses inet_margin_target_sub (INET's margin-share of the
-    # sub-con target), not sub_target (the sub-con's own full gross target).
-    # total_achieved below only ever counts INET's margin from subcontracted
-    # work, never the gross — so the target it's measured against has to be
-    # on that same basis, or Coverage % compares a margin-only actual to a
-    # gross-inclusive target and reads permanently low the moment
-    # Subcontract Master.monthly_target gets filled in (it's 0 on all seven
-    # contracts today, so company_target ≈ inet_monthly_target alone and the
-    # mismatch is dormant — but real subcontract targets will make it bite).
-    # This is the workbook's own stated design rule (Target_Control's note:
-    # "so the dashboard does not mix gross subcontract revenue with INET
-    # retained revenue") — its own Total INET Target/Total Revenue actually
-    # violate it exactly this way, which is why it never turns that pair
-    # into a %, only ever a $ gap. We do want a Coverage % tile, so both
-    # sides go on INET's own basis instead of dropping the ratio.
-    company_target = inet_monthly_target + inet_margin_target_sub
+    # The Company Financial Summary is read on a GROSS basis throughout: the
+    # whole value the company moved, INET's own work and subcontracted work
+    # alike, at full value. So company_target carries the sub-con's own full
+    # target (sub_target), not INET's margin-share of it, and it is measured
+    # against total_revenue_gross rather than INET's retained revenue.
+    #
+    # Both sides therefore sit on the same basis and Coverage % compares like
+    # with like — which is the one thing that must hold for the ratio to mean
+    # anything. The earlier design put both sides on INET's retained basis
+    # instead; it was equally consistent, but it answered a different
+    # question than the one this section is read for.
+    #
+    # total_achieved below is still INET's retained share. It is a different
+    # figure with its own uses (the CEO / Ops / Financial dashboards read it)
+    # and is deliberately left on its old basis.
+    # Total Revenue is COMPOSED from the sections below it, never queried
+    # independently — so the dashboard adds up on screen and a reader can see
+    # where every riyal came from:
+    #
+    #     Total Revenue = Achieved (INET teams)
+    #                   + Direct Close, INET side
+    #                   + Backend Close, INET side
+    #                   + Sub-Con Revenue (full value, not INET's margin)
+    #
+    # The two sides are recognised on different dates on purpose, because
+    # that is when each is actually earned:
+    #
+    #   * INET's own work — when the work is DONE (the execution date). INET
+    #     carries the cost as it goes; the salary is already spent.
+    #   * Subcontracted work — when the customer is INVOICED, because that is
+    #     when the payout to the subcontractor becomes owed. Revenue and the
+    #     cost it carries therefore land in the same month, always.
+    #
+    # The four terms cannot overlap: the first three are explicitly the INET
+    # side (sm.sub_payout_pct = 0 / the INET leg of each teamless bucket),
+    # and the fourth is every subcontracted line however it closed.
+    total_revenue_gross = round(
+        inet_achieved
+        + direct_close["inet_revenue"]
+        + backend_close_inet_only
+        + sub_revenue,
+        2,
+    )
+
+    company_target = inet_monthly_target + sub_target
     total_achieved = (
         inet_achieved + inet_margin_sub
         + direct_close["inet_revenue"] + backend_close_inet_only
     )
     # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not pro-rated)
     total_cost_today = round(inet_cost_today + sub_expense, 2)
-    company_gap = company_target - total_achieved
+    company_gap = round(company_target - total_revenue_gross, 2)
     # Profit/Loss = Total Revenue (gross) − Total Expense (INET cost + the
     # subcontractor payout) — both comprehensive figures on the same gross
     # basis, so this is a clean P&L subtraction. NOT total_achieved (margin)
@@ -14834,7 +14929,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # SAR twice. Confirmed live: the two formulas gave −1,258.2 vs the
     # correct −641.1 (== total_achieved − inet_cost_today, verified equal).
     profit_loss = round(total_revenue_gross - total_cost_today, 2)
-    coverage_pct = (total_achieved / company_target * 100.0) if company_target else 0.0
+    coverage_pct = (total_revenue_gross / company_target * 100.0) if company_target else 0.0
 
     # ---- Top 5 teams + IM performance -------------------------------------
     # Both come straight from the report functions the Reports page serves,
@@ -15008,9 +15103,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         },
         "inet": {
             "active_inet_teams": active_inet_teams,
+            "inet_cost_teams": inet_cost_teams,
+            "inet_paid_not_active": inet_paid_not_active,
             "inet_monthly_cost": inet_monthly_cost,
             "inet_monthly_target": inet_monthly_target,
             "inet_target_today": inet_target_today,
+            # The elapsed share of team salary — the cost side of the same
+            # pro-rated pair as inet_target_today, and what the section's
+            # Profit / Loss is already built from.
+            "inet_cost_today": inet_cost_today,
             "inet_achieved": inet_achieved,
             "inet_gap_today": inet_gap_today,
             "inet_profit_loss_today": inet_profit_loss_today,
@@ -15051,6 +15152,18 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             # which is contracted PO line value dated by subcon_completed_on.
             "close_revenue": backend_close_achieved,
             "close_lines": _dc_cnt(_bk, "lines_count"),
+            # Split the same way Direct Close is, and for the same reason:
+            # only the INET side is a Total Revenue term on the close date,
+            # while the subcontracted side is recognised through Sub-Con
+            # Revenue when the customer is invoiced. Without these two the
+            # section showed one number that was partly counted elsewhere,
+            # with nothing on screen saying which part.
+            "close_sub_revenue": _dc_val(_bk_who.get("SUB"), "revenue"),
+            "close_sub_lines": _dc_cnt(_bk_who.get("SUB"), "lines_count"),
+            "close_inet_revenue": backend_close_inet_only,
+            "close_inet_lines": _dc_cnt(_bk_who.get("INET"), "lines_count"),
+            "sub_contract_names": _subcontracted_contract_names(),
+            "inet_contract_names": _inhouse_contract_names(),
         },
         # Teamless closes, kept out of the INET/Sub-Con team blocks on purpose.
         "direct_close": direct_close,
@@ -15059,11 +15172,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "company_target": company_target,
             "total_target_today": total_target_today,
             # Gross top-line — every SAR of work recognized, INET's own and
-            # subcontracted alike, at full value. This is the "Total Revenue"
-            # tile. total_achieved (below) is a different, narrower figure —
-            # INET's own retained share only — used for Target/Gap/Coverage %,
-            # which are commitments against INET's own margin, not gross
-            # throughput.
+            # subcontracted alike, at full value. The whole Company Financial
+            # Summary now reads against this: Target, Gap and Coverage % are
+            # all on the same gross basis. total_achieved (below) is the
+            # narrower retained figure, kept for the CEO / Ops / Financial
+            # dashboards that read it.
             "total_revenue": total_revenue_gross,
             "total_achieved": total_achieved,
             "company_gap": company_gap,
@@ -29096,6 +29209,7 @@ def _team_today_driver_sql(date_lit):
             )"""
 
 
+@frappe.whitelist()
 def list_admin_teams(status=None, team_type=None, team_category=None, im=None, search=None, limit=500, for_date=None, column_filters=None, _options=None, _summary=None):
     """List all INET Teams with active project/domain for the PM admin Teams page.
 

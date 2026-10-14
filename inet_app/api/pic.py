@@ -1082,6 +1082,33 @@ def get_legacy_invoice_import_status():
     return {"done": result is not None, "result": result}
 
 
+# ── When a line earned its revenue ───────────────────────────────────────
+#
+# Revenue is recognised when INET invoices the customer for a milestone, and
+# the Sales Invoice is the document that says so: `Sales Invoice Item` carries
+# `poid` and `milestone`, so the link is exact and a cancelled invoice simply
+# stops being a row — no reversal logic to get wrong, and a re-issue lands on
+# its own new date.
+#
+# Everything before the portal started raising invoices has no Sales Invoice
+# at all, so a second leg reads the dates the Master Tracker import left. That
+# leg shrinks to nothing on its own as new work flows through the invoice; it
+# needs no migration and no backfill.
+LEGACY_INVOICE_DATE_SQL = (
+    "COALESCE(NULLIF(pd.ms{n}_invoice_month, '0000-00-00'),"
+    " NULLIF(pd.ms{n}_ibuy_inv_date, '0000-00-00'),"
+    " NULLIF(pd.ms{n}_applied_date, '0000-00-00'))"
+)
+
+def submitted_invoice_exists_sql(n, pd="pd", alias="sii_x"):
+    """A submitted customer invoice already covers this milestone."""
+    return (
+        f"EXISTS (SELECT 1 FROM `tabSales Invoice Item` {alias}"
+        f" JOIN `tabSales Invoice` si_x ON si_x.name = {alias}.parent AND si_x.docstatus = 1"
+        f" WHERE {alias}.poid = {pd}.name AND IFNULL({alias}.milestone, '') = 'MS{n}')"
+    )
+
+
 @frappe.whitelist()
 def pic_invoicing_summary(portal_filters=None):
     """Aggregate invoicing summary grouped by PIC status — INET vs Subcon split.

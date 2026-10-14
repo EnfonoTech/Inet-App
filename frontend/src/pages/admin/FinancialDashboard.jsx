@@ -32,7 +32,10 @@ export default function FinancialDashboard() {
   if (!data) return <div className="nd-dashboard"><DashboardSwitcher /><div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div></div>;
 
   const { company = {}, inet = {}, subcon = {}, backend = {}, im_performance = [] } = data;
-  const totalRevenue = company.total_achieved ?? 0;
+  // Gross: the full value of the work, INET's own and subcontracted alike,
+  // matching the Command Dashboard. total_achieved is INET's retained
+  // share only and read 518,427 where this reads 883,386 on the same range.
+  const totalRevenue = company.total_revenue ?? 0;
   // The backend returns `total_cost_today` (cost pro-rated over the elapsed
   // part of the period), not `total_cost` — reading the latter meant this
   // tile, and the "Other" cost slice derived from it, sat at SAR 0 forever.

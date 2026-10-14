@@ -43,7 +43,10 @@ export default function OpsDashboard() {
 
   const { operational = {}, inet = {}, subcon = {}, backend = {}, company = {}, top_teams = [], im_performance = [], team_status = {} } = data;
 
-  const totalRevenue = company.total_achieved ?? 0;
+  // Gross: the full value of the work, INET's own and subcontracted alike,
+  // matching the Command Dashboard. total_achieved is INET's retained
+  // share only and read 518,427 where this reads 883,386 on the same range.
+  const totalRevenue = company.total_revenue ?? 0;
   const jobsCompleted = operational.closed_activities ?? 0;
   const openOrders = operational.total_open_po_lines ?? 0;
   const coveragePct = Number(company.coverage_pct ?? 0).toFixed(1);
