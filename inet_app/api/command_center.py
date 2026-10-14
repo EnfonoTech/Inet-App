@@ -12952,6 +12952,13 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
             pd.item_description,
             pd.is_dummy_po,
             pd.qty,
+            -- What THIS plan covered, which is not always the whole line: a
+            -- line planned 2-of-6 and then stalled should be re-planned for
+            -- the 2 that stalled, not the 6. Falls back to the line on a plan
+            -- with no team rows, where the plan did cover all of it.
+            (SELECT SUM(IFNULL(rpt_q.assigned_qty, 0))
+               FROM `tabRollout Plan Team` rpt_q
+              WHERE rpt_q.parent = rp.name) AS plan_qty,
             pd.line_amount,
             pd.center_area,
             pd.region_type,
@@ -13016,6 +13023,10 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
                 "item_description": r.get("item_description"),
                 "is_dummy_po": r.get("is_dummy_po"),
                 "qty": r.get("qty"),
+                # What this plan itself covered — the re-plan quantity. The
+                # row dict is built field by field, so a new column in the
+                # SELECT is invisible until it is named here too.
+                "plan_qty": r.get("plan_qty"),
                 "line_amount": r.get("line_amount"),
                 "center_area": r.get("center_area"),
                 "region_type": r.get("region_type"),

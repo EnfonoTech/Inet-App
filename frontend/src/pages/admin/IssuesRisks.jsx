@@ -456,7 +456,13 @@ export default function IssuesRisks() {
   // A share typed as a quantity is only meaningful when one line is being
   // planned — see the payload in createPlansFromIssues.
   const planSingleLine = selectedIssueRows.length === 1;
-  const planLineQty = planSingleLine ? Number(selectedIssueRows[0]?.qty || 0) : 0;
+  // What THIS plan covered, not the whole line. Re-planning a stalled plan
+  // that only ever covered 2 of 6 should offer the 2, not the 6 — the other
+  // 4 were never part of it. plan_qty falls back to the line server-side
+  // when the plan carried no team rows.
+  const planLineQty = planSingleLine
+    ? Number(selectedIssueRows[0]?.plan_qty || selectedIssueRows[0]?.qty || 0)
+    : 0;
   // Blank means the whole line, which is also what the field is pre-filled
   // with — see the effect that seeds it when the panel opens.
   const planQtyNum = planQty !== "" && Number(planQty) > 0 ? Number(planQty) : planLineQty;
@@ -464,7 +470,8 @@ export default function IssuesRisks() {
   // is the normal case, so the field states what will happen rather than
   // leaving the user to read a placeholder.
   function openPlanQtySeed() {
-    const only = selectedIssueRows.length === 1 ? Number(selectedIssueRows[0]?.qty || 0) : 0;
+    const r = selectedIssueRows.length === 1 ? selectedIssueRows[0] : null;
+    const only = r ? Number(r.plan_qty || r.qty || 0) : 0;
     return only > 0 ? String(only) : "";
   }
   const createPlanDuids = [...new Set(selectedIssueRows.map((r) => r.site_code).filter(Boolean))];
