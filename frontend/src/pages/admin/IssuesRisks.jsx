@@ -100,6 +100,7 @@ export default function IssuesRisks() {
   const [planEndDate, setPlanEndDate] = useState(todayDate());
   const [planTeam, setPlanTeam] = useState("");
   const [planTeams, setPlanTeams] = useState([]);
+  const [planQty, setPlanQty] = useState("");
   const [accessTime, setAccessTime] = useState("");
   const [accessPeriod, setAccessPeriod] = useState("");
   const [visitType, setVisitType] = useState("Re-Visit");
@@ -380,17 +381,29 @@ export default function IssuesRisks() {
       const dispatches = [...new Set(selectedRows.map((r) => r.po_dispatch).filter(Boolean))];
       if (dispatches.length === 0) throw new Error("No POIDs found in selected issue rows.");
       const validExtras = (planTeams || []).filter((r) => r.team);
+      // `assigned_qty: 0` on the lead team means "give it whatever is left of
+      // the LINE", which is right while the plan covers all of it and wrong
+      // the moment it covers only part — so a partial plan states the lead
+      // team's share outright and leaves the rest of the line unplanned.
+      const partialPlan = planSingleLine && planQtyNum < planLineQty - 0.00005;
+      const extrasQty = validExtras.reduce((t, r) => t + (Number(r.assigned_qty) || 0), 0);
+      const leadShare = Math.max(0, planQtyNum - extrasQty);
       const teamsPayload = validExtras.length > 0
         ? [
             ...(validExtras.some((r) => r.team === planTeam)
               ? []
-              : [{ team: planTeam, assigned_qty: 0 }]),
-            ...validExtras.map((r) => ({
-              team: r.team,
-              assigned_qty: Number(r.assigned_qty) || 0,
-            })),
+              : [{ team: planTeam, assigned_qty: partialPlan ? leadShare : 0 }]),
+            // ONE plan is created per selected line and this payload goes to
+            // every one of them, so a typed QUANTITY only means something on a
+            // single line — sending "1" to two lines of different size put the
+            // wrong split on both. Across several lines the share travels as a
+            // PERCENTAGE, which the backend resolves against each line's own
+            // quantity; left blank it stays 0 and each line divides evenly.
+            ...validExtras.map((r) => (planSingleLine
+              ? { team: r.team, assigned_qty: Number(r.assigned_qty) || 0 }
+              : { team: r.team, assigned_pct: Number(r.assigned_pct) || 0 })),
           ]
-        : [];
+        : (partialPlan ? [{ team: planTeam, assigned_qty: leadShare }] : []);
       await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
@@ -443,6 +456,17 @@ export default function IssuesRisks() {
   // A share typed as a quantity is only meaningful when one line is being
   // planned — see the payload in createPlansFromIssues.
   const planSingleLine = selectedIssueRows.length === 1;
+  const planLineQty = planSingleLine ? Number(selectedIssueRows[0]?.qty || 0) : 0;
+  // Blank means the whole line, which is also what the field is pre-filled
+  // with — see the effect that seeds it when the panel opens.
+  const planQtyNum = planQty !== "" && Number(planQty) > 0 ? Number(planQty) : planLineQty;
+  // Pre-filled with the whole line when the panel opens: planning all of it
+  // is the normal case, so the field states what will happen rather than
+  // leaving the user to read a placeholder.
+  function openPlanQtySeed() {
+    const only = selectedIssueRows.length === 1 ? Number(selectedIssueRows[0]?.qty || 0) : 0;
+    return only > 0 ? String(only) : "";
+  }
   const createPlanDuids = [...new Set(selectedIssueRows.map((r) => r.site_code).filter(Boolean))];
   const createPlanDuidGroups = createPlanDuids.map((duid) => {
     const groupRows = selectedIssueRows.filter((r) => r.site_code === duid);
@@ -502,7 +526,7 @@ export default function IssuesRisks() {
           <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
             Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
           </button>
-          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setMaterialItemsByDuid({}); setExpandedMaterialDuid(""); setMaterialPickupDate(""); setMaterialPickupTime(""); setShowModal(true); }}>
+          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setMaterialItemsByDuid({}); setExpandedMaterialDuid(""); setMaterialPickupDate(""); setMaterialPickupTime(""); setPlanQty(openPlanQtySeed()); setShowModal(true); }}>
             Create Plans ({selected.size})
           </button>
         </div>
@@ -644,6 +668,29 @@ export default function IssuesRisks() {
                   {teamsList.map((t) => <option key={t.team_id} value={t.team_id}>{t.team_id} — {t.team_name}</option>)}
                 </select>
               </div>
+              {/* How much of the line this plan covers. Only one line can
+                  carry a quantity — with several selected, one typed number
+                  would mean different things on lines of different size. */}
+              {planSingleLine && planLineQty > 0 && (
+                <div className="form-group">
+                  <label>Qty for this plan</label>
+                  <input
+                    type="number" min="0" max={planLineQty} step="any"
+                    value={planQty}
+                    placeholder={`All ${planLineQty}`}
+                    title="Change it to plan part of the line now and the rest later."
+                    onChange={(e) => setPlanQty(e.target.value)}
+                  />
+                  <div style={{ fontSize: "0.72rem", marginTop: 4,
+                                color: planQtyNum > planLineQty + 0.00005 ? "#b91c1c" : "#64748b" }}>
+                    {planQtyNum > planLineQty + 0.00005
+                      ? `The line only carries ${planLineQty}.`
+                      : planQtyNum < planLineQty - 0.00005
+                        ? `${planQtyNum} of ${planLineQty} · ${+(planLineQty - planQtyNum).toFixed(4)} left to plan later`
+                        : "Covers the whole line."}
+                  </div>
+                </div>
+              )}
               <div className="form-group"><label>Visit Type</label><input value={visitType} readOnly disabled style={{ background: "#f1f5f9", cursor: "not-allowed" }} /></div>
               <div className="form-group"><label>Plan Date</label><input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} /></div>
               <div className="form-group"><label>Plan End Date</label><input type="date" value={planEndDate} onChange={(e) => setPlanEndDate(e.target.value)} /></div>
