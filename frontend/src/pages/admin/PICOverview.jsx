@@ -322,7 +322,12 @@ export default function PICOverview() {
                 <thead>
                   <tr>
                     <th style={th}>Status</th>
-                    <th style={thR}>Lines</th>
+                    {/* Milestones, not lines: by_status and by_supplier both
+                        come from subcon_payout_summary's (line, milestone)
+                        union, so a line with MS1 closed and MS2 unordered is
+                        counted once in each row. The Subcon Payout page's own
+                        tabs already label this column Milestones. */}
+                    <th style={thR}>Milestones</th>
                     <th style={thR}>Payout</th>
                     <th style={thR}>VAT</th>
                   </tr>
@@ -356,7 +361,7 @@ export default function PICOverview() {
                 <thead>
                   <tr>
                     <th style={th}>Supplier</th>
-                    <th style={thR}>Lines</th>
+                    <th style={thR}>Milestones</th>
                     <th style={thR}>Payout</th>
                     <th style={thR}>INET</th>
                   </tr>
