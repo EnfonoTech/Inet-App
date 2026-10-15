@@ -19,6 +19,10 @@ from inet_app.api.subcontractor_sync import (
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
 from inet_app.api.event_dates import (
+    customer_invoice_events_sql,
+    invoiced_in_months_clause,
+    invoiced_month_options_sql,
+    invoiced_amount_in_period_sql,
     customer_invoiced_date,
     invoiced_in_period_clause,
     milestone_invoiced_in_period_clause,
@@ -280,15 +284,17 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
     if _inv_c:
         where.append(_inv_c)
         params.extend(_inv_p)
+    _inv_dt1 = customer_invoiced_date(1)
+    _inv_dt2 = customer_invoiced_date(2)
 
     invoice_month_vals = _ensure_list(pf.get("invoice_month"))
     if invoice_month_vals:
-        ph = ", ".join(["%s"] * len(invoice_month_vals))
-        where.append(
-            f"(DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') IN ({ph})"
-            f" OR DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') IN ({ph}))"
-        )
-        params.extend(invoice_month_vals * 2)
+        # Read off the invoice, like the date range beside it — picking
+        # "2026-10" and picking 1–31 Oct now select the same lines.
+        _m_c, _m_p = invoiced_in_months_clause(invoice_month_vals)
+        if _m_c:
+            where.append(_m_c)
+            params.extend(_m_p)
 
     # dispatch_status is purely an optional explicit narrowing filter here —
     # the `stage` clause above (driven only by pic_status/pic_status_ms2) is
@@ -533,6 +539,12 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
       ROUND(IFNULL(pd.ms1_invoiced, 0) * ({vat_frac}), 2) AS ms1_vat,
       ROUND(IFNULL(pd.ms2_invoiced, 0) * ({vat_frac}), 2) AS ms2_vat,
       pd.ms1_applied_date, pd.ms2_applied_date,
+      -- The date the app means by "invoiced": the Sales Invoice's own
+      -- posting date, the imported month for milestones billed before the
+      -- portal raised invoices. The same definition every filter and report
+      -- uses, so the column agrees with the figures above it.
+      {_inv_dt1} AS ms1_invoiced_date,
+      {_inv_dt2} AS ms2_invoiced_date,
       pd.ms1_invoice_month, pd.ms2_invoice_month,
       pd.ms1_ibuy_inv_date, pd.ms2_ibuy_inv_date,
       pd.ms1_payment_received_date, pd.ms2_payment_received_date,
@@ -800,7 +812,7 @@ def _invoice_detail_milestone_sql(ms, where_extra):
     acc = "MS1" if n == "1" else "MS2"
     invoiced_col = f"pd.ms{n}_invoiced"
     legacy_no_col = f"pd.legacy_ms{n}_invoice_no"
-    ibuy_date_col = f"pd.ms{n}_ibuy_inv_date"
+    _inv_date_sql = customer_invoiced_date(int(n))
     vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
     vat_frac_p2 = _TAX_RATE_FRACTION_SQL.format(col="p2.tax_rate")
     # Same column-may-not-exist problem as _batch_draft_invoices_by_milestone:
@@ -839,13 +851,11 @@ def _invoice_detail_milestone_sql(ms, where_extra):
          WHERE sii.poid = pd.name{ms_match})
       ) AS invoice_no,
       IF(IFNULL({legacy_no_col}, '') != '', 'Legacy', 'System') AS source,
-      COALESCE(
-        {ibuy_date_col},
-        (SELECT MIN(si.posting_date)
-         FROM `tabSales Invoice Item` sii
-         JOIN `tabSales Invoice` si ON si.name = sii.parent AND si.docstatus = 1
-         WHERE sii.poid = pd.name{ms_match})
-      ) AS invoice_date,
+      -- The one definition the whole app shares. This report used to put the
+      -- imported IBUY date FIRST and the Sales Invoice second — the reverse
+      -- of every other surface — so a milestone holding both showed one date
+      -- here and another everywhere else.
+      {_inv_date_sql} AS invoice_date,
       pd.customer,
       pd.legacy_po_type AS po_type,
       pd.po_no,
@@ -1189,8 +1199,10 @@ def pic_invoicing_summary(portal_filters=None):
     ms1_month_vals = _ensure_list(pf.get("ms1_invoice_month"))
     if ms1_month_vals:
         ph = ", ".join(["%s"] * len(ms1_month_vals))
-        where_ms1.append(f"DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') IN ({ph})")
-        params_ms1.extend(ms1_month_vals)
+        _m1c, _m1p = invoiced_in_months_clause(ms1_month_vals, 1)
+        if _m1c:
+            where_ms1.append(_m1c)
+            params_ms1.extend(_m1p)
 
     # ── MS2: additional invoice-month filter + only rows with an MS2 ─────
     where_ms2 = list(where_common)
@@ -1198,8 +1210,10 @@ def pic_invoicing_summary(portal_filters=None):
     ms2_month_vals = _ensure_list(pf.get("ms2_invoice_month"))
     if ms2_month_vals:
         ph = ", ".join(["%s"] * len(ms2_month_vals))
-        where_ms2.append(f"DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') IN ({ph})")
-        params_ms2.extend(ms2_month_vals)
+        _m2c, _m2p = invoiced_in_months_clause(ms2_month_vals, 2)
+        if _m2c:
+            where_ms2.append(_m2c)
+            params_ms2.extend(_m2p)
     where_ms2.append("IFNULL(pd.ms2_amount, 0) > 0")
 
     # Dated by the CUSTOMER INVOICE, through the definition the whole app
@@ -1215,8 +1229,21 @@ def pic_invoicing_summary(portal_filters=None):
         where_ms2.append(_c2)
         params_ms2.extend(_p2)
 
-    vat_on_invoiced = _vat_on_sql("pd.ms1_invoiced")
-    vat_on_ms2_invoiced = _vat_on_sql("pd.ms2_invoiced")
+    # Invoiced value INSIDE the window, summed from the invoices themselves.
+    # Summing pd.ms{n}_invoiced counted a milestone's WHOLE value in whatever
+    # month it first appeared, so a milestone billed across two months put
+    # all of it in the first and this report stopped matching the roll-up.
+    _j1, _jp1, _inv1 = invoiced_amount_in_period_sql(1, pf.get("from_date"), pf.get("to_date"))
+    _j2, _jp2, _inv2 = invoiced_amount_in_period_sql(2, pf.get("from_date"), pf.get("to_date"))
+    _windowed = bool(pf.get("from_date") or pf.get("to_date"))
+    if not _windowed:
+        # No window: the join would sum every invoice ever, which is the same
+        # number the stored column already holds. Keep the cheap read.
+        _j1 = _j2 = ""
+        _jp1, _jp2 = [], []
+        _inv1, _inv2 = "IFNULL(pd.ms1_invoiced, 0)", "IFNULL(pd.ms2_invoiced, 0)"
+    vat_on_invoiced = _vat_on_sql(_inv1)
+    vat_on_ms2_invoiced = _vat_on_sql(_inv2)
 
     # ── MS1 breakdown query ───────────────────────────────────────────────
     ms1_sql = f"""
@@ -1224,14 +1251,15 @@ def pic_invoicing_summary(portal_filters=None):
       ({_PIC_INITIAL_RULE_SQL.strip()}) AS pic_status,
       COUNT(*) AS row_count,
       SUM(IFNULL(pd.ms1_amount,  0)) AS po_amount,
-      SUM(IFNULL(pd.ms1_invoiced,0)) AS invoiced,
+      SUM({_inv1}) AS invoiced,
       SUM({vat_on_invoiced}) AS vat,
       SUM(IFNULL(pd.ms1_unbilled,0)) AS unbilled,
-      SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
-      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
-      SUM(IFNULL(pd.ms1_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
-      SUM(IFNULL(pd.ms1_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
+      SUM({_inv1} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
+      SUM({_inv1} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
+      SUM({_inv1} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
+      SUM({_inv1} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
     {_PIC_FROM_JOIN_LEAN}
+    {_j1}
     WHERE {' AND '.join(where_ms1)}
     GROUP BY ({_PIC_INITIAL_RULE_SQL.strip()})
     ORDER BY po_amount DESC
@@ -1243,21 +1271,22 @@ def pic_invoicing_summary(portal_filters=None):
       COALESCE(NULLIF(pd.pic_status_ms2, ''), 'Work Not Done') AS pic_status,
       COUNT(*) AS row_count,
       SUM(IFNULL(pd.ms2_amount,  0)) AS po_amount,
-      SUM(IFNULL(pd.ms2_invoiced,0)) AS invoiced,
+      SUM({_inv2}) AS invoiced,
       SUM({vat_on_ms2_invoiced}) AS vat,
       SUM(IFNULL(pd.ms2_unbilled,0)) AS unbilled,
-      SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
-      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
-      SUM(IFNULL(pd.ms2_amount,  0) * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
-      SUM(IFNULL(pd.ms2_amount,  0) * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
+      SUM({_inv2} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
+      SUM({_inv2} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
+      SUM({_inv2} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
+      SUM({_inv2} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
     {_PIC_FROM_JOIN_LEAN}
+    {_j2}
     WHERE {' AND '.join(where_ms2)}
     GROUP BY COALESCE(NULLIF(pd.pic_status_ms2, ''), 'Work Not Done')
     ORDER BY po_amount DESC
     """
 
-    ms1_rows = frappe.db.sql(ms1_sql, tuple(params_ms1), as_dict=True)
-    ms2_rows = frappe.db.sql(ms2_sql, tuple(params_ms2), as_dict=True)
+    ms1_rows = frappe.db.sql(ms1_sql, tuple(_jp1 + params_ms1), as_dict=True)
+    ms2_rows = frappe.db.sql(ms2_sql, tuple(_jp2 + params_ms2), as_dict=True)
 
     # Split only meaningful for invoiced statuses; zero out everything else.
     _INVOICED = {"Commercial Invoice Closed", "Commercial Invoice Submitted"}
@@ -1479,15 +1508,12 @@ def get_pic_summary_filter_options():
         """,
         as_dict=True,
     )
+    # Offered from the same events the filter matches on, so a month can
+    # never be listed that selects nothing, nor be missing when it holds
+    # invoices.
     months = frappe.db.sql(
-        """
-        SELECT DISTINCT m FROM (
-          SELECT DATE_FORMAT(ms1_invoice_month, '%%Y-%%m') AS m
-          FROM `tabPO Dispatch` WHERE ms1_invoice_month IS NOT NULL
-          UNION
-          SELECT DATE_FORMAT(ms2_invoice_month, '%%Y-%%m') AS m
-          FROM `tabPO Dispatch` WHERE ms2_invoice_month IS NOT NULL
-        ) t
+        f"""
+        SELECT DISTINCT m FROM ({invoiced_month_options_sql()}) t
         WHERE m IS NOT NULL
         ORDER BY m
         """,
@@ -2202,8 +2228,11 @@ def _monthly_invoicing_rows(fd=None, td=None, order="DESC", limit=36):
     # month only for the lines that predate it. Grouping on ms{n}_invoice_month
     # alone left this report 81.00 apart from the PIC summary on the same
     # month, because that column is the fallback, not the answer.
-    _ms1_dt = customer_invoiced_date(1)
-    _ms2_dt = customer_invoiced_date(2)
+    # One row per INVOICE, bucketed by that invoice's own posting date and
+    # carrying its own amount. Bucketing the whole milestone by one date put
+    # a milestone billed 54.00 in September and 27.00 in October entirely in
+    # September.
+    _events = customer_invoice_events_sql()
     invoice_clause, invoice_params = _invoice_month_clause(fd, td)
     order_sql = "ASC" if str(order).upper() == "ASC" else "DESC"
     limit_sql = f"LIMIT {cint(limit)}" if limit else ""
@@ -2217,20 +2246,20 @@ def _monthly_invoicing_rows(fd=None, td=None, order="DESC", limit=36):
                COALESCE(SUM(ms1_vat + ms2_vat), 0) AS vat_amount,
                COALESCE(SUM(ms1_inv + ms2_inv + ms1_vat + ms2_vat), 0) AS total_amount
         FROM (
-          SELECT DATE_FORMAT({_ms1_dt}, '%%Y-%%m') AS m,
-                 IFNULL(pd.ms1_amount, 0) AS ms1_inv, 0 AS ms2_inv,
-                 IFNULL(pd.ms1_amount, 0) * ({vat_frac}) AS ms1_vat, 0 AS ms2_vat
-          FROM `tabPO Dispatch` pd
-          WHERE {_ms1_dt} IS NOT NULL
-            AND {_MS1_INVOICED_SQL}
+          SELECT DATE_FORMAT(ev.event_date, '%%Y-%%m') AS m,
+                 ev.amount AS ms1_inv, 0 AS ms2_inv,
+                 ev.amount * ({vat_frac}) AS ms1_vat, 0 AS ms2_vat
+          FROM ({_events}) ev
+          JOIN `tabPO Dispatch` pd ON pd.name = ev.po_dispatch
+          WHERE ev.milestone = 'MS1' AND ev.event_date IS NOT NULL
             AND {_REPORTING_SCOPE_SQL}
           UNION ALL
-          SELECT DATE_FORMAT({_ms2_dt}, '%%Y-%%m') AS m,
-                 0 AS ms1_inv, IFNULL(pd.ms2_amount, 0) AS ms2_inv,
-                 0 AS ms1_vat, IFNULL(pd.ms2_amount, 0) * ({vat_frac}) AS ms2_vat
-          FROM `tabPO Dispatch` pd
-          WHERE {_ms2_dt} IS NOT NULL
-            AND {_MS2_INVOICED_SQL}
+          SELECT DATE_FORMAT(ev.event_date, '%%Y-%%m') AS m,
+                 0 AS ms1_inv, ev.amount AS ms2_inv,
+                 0 AS ms1_vat, ev.amount * ({vat_frac}) AS ms2_vat
+          FROM ({_events}) ev
+          JOIN `tabPO Dispatch` pd ON pd.name = ev.po_dispatch
+          WHERE ev.milestone = 'MS2' AND ev.event_date IS NOT NULL
             AND {_REPORTING_SCOPE_SQL}
         ) u
         {invoice_clause}
@@ -2425,6 +2454,19 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     fd = getdate(from_date) if from_date else None
     td = getdate(to_date) if to_date else None
 
+    def _ms_window_sql(n, bound="both"):
+        """This milestone was invoiced inside the window — one placeholder
+        per bound, in the order the caller binds them."""
+        ev = customer_invoice_events_sql()
+        if bound == "lo":
+            test = "ev_w.event_date >= %s"
+        elif bound == "hi":
+            test = "ev_w.event_date <= %s"
+        else:
+            test = "ev_w.event_date BETWEEN %s AND %s"
+        return (f"pd.name IN (SELECT ev_w.po_dispatch FROM ({ev}) ev_w"
+                f" WHERE ev_w.milestone = 'MS{n}' AND {test})")
+
     # Time-series clauses — applied to monthly + pending-owner panels only.
     # Dated by the customer invoice, like every other period filter in the
     # app; ms1_applied_date is one of the fallbacks inside that definition
@@ -2456,16 +2498,18 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     split_ms2_cond = ""
     split_params = []
     if fd and td:
-        split_ms1_cond = "AND DATE_FORMAT(pd.ms1_invoice_month,'%%Y-%%m') BETWEEN DATE_FORMAT(%s,'%%Y-%%m') AND DATE_FORMAT(%s,'%%Y-%%m')"
-        split_ms2_cond = "AND DATE_FORMAT(pd.ms2_invoice_month,'%%Y-%%m') BETWEEN DATE_FORMAT(%s,'%%Y-%%m') AND DATE_FORMAT(%s,'%%Y-%%m')"
+        # Scoped by the invoice, like everything else — the stored month is
+        # one rung inside that definition, not the question being asked.
+        split_ms1_cond = "AND " + _ms_window_sql(1)
+        split_ms2_cond = "AND " + _ms_window_sql(2)
         split_params = [fd, td] * SPLIT_COND_INSERTIONS
     elif fd:
-        split_ms1_cond = "AND pd.ms1_invoice_month >= %s"
-        split_ms2_cond = "AND pd.ms2_invoice_month >= %s"
+        split_ms1_cond = "AND " + _ms_window_sql(1, "lo")
+        split_ms2_cond = "AND " + _ms_window_sql(2, "lo")
         split_params = [fd] * SPLIT_COND_INSERTIONS
     elif td:
-        split_ms1_cond = "AND pd.ms1_invoice_month <= %s"
-        split_ms2_cond = "AND pd.ms2_invoice_month <= %s"
+        split_ms1_cond = "AND " + _ms_window_sql(1, "hi")
+        split_ms2_cond = "AND " + _ms_window_sql(2, "hi")
         split_params = [td] * SPLIT_COND_INSERTIONS
 
     # ── Acceptance buckets — count + 1st/2nd/total amounts per pic_status.
@@ -2539,12 +2583,21 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     _ms2_invoiced = ("IFNULL(pd.pic_status_ms2,'') IN "
                      "('Commercial Invoice Closed','Commercial Invoice Submitted')")
 
+    # The money split is the INVOICED value inside the window, not the
+    # milestone's whole PO amount. Taking the PO amount made this disagree
+    # with the Invoiced card and the Monthly Roll-up by whatever part of a
+    # milestone was billed in another month.
+    _sj1, _sjp1, _samt1 = invoiced_amount_in_period_sql(1, fd, td)
+    _sj2, _sjp2, _samt2 = invoiced_amount_in_period_sql(2, fd, td)
+
     def _leg(n, pct, vat=False):
         cond = _ms1_invoiced if n == 1 else _ms2_invoiced
-        extra = split_ms1_cond if n == 1 else split_ms2_cond
+        amt = _samt1 if n == 1 else _samt2
         tail = f" * ({vat_frac})" if vat else ""
-        return (f"SUM(CASE WHEN {cond} {extra} "
-                f"THEN {_ms_share(n)} * {pct} / 100{tail} ELSE 0 END)")
+        # No date clause here: the joined amount is already zero outside the
+        # window, so the window cannot be applied twice or forgotten.
+        return (f"SUM(CASE WHEN {cond} "
+                f"THEN {amt} * ({ALLOC_SHARE_SQL}) * {pct} / 100{tail} ELSE 0 END)")
 
     _split_sql = f"""
         SELECT
@@ -2558,9 +2611,13 @@ def pic_dashboard_payload(from_date=None, to_date=None):
           {_leg(2, _sub_pct, vat=True)} AS subcon_ms2_vat
         {_PIC_FROM_JOIN_LEAN}
         {ALLOC_JOIN_SQL}
+        {_sj1}
+        {_sj2}
         WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
           AND IFNULL(pd.dispatch_status,'') != 'Cancelled'
         """
+    # Placeholders now live only in the two joins, in the order they appear.
+    split_params = _sjp1 + _sjp2
     # This exact query has no OTHER %s placeholders outside split_ms1_cond /
     # split_ms2_cond, so the query's own placeholder count is a direct,
     # cheap check that split_params still has exactly one value per
@@ -2602,6 +2659,9 @@ def pic_dashboard_payload(from_date=None, to_date=None):
         "grand_total_incl_vat": round(_im1 + _sm1 + _im2 + _sm2 + _t1v + _t2v, 2),
     }
 
+    _kpi_j1, _kpi_jp1, _kpi_inv1 = invoiced_amount_in_period_sql(1, fd, td)
+    _kpi_j2, _kpi_jp2, _kpi_inv2 = invoiced_amount_in_period_sql(2, fd, td)
+
     # ── Top-line KPIs — scoped by date when set.
     # line_count is the "All Lines" tile — every PIC-scoped POID, matching
     # the pending+active+cancelled total. total_invoiced/unbilled stay
@@ -2610,10 +2670,16 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     kpi = frappe.db.sql(
         f"""
         SELECT
-          COALESCE(SUM(CASE WHEN {_MS1_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
-                            THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0)
-        + COALESCE(SUM(CASE WHEN {_MS2_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
-                            THEN IFNULL(pd.ms2_amount, 0) ELSE 0 END), 0) AS total_invoiced,
+          -- The amount INVOICED, from the invoices themselves. This used to
+          -- sum the milestone's PO value for every line
+          -- that had reached an invoiced status, so the tile read 241,154.56
+          -- against the Monthly Roll-up's 215,903.56 further down the same
+          -- screen. The Acceptance Pipeline below still sums PO amounts, and
+          -- should: it shows the value standing at each stage, including
+          -- stages where nothing has been invoiced at all.
+          COALESCE(SUM(CASE WHEN {_NOT_CANCELLED_SQL} THEN {_kpi_inv1} ELSE 0 END), 0)
+        + COALESCE(SUM(CASE WHEN {_NOT_CANCELLED_SQL} THEN {_kpi_inv2} ELSE 0 END), 0)
+          AS total_invoiced,
           COALESCE(SUM(CASE WHEN {_MS1_NOT_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
                             THEN IFNULL(pd.ms1_amount, 0) ELSE 0 END), 0) AS unbilled_ms1,
           COALESCE(SUM(CASE WHEN {_MS2_NOT_INVOICED_SQL} AND {_NOT_CANCELLED_SQL}
@@ -2624,10 +2690,12 @@ def pic_dashboard_payload(from_date=None, to_date=None):
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["closed"]} THEN 1 ELSE 0 END), 0) AS closed_count,
           COALESCE(SUM(CASE WHEN {_PIC_STAGE_SQL["cancelled"]} THEN 1 ELSE 0 END), 0) AS cancelled_count
         {_PIC_FROM_JOIN}
+        {_kpi_j1}
+        {_kpi_j2}
         WHERE IFNULL(pd.is_internal_work, 0) = 0 AND IFNULL(pd.is_dummy_po, 0) = 0
         {applied_clause}
         """,
-        tuple(applied_params),
+        tuple(_kpi_jp1 + _kpi_jp2 + applied_params),
         as_dict=True,
     )
     kpi = (kpi[0] if kpi else {}) or {}

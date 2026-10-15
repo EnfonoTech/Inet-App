@@ -15,8 +15,8 @@ created by the system, carry their own posting date, and correct themselves —
 cancel the invoice and the date is gone; re-issue it and the new date stands.
 Nothing has to be remembered or re-typed.
 
-The stored date columns on PO Dispatch (``ms1_applied_date``,
-``ms1_invoice_month``, ``ms1_ibuy_inv_date``, ``ms1_payment_received_date``,
+The stored date columns on PO Dispatch (``ms1_invoice_month``,
+``ms1_payment_received_date``,
 ``sub_po_date_ms1``, ``sub_paid_date_ms1``) are a FALLBACK, never the first
 answer. They came from the Master Tracker import, from before the portal
 raised its own documents, and they are the only record those older lines have.
@@ -53,7 +53,21 @@ def _nz(col):
 def customer_invoiced_date(n, pd="pd"):
     """When this milestone was invoiced to the customer.
 
-    Sales Invoice posting date, then the import's own columns.
+    Sales Invoice posting date, then the imported IBUY / INV date, then the
+    imported invoice month.
+
+    ``ms{n}_ibuy_inv_date`` is the real invoice DATE: checked against the
+    "Invoices Data" sheet the import came from, it matches that sheet's
+    Invoice Date on 14,585 of 15,013 rows (97%), and the rest differ by a
+    day. ``ms{n}_invoice_month`` is the month BUCKET, stored as the 1st —
+    it equals the real date on only 272 rows. Both name the same month on
+    all but one line, so monthly totals barely care; a day-level filter
+    cares a great deal, because every legacy line would otherwise claim to
+    have been invoiced on the 1st.
+
+    ``ms{n}_applied_date`` is deliberately not a rung: it is when a line was
+    APPLIED for, not when it was billed. A milestone with no date on any
+    rung is reported as undated rather than guessed at.
     """
     _ms(n)
     return (
@@ -61,9 +75,8 @@ def customer_invoiced_date(n, pd="pd"):
         f" (SELECT MIN(si_d.posting_date) FROM `tabSales Invoice Item` sii_d"
         f"    JOIN `tabSales Invoice` si_d ON si_d.name = sii_d.parent AND si_d.docstatus = 1"
         f"   WHERE sii_d.poid = {pd}.name AND IFNULL(sii_d.milestone, '') = 'MS{n}'),"
-        f" {_nz(f'{pd}.ms{n}_invoice_month')},"
         f" {_nz(f'{pd}.ms{n}_ibuy_inv_date')},"
-        f" {_nz(f'{pd}.ms{n}_applied_date')})"
+        f" {_nz(f'{pd}.ms{n}_invoice_month')})"
     )
 
 
@@ -135,43 +148,94 @@ def supplier_paid_date(n, pd="pd"):
 
 
 def customer_invoice_events_sql():
-    """``(po_dispatch, milestone, event_date)`` — one row per invoiced
-    milestone, as a subquery to JOIN once.
+    """``(po_dispatch, milestone, event_date, amount)`` — ONE ROW PER INVOICE.
 
-    USE THIS TO FILTER. The scalar expressions above are correlated
-    subqueries: fine in a SELECT over a page of rows, ruinous in a WHERE over
-    the whole table, because the database evaluates them per row. Filtering
-    22,833 dispatch lines that way measured 6m45s even with `poid` indexed;
-    joined as a derived table it is one pass.
+    Per invoice, not per milestone. A milestone billed in two parts is two
+    rows, each on its own posting date carrying its own amount, so the money
+    lands in the months it was actually billed in. Dating the milestone by
+    its first invoice put the whole amount in the earlier month: a line
+    billed 54.00 in September and 27.00 in October showed 81.00 in September
+    and nothing in October.
 
-    Same two legs as everywhere else: the document first, the imported
-    columns for the lines that predate it.
+    USE THIS TO FILTER AND TO SUM. The scalar expressions above are
+    correlated subqueries — fine in a SELECT over a page of rows, ruinous in
+    a WHERE over the whole table. Filtering 22,833 dispatch lines that way
+    measured 6m45s even with `poid` indexed; joined as a derived table it is
+    one pass.
+
+    Two legs, the same two rungs as everywhere: the Sales Invoice, then the
+    imported month for milestones billed before the portal raised invoices.
+    The legacy leg carries the whole milestone as a single event, because
+    that is all the import recorded — it has no per-invoice detail to split.
     """
     legs = []
     for n in (1, 2):
         legs.append(f"""
         SELECT sii_e.poid AS po_dispatch, 'MS{n}' AS milestone,
-               MIN(si_e.posting_date) AS event_date
+               si_e.posting_date AS event_date,
+               IFNULL(sii_e.amount, 0) AS amount
           FROM `tabSales Invoice Item` sii_e
           JOIN `tabSales Invoice` si_e ON si_e.name = sii_e.parent AND si_e.docstatus = 1
          WHERE IFNULL(sii_e.poid, '') != '' AND IFNULL(sii_e.milestone, '') = 'MS{n}'
-         GROUP BY sii_e.poid
         """)
+        # The legacy leg is what the import recorded MINUS whatever the
+        # documents already account for. A milestone invoiced partly outside
+        # the system and partly inside holds both: suppressing the legacy
+        # half whenever any Sales Invoice existed moved its money onto the
+        # system invoice's date, which is a different month. Emitting only
+        # the uncovered remainder keeps each half on its own date and never
+        # double counts.
+        _sys_sum = (
+            f"(SELECT COALESCE(SUM(sii_s.amount), 0)"
+            f"   FROM `tabSales Invoice Item` sii_s"
+            f"   JOIN `tabSales Invoice` si_s ON si_s.name = sii_s.parent"
+            f"        AND si_s.docstatus = 1"
+            f"  WHERE sii_s.poid = pd_e.name"
+            f"    AND IFNULL(sii_s.milestone, '') = 'MS{n}')"
+        )
+        _recorded = (
+            f"CASE WHEN IFNULL(pd_e.ms{n}_invoiced, 0) > 0"
+            f"     THEN pd_e.ms{n}_invoiced ELSE IFNULL(pd_e.ms{n}_amount, 0) END"
+        )
         legs.append(f"""
         SELECT pd_e.name AS po_dispatch, 'MS{n}' AS milestone,
-               COALESCE({_nz(f'pd_e.ms{n}_invoice_month')},
-                        {_nz(f'pd_e.ms{n}_ibuy_inv_date')},
-                        {_nz(f'pd_e.ms{n}_applied_date')}) AS event_date
+               COALESCE({_nz(f'pd_e.ms{n}_ibuy_inv_date')},
+                        {_nz(f'pd_e.ms{n}_invoice_month')}) AS event_date,
+               ROUND({_recorded} - {_sys_sum}, 4) AS amount
           FROM `tabPO Dispatch` pd_e
          WHERE IFNULL(pd_e.is_internal_work, 0) = 0
            AND {customer_billed_ms_sql(n, 'pd_e')}
-           AND NOT EXISTS (SELECT 1 FROM `tabSales Invoice Item` sii_x
-                             JOIN `tabSales Invoice` si_x ON si_x.name = sii_x.parent
-                                  AND si_x.docstatus = 1
-                            WHERE sii_x.poid = pd_e.name
-                              AND IFNULL(sii_x.milestone, '') = 'MS{n}')
+           AND ROUND({_recorded} - {_sys_sum}, 4) > 0.0001
         """)
     return " UNION ALL ".join(legs)
+
+
+def invoiced_amount_in_period_sql(n, from_date, to_date, pd="pd"):
+    """``(join_sql, params, column)`` — this milestone's invoiced value INSIDE
+    the window, as a LEFT JOIN rather than a per-row subquery.
+
+    What a period report must sum. Summing ``ms{n}_invoiced`` and filtering
+    the line by date counts the milestone's WHOLE value in whichever month it
+    first appears; this counts only the invoices that actually fall in the
+    window.
+    """
+    _ms(n)
+    conds, params = ["1=1"], []
+    if from_date:
+        conds.append("ev_a.event_date >= %s")
+        params.append(from_date)
+    if to_date:
+        conds.append("ev_a.event_date <= %s")
+        params.append(to_date)
+    alias = f"evw{n}"
+    join = (
+        f"LEFT JOIN (SELECT ev_a.po_dispatch, SUM(ev_a.amount) AS amt"
+        f"             FROM ({customer_invoice_events_sql()}) ev_a"
+        f"            WHERE ev_a.milestone = 'MS{n}' AND {' AND '.join(conds)}"
+        f"            GROUP BY ev_a.po_dispatch) {alias}"
+        f"       ON {alias}.po_dispatch = {pd}.name"
+    )
+    return join, params, f"IFNULL({alias}.amt, 0)"
 
 
 def customer_billed_ms_sql(n, pd="pd"):
@@ -242,6 +306,39 @@ def milestone_invoiced_in_period_clause(n, from_date, to_date, pd="pd"):
         f"{pd}.name IN (SELECT ev_m.po_dispatch FROM ({customer_invoice_events_sql()}) ev_m"
         f" WHERE ev_m.milestone = 'MS{n}' AND {' AND '.join(conds)})",
         params,
+    )
+
+
+def invoiced_in_months_clause(months, n=None, pd="pd"):
+    """``(sql, params)`` for "invoiced in any of these YYYY-MM months".
+
+    The month a user picks from a dropdown has to mean the same thing as the
+    date range beside it, or the two filters disagree about one line. Both
+    now read the invoice.
+    """
+    vals = [m for m in (months or []) if str(m or "").strip()]
+    if not vals:
+        return "", []
+    ph = ", ".join(["%s"] * len(vals))
+    ms_clause = f"ev_mo.milestone = 'MS{n}' AND " if n in (1, 2) else ""
+    return (
+        f"{pd}.name IN (SELECT ev_mo.po_dispatch"
+        f" FROM ({customer_invoice_events_sql()}) ev_mo"
+        f" WHERE {ms_clause}DATE_FORMAT(ev_mo.event_date, '%%Y-%%m') IN ({ph}))",
+        list(vals),
+    )
+
+
+def invoiced_month_options_sql():
+    """Every YYYY-MM that has an invoice in it — the dropdown's options.
+
+    Built from the same events the filter matches on, so a month can never
+    be offered that selects nothing, nor be missing when it holds invoices.
+    """
+    return (
+        f"SELECT DISTINCT DATE_FORMAT(ev_op.event_date, '%%Y-%%m') AS m"
+        f"  FROM ({customer_invoice_events_sql()}) ev_op"
+        f" WHERE ev_op.event_date IS NOT NULL"
     )
 
 

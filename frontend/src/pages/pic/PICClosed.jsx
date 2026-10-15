@@ -95,7 +95,8 @@ function DetailModal({ row, onClose }) {
             "project_name", "project_domain", "site_name", "item_code", "item_description",
             "tax_rate", "payment_terms", "im_submission_status", "im_confirmation_note",
             "pic_status_effective", "pic_status_ms2", "pic_detail_remark", "pic_detail_remark_ms2",
-            "ms1_applied_date", "ms2_applied_date", "ms1_amount", "ms2_amount",
+            "ms1_applied_date", "ms2_applied_date", "ms1_invoiced_date", "ms2_invoiced_date",
+            "ms1_amount", "ms2_amount",
             "ms1_vat", "ms2_vat", "ms1_invoiced", "ms2_invoiced",
           ]}
         />
@@ -466,12 +467,14 @@ export default function PICClosed() {
                 <th>PIC Status (MS1)</th>
                 <th>Applied Date (MS1)</th>
                 <th>Invoicing Month (MS1)</th>
+                <th>Invoiced Date (MS1)</th>
                 <th style={{ textAlign: "right" }}>MS1 %</th>
                 <th style={{ textAlign: "right" }}>MS1 Amt</th>
                 <th style={{ textAlign: "right" }}>MS1 VAT</th>
                 <th>PIC Status (MS2)</th>
                 <th>Applied Date (MS2)</th>
                 <th>Invoicing Month (MS2)</th>
+                <th>Invoiced Date (MS2)</th>
                 <th style={{ textAlign: "right" }}>MS2 %</th>
                 <th style={{ textAlign: "right" }}>MS2 Amt</th>
                 <th style={{ textAlign: "right" }}>MS2 VAT</th>
@@ -483,7 +486,7 @@ export default function PICClosed() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={32} style={{ padding: 0 }}>
+                  <td colSpan={34} style={{ padding: 0 }}>
                     {loading ? (
                       <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                     ) : (
@@ -523,12 +526,14 @@ export default function PICClosed() {
                   <td><PicStatusBadge value={r.pic_status_effective} /></td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms1_applied_date ? String(r.ms1_applied_date).slice(0, 10) : "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms1_invoice_month ? fmtMonthLabel(String(r.ms1_invoice_month)) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{r.ms1_invoiced_date ? String(r.ms1_invoiced_date).slice(0, 10) : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms1_pct != null ? `${fmt.format(r.ms1_pct)}%` : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.ms1_vat || 0)}</td>
                   <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms2_applied_date ? String(r.ms2_applied_date).slice(0, 10) : "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoice_month ? fmtMonthLabel(String(r.ms2_invoice_month)) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{r.ms2_invoiced_date ? String(r.ms2_invoiced_date).slice(0, 10) : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.ms2_pct != null ? `${fmt.format(r.ms2_pct)}%` : "—"}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms2_amount || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.ms2_vat || 0)}</td>
@@ -590,12 +595,14 @@ export default function PICClosed() {
                   <td></td>{/* IM Status */}
                   <td></td>{/* PIC Status MS1 */}
                   <td></td>{/* Applied Date MS1 */}
+                  <td></td>{/* Invoiced Date MS1 */}
                   <td></td>{/* Invoicing Month MS1 */}
                   <td></td>{/* MS1 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms1_amount)}</td>{/* MS1 Amt */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(totals.ms1_vat)}</td>{/* MS1 VAT */}
                   <td></td>{/* PIC Status MS2 */}
                   <td></td>{/* Applied Date MS2 */}
+                  <td></td>{/* Invoiced Date MS2 */}
                   <td></td>{/* Invoicing Month MS2 */}
                   <td></td>{/* MS2 % */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(totals.ms2_amount)}</td>{/* MS2 Amt */}

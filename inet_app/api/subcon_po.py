@@ -301,6 +301,23 @@ LEFT JOIN `tabSubcontract Master` sm
             NULLIF(alloc.subcontractor, ''),
             NULLIF(pd.contract, ''), plan_sub.subcontractor, bt.subcontractor)
 LEFT JOIN `tabSupplier` sup ON sup.name = sm.supplier
+-- Quantity already on live supplier POs, per milestone. Joined once rather
+-- than looked up per row: as a correlated subquery the To Order tab took
+-- 25.7s, because the stage predicate runs for every dispatch line.
+LEFT JOIN (SELECT poi_q.poid AS poid, UPPER(IFNULL(poi_q.milestone, '')) AS ms,
+                  SUM(IFNULL(poi_q.qty, 0)) AS qty
+             FROM `tabPurchase Order Item` poi_q
+             JOIN `tabPurchase Order` po_q ON po_q.name = poi_q.parent
+                  AND po_q.docstatus < 2
+            GROUP BY poi_q.poid, UPPER(IFNULL(poi_q.milestone, ''))) oq1
+       ON oq1.poid = pd.name AND oq1.ms = 'MS1'
+LEFT JOIN (SELECT poi_r.poid AS poid, UPPER(IFNULL(poi_r.milestone, '')) AS ms,
+                  SUM(IFNULL(poi_r.qty, 0)) AS qty
+             FROM `tabPurchase Order Item` poi_r
+             JOIN `tabPurchase Order` po_r ON po_r.name = poi_r.parent
+                  AND po_r.docstatus < 2
+            GROUP BY poi_r.poid, UPPER(IFNULL(poi_r.milestone, ''))) oq2
+       ON oq2.poid = pd.name AND oq2.ms = 'MS2'
 {ALLOC_TOTALS_JOIN_SQL}
 """
 
@@ -525,11 +542,36 @@ def _ready_ms_sql(n):
             f"AND {_ms_status_sql(n)} = '{SUB_PO_READY}')")
 
 
+def _ordered_qty_ms_sql(n):
+    """Quantity already on live supplier POs for this milestone.
+
+    Reads the oq1 / oq2 joins in _SUBCON_FROM_JOIN.
+    """
+    return f"IFNULL(oq{n}.qty, 0)"
+
+
+def _entitled_qty_ms_sql(n):
+    """Quantity this milestone may be ordered in total, for this supplier."""
+    return (
+        f"(IFNULL(NULLIF(alloc.qty, 0), IFNULL(pd.qty, 0))"
+        f" * IFNULL(pd.ms{n}_pct, 0) / 100)"
+    )
+
+
 def _awaiting_order_ms_sql(n):
-    """Belongs on the To Order tab: not ordered, or ordered but still a draft."""
+    """Belongs on the To Order tab: not ordered, ordered but still a draft, or
+    PART ordered.
+
+    The quantity clause is what lets a line come back. A PO consumes a
+    QUANTITY, not the whole milestone: order 2 of a 3-qty line, or correct a
+    PO downwards, and the rest still has to be orderable. Status alone said
+    "PO Submitted" and the line vanished from this tab with work left on it,
+    so there was no way to reach it short of cancelling the supplier's PO.
+    """
     return (f"(IFNULL(pd.ms{n}_amount, 0) > 0 AND "
             f"{_customer_billed_ms_sql(n)} AND "
-            f"{_in_list_sql(_ms_status_sql(n), _PENDING_ORDER_STATUSES)})")
+            f"({_in_list_sql(_ms_status_sql(n), _PENDING_ORDER_STATUSES)}"
+            f" OR {_ordered_qty_ms_sql(n)} < {_entitled_qty_ms_sql(n)} - 0.0001))")
 
 
 def _in_list_sql(expr, values):
@@ -616,6 +658,54 @@ def _batch_linked_purchase_docs(po_dispatch_names):
             for r in rows:
                 out.setdefault(r["po_dispatch"], {})[key] = r["csv"]
     return out
+
+
+def _ordered_qty_by_milestone(poids):
+    """``{(poid, "MS1"|"MS2", subcontract): qty_already_on_live_POs}``.
+
+    What the duplicate guard actually needs. A PO does not consume a
+    milestone, it consumes a QUANTITY of it: order 2 of a 3-qty line's MS1
+    and the remaining 1 still has to be orderable, which the old "a PO
+    exists, so refuse" rule made impossible. A milestone is only closed to
+    new orders once the quantity on its live POs reaches what it is entitled
+    to.
+
+    Cancelled POs (docstatus 2) do not count — cancelling is how you free a
+    quantity up again.
+    """
+    names = list({n for n in (poids or []) if n})
+    out = {}
+    if not names or not frappe.db.has_column("Purchase Order Item", "poid"):
+        return out
+    for chunk in _chunk(names, 800):
+        ph = ", ".join(["%s"] * len(chunk))
+        rows = frappe.db.sql(
+            f"""
+            SELECT poi.poid AS poid, UPPER(IFNULL(poi.milestone, '')) AS milestone,
+                   IFNULL(poi.subcontract, '') AS subcontract,
+                   SUM(IFNULL(poi.qty, 0)) AS qty
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON po.name = poi.parent
+            WHERE poi.poid IN ({ph}) AND po.docstatus < 2
+            GROUP BY poi.poid, UPPER(IFNULL(poi.milestone, '')),
+                     IFNULL(poi.subcontract, '')
+            """,
+            tuple(chunk), as_dict=True,
+        )
+        for r in rows:
+            out[(r["poid"], r["milestone"], r["subcontract"])] = flt(r["qty"])
+    return out
+
+
+def entitled_po_qty(pd_row, milestone):
+    """How much of this milestone this supplier may be ordered, in total.
+
+    The same figure _po_item_pricing builds a PO line from: this supplier's
+    own allocated quantity, scaled by the milestone percentage.
+    """
+    n = _ms_num(milestone)
+    full_qty = flt(pd_row.get("alloc_qty") or 0) or flt(pd_row.get("qty") or 0)
+    return flt(full_qty) * flt(pd_row.get(f"ms{n}_pct") or 0) / 100.0
 
 
 def _existing_purchase_orders_by_milestone(poids, include_submitted=True):
@@ -1281,7 +1371,7 @@ def get_subcon_po_filter_options():
 
 
 # ── Purchase Order creation ──────────────────────────────────────────────
-def _po_item_pricing(pd_row, milestone, payout_pct, precision):
+def _po_item_pricing(pd_row, milestone, payout_pct, precision, already_ordered=0.0):
     """Return (qty, rate, description) for one supplier PO line.
 
     ``qty`` carries the milestone split (MS1 = 70% of the line → 0.7 × qty)
@@ -1311,6 +1401,12 @@ def _po_item_pricing(pd_row, milestone, payout_pct, precision):
     qty = round(full_qty * ms_pct / 100.0, 6) if ms_pct > 0 else full_qty
     if qty <= 0:
         qty = full_qty
+    # Only what is still unordered. A milestone part-ordered earlier — 2 of a
+    # 3-qty line, then topped up — must produce a PO for the REMAINDER, not
+    # for the whole milestone again, or the supplier is ordered the first
+    # quantity twice.
+    if already_ordered:
+        qty = max(0.0, flt(qty) - flt(already_ordered))
     rate = flt(full_rate * payout_pct / 100.0, precision)
 
     # Plain item description only. Site and milestone used to be appended here;
@@ -1447,21 +1543,38 @@ def create_purchase_order_from_pic(po_dispatch=None, milestone=None):
     # Supplier is part of the key: a line split between two subcontractors
     # needs one PO each, and keying on (poid, milestone) alone made the first
     # one block the second.
-    dupes = _existing_purchase_orders_by_milestone([l["po_dispatch"] for l, _ms, _a in resolved])
+    _dispatch_names = [l["po_dispatch"] for l, _ms, _a in resolved]
+    dupes = _existing_purchase_orders_by_milestone(_dispatch_names)
+    ordered_qty = _ordered_qty_by_milestone(_dispatch_names)
     conflicts = []
     for line, ms, _amt in resolved:
         sub = cstr(line.get("subcontract") or "")
-        if _po_exists_for(dupes, line["po_dispatch"], ms, sub):
-            label = (dupes.get((line["po_dispatch"], ms, sub))
-                     or dupes.get((line["po_dispatch"], ms, "")))
-            who = f" / {sub}" if sub else ""
-            conflicts.append(
-                f"{line.get('poid') or line['po_dispatch']} ({ms}{who}) → {label}")
+        if not _po_exists_for(dupes, line["po_dispatch"], ms, sub):
+            continue
+        # A PO consumes a QUANTITY, not the whole milestone. Order 2 of a
+        # 3-qty line's MS1 and the remaining 1 must still be orderable —
+        # refusing outright meant a line topped up after its first PO could
+        # never have the extra ordered at all, short of cancelling a PO the
+        # supplier already has. Only a milestone whose live POs already cover
+        # everything it is entitled to is closed to new ones.
+        entitled = entitled_po_qty(line, ms)
+        already = (ordered_qty.get((line["po_dispatch"], ms, sub), 0.0)
+                   + ordered_qty.get((line["po_dispatch"], ms, ""), 0.0))
+        if entitled and already < entitled - 0.0001:
+            continue
+        label = (dupes.get((line["po_dispatch"], ms, sub))
+                 or dupes.get((line["po_dispatch"], ms, "")))
+        who = f" / {sub}" if sub else ""
+        covered = (f" — {already:g} of {entitled:g} already ordered"
+                   if entitled else "")
+        conflicts.append(
+            f"{line.get('poid') or line['po_dispatch']} ({ms}{who}) → {label}{covered}")
     if conflicts:
         frappe.throw(
-            "Can't create — a Purchase Order already exists for: "
+            "Can't create — these are already fully ordered: "
             + "; ".join(conflicts)
-            + ". Cancel or delete it first, then try again."
+            + ". Cancel the existing Purchase Order first, or order the "
+              "remaining quantity only."
         )
 
     # ── Group by supplier, one PO each ───────────────────────────────────
@@ -1517,7 +1630,11 @@ def create_purchase_order_from_pic(po_dispatch=None, milestone=None):
             if item_code not in real_items:
                 item_code = "Service"
             payout_pct = flt(line.get("sub_payout_pct") or 0)
-            qty, rate, description = _po_item_pricing(line, ms, payout_pct, precision)
+            _sub_k = cstr(line.get("subcontract") or "")
+            _done = (ordered_qty.get((line["po_dispatch"], ms, _sub_k), 0.0)
+                     + ordered_qty.get((line["po_dispatch"], ms, ""), 0.0))
+            qty, rate, description = _po_item_pricing(
+                line, ms, payout_pct, precision, already_ordered=_done)
             duid = (line.get("site_code") or "").strip()
             project = (line.get("project_code") or "").strip()
             po.append("items", {
