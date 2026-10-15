@@ -22,6 +22,7 @@ def after_migrate():
     _ensure_duid_inventory_dimension()
     _ensure_outbound_custom_fields()
     _ensure_poid_accounting_dimension()
+    _ensure_poid_search_index()
     _ensure_project_accounting_dimension()
     _ensure_duid_accounting_dimension()
     _ensure_qty_precision()
@@ -613,6 +614,41 @@ def _ensure_outbound_custom_fields():
     if frappe.db.exists("Custom Field", "Material Request Item-duid"):
         frappe.delete_doc("Custom Field", "Material Request Item-duid", ignore_missing=True, force=True)
         frappe.db.commit()
+
+
+def _ensure_poid_search_index():
+    """Index `poid` on the financial item tables.
+
+    Every "when did this happen" question now reaches the document that
+    answers it — a Sales Invoice for invoiced, a Payment Entry for paid, a
+    Purchase Order for ordered (see inet_app/api/event_dates.py). Those are
+    correlated lookups keyed on `poid`, run once per PO Dispatch row, and
+    with 23k dispatch lines against an unindexed column they take minutes
+    rather than milliseconds.
+
+    ERPNext's Accounting Dimension machinery creates these fields, so the
+    index cannot be declared where they are born. Setting `search_index` on
+    the Custom Field is the durable way to ask for one: Frappe's schema sync
+    then creates it and keeps it, where a bare ALTER TABLE would be dropped
+    by the next migrate.
+    """
+    for dt in ("Sales Invoice Item", "Purchase Order Item", "Purchase Invoice Item"):
+        cf = f"{dt}-poid"
+        if not frappe.db.exists("Custom Field", cf):
+            continue
+        if frappe.db.get_value("Custom Field", cf, "search_index"):
+            continue
+        try:
+            # Saved through the document, not db.set_value: it is the Custom
+            # Field's own on_update that asks Frappe to alter the table, so a
+            # direct column write sets the flag and creates no index.
+            doc = frappe.get_doc("Custom Field", cf)
+            doc.search_index = 1
+            doc.save(ignore_permissions=True)
+            frappe.db.commit()
+            frappe.clear_cache(doctype=dt)
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), f"poid search_index: {dt}")
 
 
 def _ensure_poid_accounting_dimension():

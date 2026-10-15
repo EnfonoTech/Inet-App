@@ -18,6 +18,11 @@ from inet_app.api.subcontractor_sync import (
 )
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
+from inet_app.api.event_dates import (
+    customer_invoiced_date,
+    invoiced_in_period_clause,
+    milestone_invoiced_in_period_clause,
+)
 from inet_app.api.command_center import (
     _MS1_INVOICED_SQL,
     _MS1_NOT_INVOICED_SQL,
@@ -266,12 +271,15 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         where.append(f"IFNULL(pd.pic_status_ms2,'') IN ({ph})")
         params.extend(pic_ms2_vals)
 
-    if pf.get("from_date"):
-        where.append("pd.ms1_applied_date >= %s")
-        params.append(pf["from_date"])
-    if pf.get("to_date"):
-        where.append("pd.ms1_applied_date <= %s")
-        params.append(pf["to_date"])
+    # Dated by the CUSTOMER INVOICE, through the one definition the whole app
+    # shares. This used to filter on pd.ms1_applied_date — a Master Tracker
+    # column that nothing has written since 2026-09-10, so every figure here
+    # read 0.00 for any recent period while the Monthly Roll-up beside it,
+    # which groups by invoice month, showed the real money.
+    _inv_c, _inv_p = invoiced_in_period_clause(pf.get("from_date"), pf.get("to_date"))
+    if _inv_c:
+        where.append(_inv_c)
+        params.extend(_inv_p)
 
     invoice_month_vals = _ensure_list(pf.get("invoice_month"))
     if invoice_month_vals:
@@ -1147,12 +1155,11 @@ def pic_invoicing_summary(portal_filters=None):
             where_common.append(c)
             params_common.extend(p)
 
-    if pf.get("from_date"):
-        where_common.append("pd.ms1_applied_date >= %s")
-        params_common.append(pf["from_date"])
-    if pf.get("to_date"):
-        where_common.append("pd.ms1_applied_date <= %s")
-        params_common.append(pf["to_date"])
+    # The date filter is applied PER MILESTONE further down, not here: each
+    # half of this report carries its own money and must be dated by its own
+    # invoice, or a line billed MS1 in September and MS2 in October counts
+    # both amounts in both months and this report stops agreeing with the
+    # Monthly Roll-up beside it.
 
     if pf.get("contract_model"):
         cm_vals = _ensure_list(pf["contract_model"])
@@ -1194,6 +1201,19 @@ def pic_invoicing_summary(portal_filters=None):
         where_ms2.append(f"DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') IN ({ph})")
         params_ms2.extend(ms2_month_vals)
     where_ms2.append("IFNULL(pd.ms2_amount, 0) > 0")
+
+    # Dated by the CUSTOMER INVOICE, through the definition the whole app
+    # shares. This used to filter both halves on pd.ms1_applied_date — a
+    # Master Tracker column nothing has written since 2026-09-10, so every
+    # figure here read 0.00 for any recent period.
+    _c1, _p1 = milestone_invoiced_in_period_clause(1, pf.get("from_date"), pf.get("to_date"))
+    if _c1:
+        where_ms1.append(_c1)
+        params_ms1.extend(_p1)
+    _c2, _p2 = milestone_invoiced_in_period_clause(2, pf.get("from_date"), pf.get("to_date"))
+    if _c2:
+        where_ms2.append(_c2)
+        params_ms2.extend(_p2)
 
     vat_on_invoiced = _vat_on_sql("pd.ms1_invoiced")
     vat_on_ms2_invoiced = _vat_on_sql("pd.ms2_invoiced")
@@ -2177,6 +2197,13 @@ def _monthly_invoicing_rows(fd=None, td=None, order="DESC", limit=36):
     in a bucket and are absent here — ``_undated_invoiced_value()`` in
     command_center reports that residual.
     """
+    # Bucketed by the CUSTOMER INVOICE date, the same definition every other
+    # period figure uses — the Sales Invoice where there is one, the imported
+    # month only for the lines that predate it. Grouping on ms{n}_invoice_month
+    # alone left this report 81.00 apart from the PIC summary on the same
+    # month, because that column is the fallback, not the answer.
+    _ms1_dt = customer_invoiced_date(1)
+    _ms2_dt = customer_invoiced_date(2)
     invoice_clause, invoice_params = _invoice_month_clause(fd, td)
     order_sql = "ASC" if str(order).upper() == "ASC" else "DESC"
     limit_sql = f"LIMIT {cint(limit)}" if limit else ""
@@ -2190,19 +2217,19 @@ def _monthly_invoicing_rows(fd=None, td=None, order="DESC", limit=36):
                COALESCE(SUM(ms1_vat + ms2_vat), 0) AS vat_amount,
                COALESCE(SUM(ms1_inv + ms2_inv + ms1_vat + ms2_vat), 0) AS total_amount
         FROM (
-          SELECT DATE_FORMAT(pd.ms1_invoice_month, '%%Y-%%m') AS m,
+          SELECT DATE_FORMAT({_ms1_dt}, '%%Y-%%m') AS m,
                  IFNULL(pd.ms1_amount, 0) AS ms1_inv, 0 AS ms2_inv,
                  IFNULL(pd.ms1_amount, 0) * ({vat_frac}) AS ms1_vat, 0 AS ms2_vat
           FROM `tabPO Dispatch` pd
-          WHERE pd.ms1_invoice_month IS NOT NULL
+          WHERE {_ms1_dt} IS NOT NULL
             AND {_MS1_INVOICED_SQL}
             AND {_REPORTING_SCOPE_SQL}
           UNION ALL
-          SELECT DATE_FORMAT(pd.ms2_invoice_month, '%%Y-%%m') AS m,
+          SELECT DATE_FORMAT({_ms2_dt}, '%%Y-%%m') AS m,
                  0 AS ms1_inv, IFNULL(pd.ms2_amount, 0) AS ms2_inv,
                  0 AS ms1_vat, IFNULL(pd.ms2_amount, 0) * ({vat_frac}) AS ms2_vat
           FROM `tabPO Dispatch` pd
-          WHERE pd.ms2_invoice_month IS NOT NULL
+          WHERE {_ms2_dt} IS NOT NULL
             AND {_MS2_INVOICED_SQL}
             AND {_REPORTING_SCOPE_SQL}
         ) u
@@ -2272,12 +2299,15 @@ def get_pic_stage_counts(portal_filters=None):
         if c:
             wheres.append(c)
             params.extend(p)
-    if pf.get("from_date"):
-        wheres.append("pd.ms1_applied_date >= %s")
-        params.append(pf["from_date"])
-    if pf.get("to_date"):
-        wheres.append("pd.ms1_applied_date <= %s")
-        params.append(pf["to_date"])
+    # Dated by the CUSTOMER INVOICE, through the one definition the whole app
+    # shares. This used to filter on pd.ms1_applied_date — a Master Tracker
+    # column that nothing has written since 2026-09-10, so every figure here
+    # read 0.00 for any recent period while the Monthly Roll-up beside it,
+    # which groups by invoice month, showed the real money.
+    _inv_c, _inv_p = invoiced_in_period_clause(pf.get("from_date"), pf.get("to_date"))
+    if _inv_c:
+        wheres.append(_inv_c)
+        params.extend(_inv_p)
 
     row = frappe.db.sql(
         f"""
@@ -2396,17 +2426,15 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     td = getdate(to_date) if to_date else None
 
     # Time-series clauses — applied to monthly + pending-owner panels only.
+    # Dated by the customer invoice, like every other period filter in the
+    # app; ms1_applied_date is one of the fallbacks inside that definition
+    # rather than the question being asked.
     applied_clause = ""
     applied_params = []
-    if fd and td:
-        applied_clause = "AND pd.ms1_applied_date BETWEEN %s AND %s"
-        applied_params = [fd, td]
-    elif fd:
-        applied_clause = "AND pd.ms1_applied_date >= %s"
-        applied_params = [fd]
-    elif td:
-        applied_clause = "AND pd.ms1_applied_date <= %s"
-        applied_params = [td]
+    _inv_c, _inv_p = invoiced_in_period_clause(fd, td)
+    if _inv_c:
+        applied_clause = "AND " + _inv_c
+        applied_params = _inv_p
 
     # Invoice-month conditions for the INET/Subcon split CASE expressions.
     # split_ms1_cond and split_ms2_cond each appear 4 TIMES in the query below
