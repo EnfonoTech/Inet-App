@@ -1112,11 +1112,8 @@ def get_legacy_invoice_import_status():
 # at all, so a second leg reads the dates the Master Tracker import left. That
 # leg shrinks to nothing on its own as new work flows through the invoice; it
 # needs no migration and no backfill.
-LEGACY_INVOICE_DATE_SQL = (
-    "COALESCE(NULLIF(pd.ms{n}_invoice_month, '0000-00-00'),"
-    " NULLIF(pd.ms{n}_ibuy_inv_date, '0000-00-00'),"
-    " NULLIF(pd.ms{n}_applied_date, '0000-00-00'))"
-)
+# The imported rungs live in event_dates.legacy_customer_invoiced_date, so
+# there is one definition of "the imported invoice date" for every reader.
 
 def submitted_invoice_exists_sql(n, pd="pd", alias="sii_x"):
     """A submitted customer invoice already covers this milestone."""

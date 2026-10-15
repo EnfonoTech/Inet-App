@@ -393,8 +393,16 @@ def _payout_shown_sql(n):
 # in pic.py, and are imported rather than restated here — the payout and the
 # revenue it comes out of must agree about when a milestone was invoiced.
 from inet_app.api.pic import (  # noqa: E402
-    LEGACY_INVOICE_DATE_SQL as _LEGACY_INVOICE_DATE_SQL,
     submitted_invoice_exists_sql as _submitted_invoice_exists_sql,
+)
+# The imported rungs of the invoiced ladder, shared with the PIC pages rather
+# than restated here. This leg used to read a local copy that still put the
+# month BUCKET above the real IBUY invoice date, so the Command Dashboard's
+# subcontractor figures placed 3,666 of 4,137 legacy events on the 1st of
+# their month while the PIC pages placed the same events on the day they were
+# actually billed. Monthly totals agreed; any day-level range did not.
+from inet_app.api.event_dates import (  # noqa: E402
+    legacy_customer_invoiced_date as _legacy_invoiced_date,
 )
 
 
@@ -472,7 +480,7 @@ def subcon_payout_events_sql():
         """)
         legs.append(f"""
         SELECT pd.name AS po_dispatch, sm.name AS subcontract, 'MS{n}' AS milestone,
-               {_LEGACY_INVOICE_DATE_SQL.format(n=n)} AS event_date,
+               {_legacy_invoiced_date(n)} AS event_date,
                {_ms_amount_sql(n)} AS revenue,
                {_payout_shown_sql(n)} AS payout,
                {_inet_amount_sql(n)} AS inet_margin

@@ -50,6 +50,28 @@ def _nz(col):
     return f"NULLIF({col}, '0000-00-00')"
 
 
+def legacy_customer_invoiced_date(n, pd="pd"):
+    """The imported rungs of the invoiced ladder, without the Sales Invoice.
+
+    For a caller that has ALREADY established no submitted invoice covers the
+    milestone — the legacy leg of an event query, where the WHERE clause says
+    so — and would otherwise pay for a correlated subquery that can only ever
+    return NULL.
+
+    Same rungs, same order, as ``customer_invoiced_date`` below, which is the
+    point: one definition of "the imported invoice date" so the Command
+    Dashboard's subcontractor figures and the PIC pages cannot disagree about
+    which day a legacy milestone was billed on.
+    """
+    _ms(n)
+    return f"COALESCE({', '.join(_legacy_invoiced_rungs(n, pd))})"
+
+
+def _legacy_invoiced_rungs(n, pd):
+    """The imported date columns, most trustworthy first. One list, two users."""
+    return [_nz(f"{pd}.ms{n}_ibuy_inv_date"), _nz(f"{pd}.ms{n}_invoice_month")]
+
+
 def customer_invoiced_date(n, pd="pd"):
     """When this milestone was invoiced to the customer.
 
@@ -75,8 +97,7 @@ def customer_invoiced_date(n, pd="pd"):
         f" (SELECT MIN(si_d.posting_date) FROM `tabSales Invoice Item` sii_d"
         f"    JOIN `tabSales Invoice` si_d ON si_d.name = sii_d.parent AND si_d.docstatus = 1"
         f"   WHERE sii_d.poid = {pd}.name AND IFNULL(sii_d.milestone, '') = 'MS{n}'),"
-        f" {_nz(f'{pd}.ms{n}_ibuy_inv_date')},"
-        f" {_nz(f'{pd}.ms{n}_invoice_month')})"
+        + ", ".join(_legacy_invoiced_rungs(n, pd)) + ")"
     )
 
 
