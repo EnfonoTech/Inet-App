@@ -39,6 +39,7 @@ def after_migrate():
     _ensure_certificate_expiry_notifications()
     _ensure_hr_workspace_shortcut()
     _backfill_certificate_validity_months()
+    _allow_purchase_invoice_rename()
     # Last: report any column that exists here but that the app does not ship,
     # which is how three "Unknown column" outages on other sites started.
     # Reports only — it must never fail a migrate.
@@ -1596,3 +1597,43 @@ def _ensure_certificate_tracker_designations():
     frappe.db.commit()
 
 
+def _allow_purchase_invoice_rename():
+    """Let a Purchase Invoice be renamed from the Desk form.
+
+    ERPNext ships allow_rename = 0, so an invoice can only be renamed from
+    code with force=True. That is fine until a bill has to be unwound and
+    re-raised - correcting a rate on five already-submitted Imdad invoices
+    did exactly that - and the replacements come back at the end of the
+    series with new numbers while the ledger, the supplier and the file
+    cabinet all still say the old one.
+
+    A Property Setter rather than a doctype edit, because Purchase Invoice
+    belongs to ERPNext: an edit there is overwritten by the next app update,
+    and a Property Setter survives it.
+
+    Renaming carries the ledger with it - Frappe rewrites link and dynamic
+    link fields, and GL Entry's voucher_no is one. Verified on the production
+    copy across five invoices and 137 GL entries, with none left behind.
+    """
+    existing = frappe.db.get_value(
+        "Property Setter",
+        {"doc_type": "Purchase Invoice", "property": "allow_rename",
+         "doctype_or_field": "DocType"},
+        ["name", "value"], as_dict=True)
+    if existing:
+        if str(existing.value) != "1":
+            frappe.db.set_value("Property Setter", existing.name, "value", "1")
+            frappe.clear_cache(doctype="Purchase Invoice")
+        return
+    try:
+        frappe.get_doc({
+            "doctype": "Property Setter",
+            "doctype_or_field": "DocType",
+            "doc_type": "Purchase Invoice",
+            "property": "allow_rename",
+            "property_type": "Check",
+            "value": "1",
+        }).insert(ignore_permissions=True)
+        frappe.clear_cache(doctype="Purchase Invoice")
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "allow_rename on Purchase Invoice failed")

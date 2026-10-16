@@ -731,3 +731,172 @@ def _redo_one(po_name, pct, dry_run):
     log.append("re-billed as %s, submitted, grand %.2f"
                % (pi.name, flt(pi.grand_total)))
     return {"state": "ok", "log": log}
+
+
+# ── Putting the invoice numbers back ────────────────────────────────────
+#
+# redo_imdad_bills_at_85 deleted each bill and raised a replacement, so the
+# five came back with new numbers at the end of the series - PI-00089..93 in
+# place of PI-00011..15 - and their attachments went with the originals.
+# Both are recoverable: Frappe keeps the full JSON of every deleted document
+# in `Deleted Document`, including the File rows.
+#
+# The mapping is derived from that JSON rather than hard-coded, so this reads
+# whatever actually happened on the site it runs on.
+IMDAD_PI_PREFIX = "PI-"
+
+
+def restore_imdad_invoice_names(dry_run=1, old_names=None):
+    """Rename the replacement bills back, reset the counter, re-attach the PDFs."""
+    dry_run = int(dry_run)
+    olds = list(old_names or ("PI-00011", "PI-00012", "PI-00013",
+                              "PI-00014", "PI-00015"))
+
+    pairs, problems = _invoice_rename_pairs(olds)
+    for line in problems:
+        print("  %s" % line)
+    for pair in pairs:
+        print("  %-10s <- %-10s  (PO %s, grand %.2f)"
+              % (pair["old"], pair["new"], pair["po"], flt(pair["grand"])))
+        if dry_run:
+            continue
+        frappe.rename_doc("Purchase Invoice", pair["new"], pair["old"],
+                          force=True, merge=False, show_alert=False)
+        frappe.db.commit()
+
+    _reset_naming_counter(dry_run, pairs)
+    _restore_deleted_attachments(olds, dry_run)
+
+    if dry_run:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
+def _invoice_rename_pairs(olds):
+    """[{old, new, po, grand}] derived from the Deleted Document JSON."""
+    pairs, problems = [], []
+    for old in olds:
+        if frappe.db.exists("Purchase Invoice", old):
+            problems.append("%s already exists - leaving it alone" % old)
+            continue
+        row = frappe.db.sql(
+            """SELECT data FROM `tabDeleted Document`
+                WHERE deleted_doctype = 'Purchase Invoice' AND deleted_name = %s
+                ORDER BY creation DESC LIMIT 1""", (old,))
+        if not row:
+            problems.append("%s: no Deleted Document record, cannot tell which "
+                            "bill replaced it" % old)
+            continue
+        data = json.loads(row[0][0])
+        orders = {(i.get("purchase_order") or "")
+                  for i in (data.get("items") or []) if i.get("purchase_order")}
+        if len(orders) != 1:
+            problems.append("%s: covered %d purchase orders, too ambiguous to "
+                            "match automatically" % (old, len(orders)))
+            continue
+        po_name = orders.pop()
+        live = frappe.db.sql(
+            """SELECT DISTINCT pi.name, pi.grand_total
+                 FROM `tabPurchase Invoice` pi
+                 JOIN `tabPurchase Invoice Item` pii ON pii.parent = pi.name
+                WHERE pii.purchase_order = %s AND pi.docstatus < 2""",
+            (po_name,), as_dict=True)
+        if len(live) != 1:
+            problems.append("%s: %s now carries %d live bills - rename by hand"
+                            % (old, po_name, len(live)))
+            continue
+        pairs.append({"old": old, "new": live[0].name, "po": po_name,
+                      "grand": live[0].grand_total})
+    return pairs, problems
+
+
+def _reset_naming_counter(dry_run, pairs=None):
+    """Point the series back at the highest number actually in use.
+
+    Renaming frees the numbers the replacements had taken, and a counter left
+    past them would skip that whole block for good.
+    """
+    rules = frappe.get_all(
+        "Document Naming Rule",
+        filters={"document_type": "Purchase Invoice", "prefix": IMDAD_PI_PREFIX},
+        fields=["name", "counter", "prefix_digits"])
+    if not rules:
+        print("  no Document Naming Rule with prefix %s - counter untouched"
+              % IMDAD_PI_PREFIX)
+        return
+    rule = rules[0]
+    # On a preview the renames have not happened yet, so the numbers the
+    # replacements still hold must be discounted or the counter looks correct
+    # when it is about to be wrong.
+    pending = {p["new"] for p in (pairs or [])} if dry_run else set()
+    highest = 0
+    for row in frappe.db.sql(
+            """SELECT name FROM `tabPurchase Invoice` WHERE name LIKE %s""",
+            (IMDAD_PI_PREFIX + "%",)):
+        if row[0] in pending:
+            continue
+        tail = row[0][len(IMDAD_PI_PREFIX):]
+        if tail.isdigit():
+            highest = max(highest, int(tail))
+    if int(rule.counter or 0) == highest:
+        print("  naming counter already %d" % highest)
+        return
+    print("  naming counter %s -> %d (next bill becomes %s%0*d)"
+          % (rule.counter, highest, IMDAD_PI_PREFIX,
+             int(rule.prefix_digits or 5), highest + 1))
+    if not dry_run:
+        frappe.db.set_value("Document Naming Rule", rule.name, "counter", highest)
+        frappe.db.commit()
+
+
+def _restore_deleted_attachments(olds, dry_run):
+    """Re-create the File rows deleted with the original bills.
+
+    Only when the PDF is still on disk. Frappe removes the stored file when
+    the last File row referencing it goes, so the row is recoverable from
+    Deleted Document but the bytes may not be - and a File row pointing at
+    nothing is worse than an honest "re-upload this".
+    """
+    import os
+
+    wanted = set(olds)
+    site = frappe.get_site_path()
+    found = missing = already = 0
+    for row in frappe.db.sql(
+            """SELECT deleted_name, data FROM `tabDeleted Document`
+                WHERE deleted_doctype = 'File' ORDER BY creation DESC LIMIT 200""",
+            as_dict=True):
+        data = json.loads(row["data"])
+        if data.get("attached_to_doctype") != "Purchase Invoice":
+            continue
+        target = data.get("attached_to_name")
+        if target not in wanted:
+            continue
+        url = data.get("file_url") or ""
+        rel = url.lstrip("/")
+        path = (os.path.join(site, rel) if url.startswith("/private/")
+                else os.path.join(site, "public", rel))
+        if frappe.db.exists("File", {"attached_to_doctype": "Purchase Invoice",
+                                     "attached_to_name": target,
+                                     "file_name": data.get("file_name")}):
+            already += 1
+            continue
+        if not os.path.exists(path):
+            missing += 1
+            print("  %-10s NEEDS RE-UPLOAD: %s" % (target, data.get("file_name")))
+            print("             looked for: %s" % path)
+            continue
+        found += 1
+        print("  %-10s re-attaching %s" % (target, data.get("file_name")))
+        if not dry_run:
+            doc = frappe.new_doc("File")
+            for field in ("file_name", "file_url", "is_private", "content_hash",
+                          "file_size", "folder"):
+                if data.get(field) is not None:
+                    doc.set(field, data.get(field))
+            doc.attached_to_doctype = "Purchase Invoice"
+            doc.attached_to_name = target
+            doc.flags.ignore_duplicate_entry_error = True
+            doc.insert(ignore_permissions=True)
+            frappe.db.commit()
+    print("  attachments: %d re-attached, %d already present, %d need re-upload"
+          % (found, already, missing))
