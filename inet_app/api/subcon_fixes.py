@@ -495,3 +495,117 @@ def _move_line_to_master(pd_name, target):
         cleared["sub_po_date_ms%d" % n] = None
         cleared["sub_paid_date_ms%d" % n] = None
     frappe.db.set_value("PO Dispatch", pd_name, cleared, update_modified=True)
+
+
+# ── Read-only: where does this site actually stand ──────────────────────
+def report_subcon_fix_readiness():
+    """Print everything the three corrections above depend on. Writes nothing.
+
+    Exists because the production copy drifts from production: the five Imdad
+    bills were DRAFTS on the copy and had been SUBMITTED on production by the
+    time the fix ran, which is a different problem with a different answer.
+    Run this first and read the real position rather than assuming the copy's.
+    """
+    def rows(sql, params=()):
+        return frappe.db.sql(sql, params, as_dict=True)
+
+    print("=" * 72)
+    print("1. IMDAD ORDERS - the five raised at 80%")
+    print("=" * 72)
+    for po_name in IMDAD_ORDERS:
+        po = frappe.db.get_value(
+            "Purchase Order", po_name,
+            ["name", "docstatus", "status", "transaction_date", "total", "supplier"],
+            as_dict=True)
+        if not po:
+            print("  %-10s ABSENT" % po_name)
+            continue
+        pct = frappe.db.sql(
+            """SELECT ROUND(AVG(payout_pct), 1) FROM `tabPurchase Order Item`
+                WHERE parent = %s""", (po_name,))
+        print("  %-10s docstatus=%s  %-22s  %s  total %10.2f  payout_pct %s"
+              % (po.name, po.docstatus, po.status, po.transaction_date,
+                 flt(po.total), (pct[0][0] if pct else "?")))
+        for pi in rows(
+            """SELECT pi.name, pi.docstatus, pi.status, pi.posting_date,
+                      pi.total, pi.grand_total, pi.outstanding_amount
+                 FROM `tabPurchase Invoice` pi
+                WHERE pi.name IN (SELECT DISTINCT pii.parent
+                                    FROM `tabPurchase Invoice Item` pii
+                                   WHERE pii.purchase_order = %s)""", (po_name,)):
+            print("             bill %-10s docstatus=%s  %-12s  %s  total %10.2f  "
+                  "grand %10.2f  outstanding %10.2f"
+                  % (pi.name, pi.docstatus, pi.status, pi.posting_date,
+                     flt(pi.total), flt(pi.grand_total), flt(pi.outstanding_amount)))
+            for pe in rows(
+                """SELECT pe.name, pe.docstatus, pe.posting_date, per.allocated_amount
+                     FROM `tabPayment Entry Reference` per
+                     JOIN `tabPayment Entry` pe ON pe.name = per.parent
+                    WHERE per.reference_doctype = 'Purchase Invoice'
+                      AND per.reference_name = %s""", (pi.name,)):
+                print("                  PAID %-12s docstatus=%s  %s  %10.2f"
+                      % (pe.name, pe.docstatus, pe.posting_date,
+                         flt(pe.allocated_amount)))
+        for st in rows(
+            """SELECT pd.sub_po_status_ms1 AS status, COUNT(*) AS legs
+                 FROM `tabPurchase Order Item` poi
+                 JOIN `tabPO Dispatch` pd ON pd.name = poi.poid
+                WHERE poi.parent = %s GROUP BY pd.sub_po_status_ms1""", (po_name,)):
+            print("             milestones: %-28s %d" % (st.status or "(blank)", st.legs))
+
+    print()
+    print("=" * 72)
+    print("2. MABRAN SPLIT - %s" % MABRAN_POID)
+    print("=" * 72)
+    name = frappe.db.get_value("PO Dispatch", {"poid": MABRAN_POID}, "name")
+    if not name:
+        print("  not on this site")
+    else:
+        pd = frappe.db.get_value(
+            "PO Dispatch", name,
+            ["qty", "rate", "ms1_amount", "sub_po_amount_ms1", "sub_po_status_ms1",
+             "contract"], as_dict=True)
+        print("  line qty %g  rate %g  ms1 %.2f  stamped %.2f  status %s"
+              % (flt(pd.qty), flt(pd.rate), flt(pd.ms1_amount),
+                 flt(pd.sub_po_amount_ms1), pd.sub_po_status_ms1))
+        for a in rows(
+            """SELECT subcontractor, qty, source FROM `tabPO Subcontract Allocation`
+                WHERE parent = %s ORDER BY idx""", (name,)):
+            print("    allocation  %-45s %g  (%s)"
+                  % (a.subcontractor, flt(a.qty), a.source))
+        for r in rows(
+            """SELECT po.name, po.docstatus, poi.qty, poi.rate, poi.amount
+                 FROM `tabPurchase Order Item` poi
+                 JOIN `tabPurchase Order` po ON po.name = poi.parent
+                WHERE poi.poid = %s""", (name,)):
+            print("    order       %-12s docstatus=%s  qty %g  rate %g  amount %.2f"
+                  % (r.name, r.docstatus, flt(r.qty), flt(r.rate), flt(r.amount)))
+        for r in rows(
+            """SELECT pi.name, pi.docstatus FROM `tabPurchase Invoice Item` pii
+                 JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
+                WHERE pii.poid = %s""", (name,)):
+            print("    bill        %-12s docstatus=%s" % (r.name, r.docstatus))
+
+    print()
+    print("=" * 72)
+    print("3. THE TWELVE LINES TO REVERT TO iNET")
+    print("=" * 72)
+    for poid in IMDAD_TO_INET_POIDS:
+        pd_name = frappe.db.get_value("PO Dispatch", {"poid": poid}, "name")
+        if not pd_name:
+            print("  %-26s ABSENT" % poid)
+            continue
+        pd = frappe.db.get_value(
+            "PO Dispatch", pd_name,
+            ["contract", "ms1_amount", "sub_po_amount_ms1", "sub_po_status_ms1",
+             "sub_paid_date_ms1"], as_dict=True)
+        live_po = frappe.db.sql(
+            """SELECT po.name FROM `tabPurchase Order Item` poi
+                 JOIN `tabPurchase Order` po ON po.name = poi.parent AND po.docstatus < 2
+                WHERE poi.poid = %s LIMIT 1""", (pd_name,))
+        print("  %-26s %-34s ms1 %8.2f  stamped %8.2f  %-10s paid %s  PO %s"
+              % (poid, pd.contract, flt(pd.ms1_amount), flt(pd.sub_po_amount_ms1),
+                 pd.sub_po_status_ms1 or "(blank)", pd.sub_paid_date_ms1 or "-",
+                 live_po[0][0] if live_po else "none"))
+    print()
+    print("Read-only. Nothing was written.")
