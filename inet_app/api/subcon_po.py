@@ -2281,6 +2281,116 @@ def on_purchase_order_submit(doc, method=None):
     )
 
 
+def on_purchase_order_update_after_submit(doc, method=None):
+    """"Update Items" changed a submitted PO → re-stamp what PIC reads.
+
+    ERPNext lets a submitted Purchase Order have its quantities and rates
+    edited in place, without cancelling it, and nothing else here sees that:
+    ``before_submit`` and ``on_submit`` have already run, so
+    ``sub_po_amount_ms{n}`` keeps the figure from the ORIGINAL order while the
+    document the supplier holds says something else. The tracker then reports
+    a number no document supports.
+
+    Found correcting five Imdad orders from 80% to 85%: the orders changed,
+    every milestone kept its 80% stamp, and the only thing that noticed was a
+    manual re-stamp afterwards. Correcting a quantity — ordering 5 of 6 after
+    the fact — has the same hole.
+
+    The quantity side needs no help beyond this: the To Order tab reads live
+    Purchase Order Item quantities through the oq1/oq2 joins, so reducing an
+    order from 6 to 5 puts the remaining 1 back on that tab by itself.
+
+    A row REMOVED from the order is the one case that needs more than a
+    re-stamp — the milestone has no order behind it any more, so it goes back
+    to Ready to Order exactly as a cancel would leave it.
+    """
+    before = doc.get_doc_before_save()
+
+    by_ms = {}
+    for item in (doc.get("items") or []):
+        pd_name = cstr(item.get("poid") or "").strip()
+        ms = cstr(item.get("milestone") or "").strip().upper()
+        if not pd_name or ms not in ("MS1", "MS2"):
+            continue
+        key = (pd_name, ms)
+        # Summed, not overwritten: one order may carry two rows for the same
+        # milestone, and the stamp is what the order says in total.
+        entry = by_ms.setdefault(key, {"amount": 0.0, "pct": 0.0})
+        entry["amount"] += flt(item.get("amount") or 0)
+        entry["pct"] = flt(item.get("payout_pct") or 0) or entry["pct"]
+
+    for key in by_ms:
+        pd_name = key[0]
+        n = _ms_num(key[1])
+        if not frappe.db.exists("PO Dispatch", pd_name):
+            continue
+        new_pct = flt(by_ms[key]["pct"])
+        new_amount = round(flt(by_ms[key]["amount"]), 2)
+        now = frappe.db.get_value(
+            "PO Dispatch", pd_name,
+            [f"sub_po_pct_ms{n}", f"sub_po_amount_ms{n}"], as_dict=True) or {}
+        if (flt(now.get(f"sub_po_pct_ms{n}")) == new_pct
+                and flt(now.get(f"sub_po_amount_ms{n}")) == new_amount):
+            continue  # nothing moved on this milestone
+        payload = {f"sub_po_pct_ms{n}": new_pct,
+                   f"sub_po_amount_ms{n}": new_amount}
+        frappe.db.set_value("PO Dispatch", pd_name,
+                            dict(payload, sub_po_supplier=doc.get("supplier")),
+                            update_modified=True)
+        _mirror_amount_to_allocation(pd_name, n, payload)
+        _sync_overall_status(pd_name)
+
+    if not before:
+        return
+    gone = set()
+    for item in (before.get("items") or []):
+        pd_name = cstr(item.get("poid") or "").strip()
+        ms = cstr(item.get("milestone") or "").strip().upper()
+        if pd_name and ms in ("MS1", "MS2") and (pd_name, ms) not in by_ms:
+            gone.add((pd_name, ms))
+    for key in gone:
+        # Another live order may still cover it — only the last one leaving
+        # means the milestone is unordered.
+        still = frappe.db.sql(
+            """SELECT 1 FROM `tabPurchase Order Item` poi
+                JOIN `tabPurchase Order` po ON po.name = poi.parent AND po.docstatus < 2
+               WHERE poi.poid = %s AND UPPER(IFNULL(poi.milestone,'')) = %s LIMIT 1""",
+            (key[0], key[1]))
+        if still:
+            continue
+        n = _ms_num(key[1])
+        _set_status(key[0], key[1], SUB_PO_READY,
+                    only_when=(SUB_PO_CREATED, SUB_PO_SUBMITTED,
+                               SUB_PO_BILL_RECEIVED, SUB_PO_PI_SUBMITTED),
+                    extra={f"sub_po_pct_ms{n}": 0,
+                           f"sub_po_amount_ms{n}": 0,
+                           f"sub_po_date_ms{n}": None,
+                           f"sub_paid_date_ms{n}": None})
+
+
+def _mirror_amount_to_allocation(pd_name, n, payload):
+    """Keep the allocation row's copy of the stamped figures in step.
+
+    _set_status does this through _mirror_status_to_allocation; this path
+    writes the fields directly, so the mirror is made here or the reconcile
+    screen shows an allocation still carrying the old order.
+    """
+    if not frappe.db.exists("DocType", "PO Subcontract Allocation"):
+        return
+    rows = frappe.get_all(
+        "PO Subcontract Allocation",
+        filters={"parent": pd_name, "parenttype": "PO Dispatch",
+                 "parentfield": "subcontract_allocations"},
+        fields=["name"])
+    if len(rows) != 1:
+        return  # split line: which leg this order belongs to is not ours to guess
+    mirror = {k: v for k, v in payload.items()
+              if frappe.db.has_column("PO Subcontract Allocation", k)}
+    if mirror:
+        frappe.db.set_value("PO Subcontract Allocation", rows[0].name, mirror,
+                            update_modified=False)
+
+
 def _reset_milestone(doc, only_when):
     """Send a milestone back to "Ready to Order" and clear what the PO stamped.
 

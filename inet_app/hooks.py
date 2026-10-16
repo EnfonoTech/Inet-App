@@ -203,6 +203,10 @@ doc_events = {
 		# Without on_trash a deleted draft PO would leave its PIC line stuck
 		# at "PO Created" — never orderable again, never on the To Order tab.
 		"on_trash": "inet_app.api.subcon_po.on_purchase_order_trash",
+		# ERPNext's "Update Items" edits qty/rate on a SUBMITTED order without
+		# cancelling it, and fires neither before_submit nor on_submit — so
+		# without this the milestone keeps the stamp from the original order.
+		"on_update_after_submit": "inet_app.api.subcon_po.on_purchase_order_update_after_submit",
 	},
 	"Purchase Invoice": {
 		"on_submit": "inet_app.api.subcon_po.on_purchase_invoice_submit",
