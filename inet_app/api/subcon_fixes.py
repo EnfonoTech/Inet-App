@@ -895,6 +895,13 @@ def _restore_deleted_attachments(olds, dry_run):
                     doc.set(field, data.get(field))
             doc.attached_to_doctype = "Purchase Invoice"
             doc.attached_to_name = target
+            # The blob is already on disk at this exact file_url - restored
+            # from the pre-deletion backup - so the row is what is missing,
+            # not the bytes. Without this flag File.before_insert treats it
+            # as a fresh upload: it re-reads the content, re-runs the PDF
+            # scanner over it and writes it out again under a sanitised name,
+            # which would move the file out from under its own URL.
+            doc.flags.copy_from_existing_file = True
             doc.flags.ignore_duplicate_entry_error = True
             doc.insert(ignore_permissions=True)
             frappe.db.commit()
