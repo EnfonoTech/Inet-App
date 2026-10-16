@@ -19005,6 +19005,25 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                 INNER JOIN `tabPO Dispatch` pd2 ON pd2.name = rp2.po_dispatch
                 WHERE pd2.site_code = pd.site_code AND DATE(etl.start_time) = CURDATE()
                ) AS timer_start,
+               -- The TL's own status, for accessTimeBadge. Without it this
+               -- page and Rollout Work Done showed DIFFERENT access badges
+               -- for the same job: the badge reads
+               --   tlStarted = timer_start_ms != null || tl_status in (...)
+               -- and `timer_start` above only finds a log started TODAY at
+               -- this site. A night shift that ran past midnight, or a TL who
+               -- set the status without the timer, leaves it NULL - so Work
+               -- Done (which selects de.tl_status) said "On Site" while this
+               -- page said "Not on site". 2,422 plans on the production copy
+               -- are in that state. Reported by the client as access time
+               -- "showing differently", and intermittent because the badge
+               -- only goes live on the plan's own date.
+               -- A plan can carry more than one Daily Execution (108 do), so
+               -- a started one wins, then the most recently touched.
+               (SELECT de_t.tl_status FROM `tabDaily Execution` de_t
+                 WHERE de_t.rollout_plan = rp.name
+                 ORDER BY (IFNULL(de_t.tl_status,'') IN ('Completed','In Progress')) DESC,
+                          de_t.modified DESC
+                 LIMIT 1) AS tl_status,
                pd.qty AS qty,
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description, pd.is_dummy_po,
