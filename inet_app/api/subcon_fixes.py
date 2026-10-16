@@ -92,7 +92,7 @@ def _guard(label, dry_run, fn):
         return {"state": "FAILED", "why": "%s: %s" % (label, str(exc)[:160])}
 
 
-def _fix_order(po_name, pct, dry_run):
+def _fix_order(po_name, pct, dry_run, skip_posted_check=False):
     if not frappe.db.exists("Purchase Order", po_name):
         return {"state": "refuse", "why": "no such Purchase Order on this site"}
     doc = frappe.get_doc("Purchase Order", po_name)
@@ -119,7 +119,9 @@ def _fix_order(po_name, pct, dry_run):
     if not targets:
         return {"state": "skip", "why": "already at %g%%" % pct}
 
-    blocker = _posted_blocker(items)
+    # redo_imdad_bills_at_85 deletes the bill before calling this for real, so
+    # its PREVIEW must not report a blocker that will not exist by then.
+    blocker = None if skip_posted_check else _posted_blocker(items)
     if blocker:
         return {"state": "refuse", "why": blocker}
 
@@ -609,3 +611,123 @@ def report_subcon_fix_readiness():
                  live_po[0][0] if live_po else "none"))
     print()
     print("Read-only. Nothing was written.")
+
+
+def redo_imdad_bills_at_85(dry_run=1, orders=None, payout_pct=None):
+    """Cancel + delete each bill, re-rate its order to 85%, re-bill, submit.
+
+    The whole sequence for a site where Accounts has already SUBMITTED the
+    five purchase invoices at the old rate, which is where production was
+    found. A submitted bill is posted accounting, so fix_imdad_rates_in_place
+    refuses to touch the order underneath it - this does the unwinding first,
+    deliberately and in order.
+
+    Safe only because the bills are unpaid: every one is Overdue with its
+    full grand total outstanding and no Payment Entry against it, so
+    cancelling reverses the GL postings and settles nothing. The guard below
+    re-checks that on the live data rather than trusting it.
+
+    One order at a time, committed as it goes, so a failure leaves the
+    finished ones finished. Per order:
+
+        cancel the bill -> delete it -> re-rate the order -> re-bill -> submit
+
+    The replacement bill keeps the original's posting date, supplier bill
+    number and bill date, the same way the order keeps its name and date -
+    this is a correction, not new business. It is built through
+    receive_supplier_invoice, so the rates come from the corrected order
+    rather than being carried over from the document being replaced.
+
+    Milestone statuses are untouched throughout: they sit at "Closed", and
+    every hook in the chain refuses to drag a closed milestone backwards.
+    """
+    dry_run = int(dry_run)
+    pct = flt(payout_pct or IMDAD_PAYOUT_PCT)
+    names = list(orders or IMDAD_ORDERS)
+    ok = failed = 0
+
+    for po_name in names:
+        verdict = _guard(po_name, dry_run, lambda: _redo_one(po_name, pct, dry_run))
+        for line in verdict.get("log", [verdict.get("why", "")]):
+            print("  %-10s %s" % (po_name, line))
+        if verdict["state"] == "FAILED":
+            failed += 1
+            print("  %-10s STOPPING - fix this before continuing" % po_name)
+            break
+        if verdict["state"] == "ok":
+            ok += 1
+
+    print("redo_imdad_bills_at_85 (%s): %d order(s) done, %d failed"
+          % ("DRY RUN" if dry_run else "APPLIED", ok, failed))
+    if dry_run:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
+def _redo_one(po_name, pct, dry_run):
+    log = []
+    if not frappe.db.exists("Purchase Order", po_name):
+        return {"state": "refuse", "log": ["no such Purchase Order on this site"]}
+
+    bills = frappe.db.sql(
+        """SELECT DISTINCT pi.name, pi.docstatus, pi.posting_date, pi.bill_no,
+                  pi.bill_date, pi.outstanding_amount, pi.grand_total
+             FROM `tabPurchase Invoice` pi
+             JOIN `tabPurchase Invoice Item` pii ON pii.parent = pi.name
+            WHERE pii.purchase_order = %s AND pi.docstatus < 2""",
+        (po_name,), as_dict=True)
+
+    # Never unwind a bill that has been paid, even in part.
+    for bill in bills:
+        paid = frappe.db.sql(
+            """SELECT pe.name FROM `tabPayment Entry Reference` per
+                 JOIN `tabPayment Entry` pe ON pe.name = per.parent AND pe.docstatus = 1
+                WHERE per.reference_doctype = 'Purchase Invoice'
+                  AND per.reference_name = %s LIMIT 1""", (bill.name,))
+        if paid:
+            return {"state": "refuse",
+                    "log": ["%s has a payment (%s) - raise the difference as a "
+                            "supplementary bill instead" % (bill.name, paid[0][0])]}
+        if bill.docstatus == 1 and flt(bill.outstanding_amount) < flt(bill.grand_total):
+            return {"state": "refuse",
+                    "log": ["%s is part settled (%.2f of %.2f outstanding)"
+                            % (bill.name, flt(bill.outstanding_amount),
+                               flt(bill.grand_total))]}
+
+    carry = bills[0] if bills else None
+    if dry_run:
+        for bill in bills:
+            log.append("would cancel + delete %s (docstatus %s, %s, grand %.2f)"
+                       % (bill.name, bill.docstatus, bill.posting_date,
+                          flt(bill.grand_total)))
+        probe = _fix_order(po_name, pct, 1, skip_posted_check=True)
+        log.append(probe["why"])
+        log.append("would re-bill from the corrected order and submit"
+                   + (", keeping posting date %s" % carry.posting_date if carry else ""))
+        return {"state": "ok", "log": log}
+
+    for bill in bills:
+        if bill.docstatus == 1:
+            frappe.get_doc("Purchase Invoice", bill.name).cancel()
+        frappe.delete_doc("Purchase Invoice", bill.name, force=1,
+                          ignore_permissions=True)
+        log.append("cancelled + deleted %s" % bill.name)
+
+    verdict = _fix_order(po_name, pct, 0)
+    log.append(verdict["why"])
+    if verdict["state"] == "refuse":
+        return {"state": "refuse", "log": log}
+
+    from inet_app.api.subcon_po import receive_supplier_invoice
+    made = receive_supplier_invoice(
+        purchase_order=po_name,
+        bill_no=(carry.bill_no if carry else None),
+        bill_date=(carry.bill_date if carry else None))
+    pi = frappe.get_doc("Purchase Invoice", made["purchase_invoice"])
+    if carry and carry.posting_date:
+        pi.set_posting_time = 1
+        pi.posting_date = carry.posting_date
+        pi.save(ignore_permissions=True)
+    pi.submit()
+    log.append("re-billed as %s, submitted, grand %.2f"
+               % (pi.name, flt(pi.grand_total)))
+    return {"state": "ok", "log": log}
