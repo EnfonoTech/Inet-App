@@ -8400,6 +8400,31 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
     if qc_required and not plan_has_pass:
         frappe.throw("QC must be Pass before creating Work Done.")
 
+    # CIAG, gated the same way the CLOSED definition reads it.
+    #
+    # _visit_closed_exists_sql() requires the Daily Execution that carries
+    # the Work Done to have ciag_status in (Approved, Not Applicable), honouring
+    # the plan's ciag_required flag. This gate did not exist, so a Work Done
+    # could be created with CIAG still Open - and the line then had a Work Done
+    # yet could never satisfy "closed", so it sat on the execution lists for
+    # good. ciag_required was already being read into rp_flags here and simply
+    # never used.
+    #
+    # Checked on THIS execution rather than OR'd across the plan as QC is: the
+    # Work Done is built from this execution, and it is this execution's
+    # ciag_status that the closed rule will look at afterwards. Gating on a
+    # sibling's approval would recreate the same mismatch in a new place.
+    ciag_required = rp_flags.get("ciag_required", 1) != 0
+    if ciag_required and frappe.db.has_column("Daily Execution", "ciag_status"):
+        ciag_now = cstr(exec_doc.get("ciag_status") or "")
+        if ciag_now not in ("Approved", "Not Applicable"):
+            frappe.throw(
+                "CIAG must be Approved or Not Applicable before creating Work "
+                f"Done — {execution_name} is currently "
+                f"{ciag_now or 'not set'}. Settle CIAG on the execution first, "
+                "or clear 'CIAG required' on the plan if it does not apply."
+            )
+
     # Idempotent: when WD already exists for any DE of this plan, return
     # the existing record. With multi-team plans we have multiple DEs but
     # only one Work Done — so accidentally clicking on the second team's
@@ -8489,6 +8514,39 @@ def generate_work_done(execution_name, issue_flag=None, adopt_existing=0):
             f"Visit {visit_no} of this line also covers "
             f"{len(unfinished)} plan{'s' if len(unfinished) != 1 else ''} not finished yet: "
             f"{names}{more}. Work Done can be recorded once the whole visit is done."
+        )
+
+    # ...and the same rule for two teams on ONE plan. The check above reads
+    # `rp2.name <> rp_name`, so it only ever saw companion PLANS — two teams
+    # on a single plan are two Daily Executions, and nothing asked about the
+    # other one. Only the clicked execution was required to be Completed, so
+    # the lead team finishing was enough to record the whole line while the
+    # second team was still in the field.
+    #
+    # The two ways of planning two teams now behave identically. Cancelled
+    # siblings are ignored, exactly as cancelled companion plans are: they
+    # were pulled out of the visit.
+    sibling_open = frappe.db.sql(
+        """
+        SELECT de2.name, de2.team, IFNULL(de2.execution_status, '') AS execution_status
+        FROM `tabDaily Execution` de2
+        WHERE de2.rollout_plan = %s
+          AND de2.name <> %s
+          AND IFNULL(de2.execution_status, '') NOT IN ('Completed', 'Cancelled')
+        ORDER BY de2.team
+        """,
+        (rp_name, execution_name), as_dict=True,
+    )
+    if sibling_open:
+        who = ", ".join(
+            f"{r['team'] or 'no team'} ({r['execution_status'] or 'not started'})"
+            for r in sibling_open[:3])
+        more = f" and {len(sibling_open) - 3} more" if len(sibling_open) > 3 else ""
+        frappe.throw(
+            f"This plan is shared with {len(sibling_open)} other team"
+            f"{'s' if len(sibling_open) != 1 else ''} who have not finished: "
+            f"{who}{more}. One plan yields one Work Done covering the whole "
+            "line, so it can only be recorded once every team on it is done."
         )
 
     # Hard guarantee: at most ONE Work Done can ever exist per PO Dispatch
@@ -9017,30 +9075,135 @@ def _execution_monitor_scope():
     return "1=0", []
 
 
-def _execution_closed_exists_sql(alias="rp"):
-    """EXISTS(...) that is true when a line is fully closed.
+def _settled_guard_sql(alias="rp", pd_alias="pd"):
+    """The line has nothing left to do, so a finished execution is finished.
 
-    Closed means: an execution marked Completed, a Work Done record built from
-    that execution, and QC/CIAG satisfied. The OR short-circuit on each gate
-    honours the per-plan _required flags — when qc_required = 0 for that plan
-    we do not require a Pass.
+    A visit can gain a FURTHER plan after its first confirmation — the
+    "All POIDs (re-plan)" flow and the remainder close both add a companion
+    rather than a new visit. Without this, the Work Done built from the
+    earlier companion hid the new executions outright and the outstanding
+    quantity could never be recorded: plan made, work done, line vanished.
 
-    Shared by the monitor (which hides these) and Execution Analytics (which
-    counts them), so "closed" means one thing in both places.
+    Two ways a completed execution is genuinely done with:
+      * the line has nothing outstanding, or
+      * this plan predates the last closure, so the ledger already counted it.
     """
-    ciag_col = "de_wd.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
-    qc_req = f"{alias}.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
-    ciag_req = f"{alias}.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
+    tests = []
+    if frappe.db.has_column("PO Dispatch", "remaining_qty"):
+        tests.append(f"IFNULL({pd_alias}.remaining_qty, 0) <= 0")
+    if frappe.db.exists("DocType", "Work Done Closure"):
+        tests.append(
+            f"{alias}.creation <= (SELECT MAX(c0.closed_on)"
+            " FROM `tabWork Done Closure` c0"
+            " JOIN `tabWork Done` wd_c0 ON wd_c0.name = c0.parent"
+            f" WHERE wd_c0.system_id = {alias}.po_dispatch)"
+        )
+    return "(" + " OR ".join(tests) + ")" if tests else ""
+
+
+def _issue_blocked_sql(alias="rp"):
+    """This plan is parked on an issue and belongs on Issues & Risks, not here.
+
+    A reported issue means the line needs the issue resolved, not more
+    execution work. The IM's Rollout Work Done has excluded these from the
+    start; the PM monitor did not, so every issue plan appeared BOTH there and
+    on the PM's own Issues & Risks page — 22 of IM-AJMAL's 106 monitor rows,
+    all 22 of them already on Issues & Risks. Same duplication the client
+    reported between the execution and work-done pages, one pair over.
+
+    The blank-status arm matters: a plan can carry `Planning with Issue`
+    before anyone sets issue_status, and it is just as blocked.
+    """
     return (
-        "EXISTS ("
-        " SELECT 1 FROM `tabDaily Execution` de_wd"
-        " INNER JOIN `tabWork Done` wd0 ON wd0.execution = de_wd.name"
-        f" WHERE de_wd.rollout_plan = {alias}.name"
-        " AND de_wd.execution_status = 'Completed'"
-        f" AND ({qc_req} = 0 OR IFNULL(de_wd.qc_status, '') IN ('Pass', 'Not Applicable'))"
-        f" AND ({ciag_req} = 0 OR IFNULL({ciag_col}, '') IN ('Approved', 'Not Applicable'))"
-        ")"
+        "NOT ("
+        f" IFNULL({alias}.issue_status,'') = 'Reported'"
+        f" OR (IFNULL({alias}.issue_status,'') = '' AND {alias}.plan_status = 'Planning with Issue'))"
     )
+
+
+def _visit_closed_exists_sql(alias="rp", de_alias=None, pd_alias="pd"):
+    """The one definition of "this work is finished". Nothing else may define it.
+
+    Scoped to the VISIT, not the plan, because one visit yields exactly one
+    Work Done however many companion plans it took (see
+    _next_visit_number_for_dispatch). A plan-scoped test left the companion
+    that did not happen to own the Work Done stuck open forever — it can never
+    acquire one — which is how POIDs sat on the Execution Monitor
+    indefinitely.
+
+    Three things this requires that a bare "has a Work Done" test does not:
+      * the Work Done must sit on a non-cancelled plan of the same visit;
+      * QC and CIAG must be settled, honouring the per-plan _required flags;
+      * the line must have nothing outstanding (see _settled_guard_sql) — a
+        partial delivery still has work to do, whatever has been written.
+
+    ``de_alias`` picks the grain. Given one, the caller is at Daily Execution
+    grain and THAT execution must be the finished one, or a sibling execution
+    of the same plan must carry the visit's Work Done. Omitted, the caller is
+    at Rollout Plan grain and any execution of the plan can satisfy it.
+
+    Replaced _execution_closed_exists_sql, which was plan-scoped, ignored
+    outstanding quantity and counted a Work Done on a cancelled plan. Two
+    definitions of "done" coexisted in this file — the IM list hid rows with
+    this rule inline while every other caller used the weaker one, so the PM
+    monitor and the IM pages could not agree about the same line.
+    """
+    qc_req = f"{alias}.qc_required" if frappe.db.has_column(
+        "Rollout Plan", "qc_required") else "1"
+    ciag_req = f"{alias}.ciag_required" if frappe.db.has_column(
+        "Rollout Plan", "ciag_required") else "1"
+    has_ciag = frappe.db.has_column("Daily Execution", "ciag_status")
+
+    wd_for_visit = (
+        "EXISTS (SELECT 1 FROM `tabWork Done` wd_v"
+        " INNER JOIN `tabDaily Execution` de_v ON de_v.name = wd_v.execution"
+        " INNER JOIN `tabRollout Plan` rp_v ON rp_v.name = de_v.rollout_plan"
+        f" WHERE rp_v.po_dispatch = {alias}.po_dispatch"
+        f" AND IFNULL(rp_v.visit_number, 0) = IFNULL({alias}.visit_number, 0)"
+        " AND IFNULL(rp_v.plan_status, '') <> 'Cancelled')"
+    )
+
+    if de_alias:
+        ciag_col = f"{de_alias}.ciag_status" if has_ciag else "''"
+        # Rule 1 is about THIS execution finishing, so it requires this
+        # execution to be Completed. Rule 2 is about SOMEONE ELSE having
+        # finished the visit, and must not — a two-team plan whose first team
+        # produced the Work Done leaves the second team's row open forever
+        # otherwise, and there is nothing left for it to do: one visit yields
+        # one Work Done. 1011HG3692386-2838-1-1 was the worked example, with
+        # EXE-...117320 Completed and carrying the WD while EXE-...117206 sat
+        # In Progress with nothing to produce.
+        #
+        # The outstanding guard still wraps both (see _settled_guard_sql), so
+        # a line with remaining quantity — the re-plan case — stays visible
+        # whatever has already been written for the visit.
+        core = (
+            f"({de_alias}.execution_status = 'Completed' AND"
+            f" (({qc_req} = 0 OR IFNULL({de_alias}.qc_status,'') IN ('Pass', 'Not Applicable'))"
+            f"  AND ({ciag_req} = 0 OR IFNULL({ciag_col},'') IN ('Approved', 'Not Applicable'))"
+            f"  AND {wd_for_visit}))"
+            " OR EXISTS ("
+            "   SELECT 1 FROM `tabWork Done` wd1"
+            "   INNER JOIN `tabDaily Execution` de_wd1 ON de_wd1.name = wd1.execution"
+            "   INNER JOIN `tabRollout Plan` rp_wd1 ON rp_wd1.name = de_wd1.rollout_plan"
+            f"  WHERE rp_wd1.po_dispatch = {alias}.po_dispatch"
+            f"  AND IFNULL(rp_wd1.visit_number, 0) = IFNULL({alias}.visit_number, 0)"
+            "   AND IFNULL(rp_wd1.plan_status, '') <> 'Cancelled'"
+            f"  AND de_wd1.name != {de_alias}.name)"
+        )
+    else:
+        ciag_col = "de_p.ciag_status" if has_ciag else "''"
+        core = (
+            "EXISTS (SELECT 1 FROM `tabDaily Execution` de_p"
+            f" WHERE de_p.rollout_plan = {alias}.name"
+            " AND de_p.execution_status = 'Completed'"
+            f" AND ({qc_req} = 0 OR IFNULL(de_p.qc_status,'') IN ('Pass', 'Not Applicable'))"
+            f" AND ({ciag_req} = 0 OR IFNULL({ciag_col},'') IN ('Approved', 'Not Applicable')))"
+            f" AND {wd_for_visit}"
+        )
+
+    guard = _settled_guard_sql(alias, pd_alias)
+    return "(" + (guard + " AND " if guard else "") + core + ")"
 
 
 def _execution_superseded_exists_sql(alias="rp"):
@@ -9212,7 +9375,19 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
         closure = "open"
     if closure != "all":
         negate = "NOT " if closure == "open" else ""
-        wheres.append(negate + _execution_closed_exists_sql())
+        wheres.append(negate + _visit_closed_exists_sql())
+
+    # Issue plans belong on Issues & Risks, where the PM already works them —
+    # not duplicated onto this list. Same rule the IM's Rollout Work Done has
+    # always applied; see _issue_blocked_sql.
+    #
+    # NOT on a bucket drill-through. The tile counted a population with its
+    # own predicate and this list must show exactly that population, or the
+    # number and the list it opens disagree — `issue_flagged` would open an
+    # empty table. Same reason `tab` is forced to "all" for a drill-in.
+    # Applied before the bucket is read, so it is gated on filters directly.
+    if not (str(filters.get("bucket") or "")).strip():
+        wheres.append(_issue_blocked_sql())
 
     visits = (str(filters.get("visits") or "current")).strip().lower()
     if visits != "all":
@@ -18322,7 +18497,7 @@ def _execution_analytics_where(pf, im):
     if closure not in ("open", "all", "closed"):
         closure = "all"
     if closure != "all":
-        wheres.append(("NOT " if closure == "open" else "") + _execution_closed_exists_sql())
+        wheres.append(("NOT " if closure == "open" else "") + _visit_closed_exists_sql())
 
     wheres.append("NOT " + _execution_superseded_exists_sql())
 
@@ -18456,7 +18631,7 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
         f" THEN IFNULL(pd.line_amount, 0) ELSE 0 END) AS `v_{k}`"
         for k in bucket_keys
     )
-    closed_sql = _execution_closed_exists_sql()
+    closed_sql = _visit_closed_exists_sql()
     head = frappe.db.sql(
         f"""SELECT COUNT(*) AS lines_n,
                    COUNT(DISTINCT pd.name) AS poids,
@@ -18795,8 +18970,15 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         )
     _closure = (pf.get("closure") or "all").strip().lower()
     if _closure in ("open", "closed"):
-        portal_clause += " AND " + ("NOT " if _closure == "open" else "") + _execution_closed_exists_sql()
-    if (pf.get("visits") or "all").strip().lower() == "current":
+        portal_clause += " AND " + ("NOT " if _closure == "open" else "") + _visit_closed_exists_sql()
+    # Current visit only, by default — this was the one surface without it.
+    # A plan on a superseded visit is a past attempt: the line has already
+    # been re-planned, so listing visit 1 as "Overdue" asks the IM to chase
+    # work that moved on. 12 of IM-MAJID's plans were stale that way, all of
+    # them Overdue or Not Attended on a line now at visit 2 or 3. The PM
+    # monitor, Rollout Work Done and Execution Analytics have always
+    # defaulted to "current"; only this page defaulted to "all".
+    if (pf.get("visits") or "current").strip().lower() == "current":
         portal_clause += " AND NOT " + _execution_superseded_exists_sql()
 
     rp_im_join = ""
@@ -19120,11 +19302,18 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         " WHERE rp_later.po_dispatch = rp.po_dispatch"
         " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0))"
     )
-    issue_block_clause = (
-        "AND NOT ("
-        " IFNULL(rp.issue_status,'') = 'Reported'"
-        " OR (IFNULL(rp.issue_status,'') = '' AND rp.plan_status = 'Planning with Issue'))"
-    )
+    issue_block_clause = "AND " + _issue_blocked_sql()
+    # A cancelled PLAN is terminal — nothing un-cancels one, a re-attempt gets
+    # a new plan — so its executions are not work anyone can act on. 117 rows
+    # sat here on cancelled plans, 112 of them still showing "In Progress" or
+    # "Postponed": dead work wearing a live badge, and not one with a Work
+    # Done. The PM monitor already excluded them via its status filter; this
+    # page had no status filter at all, so nothing did.
+    #
+    # Keyed on the PLAN only. A cancelled EXECUTION or tl_status on a LIVE
+    # plan is a different thing entirely — that attempt failed and the plan
+    # still needs an outcome — and all 20 of those stay.
+    cancelled_plan_clause = "AND IFNULL(rp.plan_status,'') <> 'Cancelled'"
     bucket_join_ex = ""
     _bucket_ex = (pf.get("bucket") or "").strip()
     if _bucket_ex:
@@ -19162,9 +19351,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         extended_clause = ""
         issue_block_clause = ""
         superseded_clause = ""
+        cancelled_plan_clause = ""
     _closure_ex = (pf.get("closure") or "all").strip().lower()
     if _closure_ex in ("open", "closed"):
-        portal_clause += " AND " + ("NOT " if _closure_ex == "open" else "") + _execution_closed_exists_sql()
+        portal_clause += " AND " + ("NOT " if _closure_ex == "open" else "") + _visit_closed_exists_sql(de_alias="de")
     if (pf.get("visits") or "all").strip().lower() == "current":
         portal_clause += " AND NOT " + _execution_superseded_exists_sql()
 
@@ -19227,67 +19417,12 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "IFNULL(pd.remaining_qty, 0) AS remaining_qty,"
         if frappe.db.has_column("PO Dispatch", "remaining_qty") else "0 AS remaining_qty,"
     )
-    ciag_col_hide = "de.ciag_status" if frappe.db.has_column("Daily Execution", "ciag_status") else "''"
-    qc_req_col2 = "rp.qc_required" if frappe.db.has_column("Rollout Plan", "qc_required") else "1"
-    ciag_req_col2 = "rp.ciag_required" if frappe.db.has_column("Rollout Plan", "ciag_required") else "1"
-    # ...but ONLY once the line has nothing left to do. A visit can gain a
-    # further plan AFTER its first confirmation — the "All POIDs (re-plan)"
-    # flow, and the remainder close, both add a companion rather than a new
-    # visit. Rule 2 then saw the Work Done built from the earlier companion and
-    # hid the new executions outright, so the outstanding quantity could never
-    # be recorded: the plan was made, the work was done, and the line simply
-    # vanished from Rollout Work Done. Outstanding quantity means the visit is
-    # not finished, whatever has already been written for it.
-    # Two ways a completed execution is genuinely finished with:
-    #   * the line has nothing outstanding, or
-    #   * this plan predates the last closure, so the ledger already counted it.
-    # The second keeps the earlier companions hidden once their work has been
-    # confirmed, instead of dragging every one of them back onto the page the
-    # moment a remainder plan is added beside them.
-    settled_tests = []
-    if frappe.db.has_column("PO Dispatch", "remaining_qty"):
-        settled_tests.append("IFNULL(pd.remaining_qty, 0) <= 0")
-    if frappe.db.exists("DocType", "Work Done Closure"):
-        settled_tests.append(
-            "rp.creation <= (SELECT MAX(c0.closed_on)"
-            " FROM `tabWork Done Closure` c0"
-            " JOIN `tabWork Done` wd_c0 ON wd_c0.name = c0.parent"
-            " WHERE wd_c0.system_id = rp.po_dispatch)"
-        )
-    outstanding_guard = (
-        " (" + " OR ".join(settled_tests) + ") AND" if settled_tests else ""
-    )
+    # The one definition of finished — see _visit_closed_exists_sql. This
+    # page is at Daily Execution grain, so it passes its own alias: THIS
+    # execution must be the finished one, or a sibling of the same plan
+    # must carry the visit's Work Done.
     portal_clause += "" if (_bucket_ex or _rating_history_ex) else (
-        " AND NOT ("
-        + outstanding_guard +
-        " de.execution_status = 'Completed'"
-        " AND ("
-        # Rule 1: lead DE — own QC/CIAG complete + any WD exists for this plan
-        "   ("
-        f"    ({qc_req_col2} = 0 OR IFNULL(de.qc_status,'') IN ('Pass', 'Not Applicable'))"
-        f"    AND ({ciag_req_col2} = 0 OR IFNULL({ciag_col_hide},'') IN ('Approved', 'Not Applicable'))"
-        "    AND EXISTS ("
-        "      SELECT 1 FROM `tabWork Done` wd0"
-        "      INNER JOIN `tabDaily Execution` de_wd0 ON de_wd0.name = wd0.execution"
-        "      INNER JOIN `tabRollout Plan` rp_wd0 ON rp_wd0.name = de_wd0.rollout_plan"
-        "      WHERE rp_wd0.po_dispatch = rp.po_dispatch"
-        "      AND IFNULL(rp_wd0.visit_number, 0) = IFNULL(rp.visit_number, 0)"
-        "      AND IFNULL(rp_wd0.plan_status, '') <> 'Cancelled'"
-        "    )"
-        "   )"
-        "   OR"
-        # Rule 2: companion DE — WD was created through a DIFFERENT DE in the same plan
-        "   EXISTS ("
-        "     SELECT 1 FROM `tabWork Done` wd1"
-        "     INNER JOIN `tabDaily Execution` de_wd1 ON de_wd1.name = wd1.execution"
-        "     INNER JOIN `tabRollout Plan` rp_wd1 ON rp_wd1.name = de_wd1.rollout_plan"
-        "     WHERE rp_wd1.po_dispatch = rp.po_dispatch"
-        "     AND IFNULL(rp_wd1.visit_number, 0) = IFNULL(rp.visit_number, 0)"
-        "     AND IFNULL(rp_wd1.plan_status, '') <> 'Cancelled'"
-        "     AND de_wd1.name != de.name"
-        "   )"
-        " )"
-        ")"
+        " AND NOT " + _visit_closed_exists_sql(de_alias="de")
     )
 
     rp_im_join_ex = ""
@@ -19612,6 +19747,7 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         {extended_clause}
         {superseded_clause}
         {issue_block_clause}
+        {cancelled_plan_clause}
         ORDER BY de.execution_date DESC, de.creation DESC
         {_sql_limit_suffix(lim_de)}
         """,

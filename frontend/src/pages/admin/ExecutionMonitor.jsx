@@ -157,7 +157,22 @@ export default function ExecutionMonitor() {
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
-  const [planStatusFilter, setPlanStatusFilter] = useState(_navExec?.planStatusFilter ?? ["Planned", "In Execution", "Completed", "Planning with Issue"]);
+  // Every status that can be live work. Overdue, Not Attended and Extended
+  // used to be missing while the IM's own Rollout Execution defaults to
+  // exactly those, so the one person whose job is chasing late work was the
+  // only one who could not see it: 39 Overdue and 10 Not Attended plans were
+  // invisible here until a PM changed the filter by hand.
+  //
+  // Two statuses stay out, both because nothing on this page can act on them:
+  //   Cancelled           — terminal.
+  //   Planning with Issue — structurally never live. Measured across all 428
+  //     of them: 90 are issue-blocked (they belong on Issues & Risks) and the
+  //     other 338 are superseded, because resolving an issue creates a
+  //     Re-Visit and the original plan becomes a past attempt. Listing the
+  //     status implied such plans might appear here; none can.
+  const [planStatusFilter, setPlanStatusFilter] = useState(_navExec?.planStatusFilter
+    ?? ["Planned", "Overdue", "Not Attended", "In Execution", "Extended",
+        "Completed"]);
   const [executionStatusFilter, setExecutionStatusFilter] = useState(_navExec?.executionStatusFilter ?? []);
   // Accepts a visit type from dashboard drill-through (Command dashboard's
   // Re-Visits tile), same as planStatusFilter/fromDate/toDate above.
