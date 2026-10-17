@@ -9176,6 +9176,25 @@ def _issue_blocked_sql(alias="rp"):
     )
 
 
+def _work_done_for_visit_sql(alias="rp"):
+    """A Work Done exists for this line's VISIT, on a plan that is not cancelled.
+
+    One visit yields exactly one Work Done however many companion plans it
+    took, so a plan-scoped `has a Work Done` test reports the companion that
+    does not own it as missing one — and it can never acquire one. Extracted
+    from _visit_closed_exists_sql so the closure rule and the "Work Done not
+    created" bucket cannot disagree about the same line.
+    """
+    return (
+        "EXISTS (SELECT 1 FROM `tabWork Done` wd_v"
+        " INNER JOIN `tabDaily Execution` de_v ON de_v.name = wd_v.execution"
+        " INNER JOIN `tabRollout Plan` rp_v ON rp_v.name = de_v.rollout_plan"
+        f" WHERE rp_v.po_dispatch = {alias}.po_dispatch"
+        f" AND IFNULL(rp_v.visit_number, 0) = IFNULL({alias}.visit_number, 0)"
+        " AND IFNULL(rp_v.plan_status, '') <> 'Cancelled')"
+    )
+
+
 def _visit_closed_exists_sql(alias="rp", de_alias=None, pd_alias="pd"):
     """The one definition of "this work is finished". Nothing else may define it.
 
@@ -9209,14 +9228,7 @@ def _visit_closed_exists_sql(alias="rp", de_alias=None, pd_alias="pd"):
         "Rollout Plan", "ciag_required") else "1"
     has_ciag = frappe.db.has_column("Daily Execution", "ciag_status")
 
-    wd_for_visit = (
-        "EXISTS (SELECT 1 FROM `tabWork Done` wd_v"
-        " INNER JOIN `tabDaily Execution` de_v ON de_v.name = wd_v.execution"
-        " INNER JOIN `tabRollout Plan` rp_v ON rp_v.name = de_v.rollout_plan"
-        f" WHERE rp_v.po_dispatch = {alias}.po_dispatch"
-        f" AND IFNULL(rp_v.visit_number, 0) = IFNULL({alias}.visit_number, 0)"
-        " AND IFNULL(rp_v.plan_status, '') <> 'Cancelled')"
-    )
+    wd_for_visit = _work_done_for_visit_sql(alias)
 
     if de_alias:
         ciag_col = f"{de_alias}.ciag_status" if has_ciag else "''"
@@ -18329,10 +18341,15 @@ EXECUTION_ATTENTION_BUCKETS = {
         "hint": "Executed, still waiting on CIAG approval",
         "cond": f"dex.rollout_plan IS NOT NULL AND {_CIAG_REQ} = 1 AND IFNULL(dex.ciag_ok, 0) = 0",
     },
+    # The widest of the three: tl_status is Completed and execution_status is
+    # not. It does NOT mean the IM is the only one holding it up — 136 of
+    # these also have QC or CIAG open, which is the team lead's side of the
+    # job. `im_confirmation_only` is the subset where the IM really is the
+    # last step.
     "im_confirmation_pending": {
         "target": "work_done",
         "label": "IM confirmation pending", "tone": "warn",
-        "hint": "Team lead finished; the IM has not confirmed",
+        "hint": "Team lead marked done; execution not confirmed — QC/CIAG may still be open too",
         "cond": "IFNULL(dex.any_tl_done, 0) = 1 AND IFNULL(dex.any_im_done, 0) = 0",
     },
     "im_confirmation_only": {
@@ -18349,11 +18366,29 @@ EXECUTION_ATTENTION_BUCKETS = {
             " AND IFNULL(rp.plan_status, '') <> 'Cancelled'"
         ),
     },
+    # Everything generate_work_done requires is satisfied and the record was
+    # never made. It used to read `any_im_done = 1 AND wdx.rollout_plan IS
+    # NULL`, which asks only whether the IM confirmed — so 17 lines with CIAG
+    # still open and 10 with QC open were counted as "not created" when
+    # creation would be refused. They were already in `ciag_pending` and
+    # `qc_pending`, where they belong; 37 was really 20.
+    #
+    # Two corrections, both mirroring the rules that actually apply:
+    #   * QC and CIAG settled, honouring the per-plan _required flags, the
+    #     same short-circuit `im_confirmation_only` and the closure test use.
+    #   * no Work Done for the VISIT, not for the plan — a companion plan
+    #     never owns the visit's Work Done and can never acquire one, so a
+    #     plan-scoped test reports it missing forever.
     "work_done_missing": {
         "target": "work_done",
         "label": "Work Done not created", "tone": "warn",
-        "hint": "IM-confirmed but no Work Done record exists",
-        "cond": "IFNULL(dex.any_im_done, 0) = 1 AND wdx.rollout_plan IS NULL",
+        "hint": "Confirmed and fully settled — the Work Done record was never made",
+        "cond": (
+            "IFNULL(dex.any_im_done, 0) = 1"
+            f" AND ({_QC_REQ} = 0 OR IFNULL(dex.qc_ok, 0) = 1)"
+            f" AND ({_CIAG_REQ} = 0 OR IFNULL(dex.ciag_ok, 0) = 1)"
+            f" AND NOT {_work_done_for_visit_sql()}"
+        ),
     },
     "dummy_unmapped": {
         "target": "plans",

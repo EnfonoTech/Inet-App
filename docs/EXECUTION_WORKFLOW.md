@@ -641,6 +641,38 @@ re-narrow — and the banner's **Clear** removed the bucket but left that empty
 selection behind, with nothing on screen saying so. The page went on listing
 711 plans, 234 of them cancelled. Clear restores `DEFAULT_PLAN_STATUS`.
 
+### The three confirmation tiles are one pipeline [D]
+
+```
+TL marks done -> QC / CIAG settle -> IM confirms -> Work Done created -> closed
+        ^                  ^                ^              ^
+   im_confirmation_pending (306)   ONLY pending (170)   not created (20)
+```
+
+`any_im_done` is `MAX(execution_status = 'Completed')`, so "IM confirmed"
+*is* the execution status being set. The first two tiles require it to be 0
+and the third requires 1, so **no line can be in both** — measured overlap 0.
+
+QC and CIAG belong to the team lead's side of the job, which is why the
+widest tile is the misleading one: `im_confirmation_pending` says only that
+`tl_status` is Completed and `execution_status` is not, and **136 of its 306
+also have QC (102) or CIAG (113) open**. Those are not waiting on the IM at
+all. `im_confirmation_only` is the subset where the IM really is the last
+step — same predicate plus QC and CIAG settled, honouring the per-plan
+`_required` flags.
+
+`work_done_missing` did not follow that rule and had to. It read
+`any_im_done = 1 AND wdx.rollout_plan IS NULL` — whether the IM confirmed
+and nothing else — so **17 lines with CIAG open and 10 with QC open counted
+as "not created" when `generate_work_done` would refuse to create them**.
+They were already counted in `ciag_pending` and `qc_pending`. It now
+requires what creation requires, and the tile reads **20**, not 37.
+
+It is also scoped to the VISIT now, via `_work_done_for_visit_sql()`
+extracted from the closure rule: a companion plan never owns its visit's
+Work Done and can never acquire one, so a plan-scoped test would report it
+missing forever.
+
 ### The ranked rails were not deterministic [D]
 
 `ORDER BY n DESC LIMIT 26` over a tied set returns whichever rows the plan
@@ -658,7 +690,7 @@ two consecutive runs of the 13-case snapshot are identical.
 | `overdue_by_date` | 114 | past its plan date |
 | `internal_pending` | 92 | internal work, IM has not confirmed |
 | `no_execution` | 51 | planned, nothing filed |
-| `work_done_missing` | 41 | confirmed, no Work Done record yet |
+| `work_done_missing` | 20 | confirmed and settled, no Work Done record yet |
 
 `totals` reports **3,040 lines · 2,563 closed · 477 open**, plus two counted
 separately and outside the closure toggle: **69** on Issues & Risks and
