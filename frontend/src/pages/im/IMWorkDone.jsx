@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -349,6 +350,9 @@ function LegacyResubmitTable({ rows, loading, selectedRows, onToggleRow, onToggl
 
 export default function IMWorkDone() {
   const { imName } = useAuth();
+  // Drill-in from Execution Analytics' "Work Done issues" tile, which counts
+  // with this list's own rule — so the tile and the list are the same set.
+  const _navWD = useLocation().state?.workDoneFilters;
   const { rowLimit, setRowLimit } = useTableRowLimit();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -467,7 +471,7 @@ export default function IMWorkDone() {
   const [issueFlagPick, setIssueFlagPick] = useState("");
   const [issueFlagBusy, setIssueFlagBusy] = useState(false);
   const [issueFlagErr, setIssueFlagErr] = useState(null);
-  const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  const [issueFlagFilter, setIssueFlagFilter] = useState(_navWD?.issueFlagFilter ?? []);
   const [sourceFilter, setSourceFilter] = useState([]);
   const [bulkIssueFlagOpen, setBulkIssueFlagOpen] = useState(false);
   const [bulkIssueFlagPick, setBulkIssueFlagPick] = useState("");

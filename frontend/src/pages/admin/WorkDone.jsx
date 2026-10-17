@@ -338,7 +338,10 @@ export default function WorkDone() {
   const [detailRow, setDetailRow] = useState(null);
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [copyNotice, setCopyNotice] = useState(null);
-  const [issueFlagFilter, setIssueFlagFilter] = useState([]);
+  // Accepts a flag list from Execution Analytics' "Work Done issues" tile,
+  // which counted with this page's own rule — so the number and the list it
+  // opens are the same set.
+  const [issueFlagFilter, setIssueFlagFilter] = useState(_navWD?.issueFlagFilter ?? []);
   const [submissionFilter, setSubmissionFilter] = useState([]);
   // Accepts a work type from dashboard drill-through (Command dashboard's
   // Direct Close section), same as fromDate/toDate above.

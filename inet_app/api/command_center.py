@@ -9101,6 +9101,19 @@ def _settled_guard_sql(alias="rp", pd_alias="pd"):
     return "(" + " OR ".join(tests) + ")" if tests else ""
 
 
+# The Work Done issue flags, as the Work Done pages offer them. Shared so the
+# analytics tile counts exactly the set its drill-through selects — the tile
+# ships this list to the frontend rather than the frontend repeating it.
+WORK_DONE_ISSUE_FLAGS = [
+    "POD/PPT required",
+    "TFM Check list",
+    "Spare part return",
+    "PAT/HO Final Approval",
+    "FPDC/FM Survey report Approval",
+    "Partial Work done",
+]
+
+
 def _issue_risk_open_sql(alias="rp"):
     """An OPEN Issues & Risks row — the membership of that page, in one place.
 
@@ -10127,7 +10140,7 @@ def get_work_done_summary():
 
 
 @frappe.whitelist()
-def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
+def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _count=None):
     """
     Rich Work Done rows for PM page.
     filters: {
@@ -10640,6 +10653,19 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None):
             bucket=_options.get("bucket"), search=_options.get("search"),
             limit=_options.get("limit"), label_kind=_options.get("label_kind"),
         )
+    if _count:
+        # Just the size of the set, for a caller that needs the number without
+        # the rows — Execution Analytics' "Work Done issues" tile. It runs the
+        # wheres built above, so the tile counts exactly what this page lists,
+        # including the finished-row hide rule. Counting the raw flag instead
+        # read 246 against a list of 119: 127 of those lines are already
+        # invoiced and closed, and their flag no longer blocks anything.
+        _n = frappe.db.sql(
+            f"SELECT COUNT(*) AS n, SUM({wd_revenue_sql('wd', 'pd', 'pd_sys')}) AS v"
+            f" FROM {_wd_from} WHERE {' AND '.join(wheres)}",
+            tuple(params), as_dict=True,
+        ) or [{}]
+        return {"n": cint((_n[0] or {}).get("n") or 0), "value": flt((_n[0] or {}).get("v") or 0)}
     if _summary:
         # Same wheres/params the row query below uses, so the headline figures
         # describe exactly the rows the table would show — at any row limit.
@@ -18254,7 +18280,6 @@ _DEX_SQL = """
 # Work Done reaches a plan through its execution, never directly.
 _WDX_SQL = """
   SELECT de.rollout_plan,
-         MAX(CASE WHEN IFNULL(wd.issue_flag, '') <> '' THEN 1 ELSE 0 END) AS any_issue_flag,
          MIN(DATE(wd.creation)) AS wd_created,
          MAX(IFNULL(wd.ms1_closed, 0)) AS ms1_closed,
          MAX(IFNULL(wd.ms2_closed, 0)) AS ms2_closed
@@ -18378,19 +18403,6 @@ EXECUTION_ATTENTION_BUCKETS = {
         "hint": "Planned but the team never attended",
         "cond": "IFNULL(rp.plan_status, '') = 'Not Attended'",
     },
-    # Work Done's OWN issue flag — POD/PPT required, TFM check list, spare
-    # part return, PAT/HO approval. What is outstanding before a finished
-    # line can be billed, which is why `target` has always said work_done.
-    # It used to read rp.issue_category / dex.any_issue instead: the plan's
-    # reason a visit went wrong, a different thing entirely, and the page it
-    # routed to could not act on it. Plan and execution issues are counted by
-    # `issues_open` and belong on Issues & Risks.
-    "issue_flagged": {
-        "target": "work_done",
-        "label": "Work Done issues", "tone": "bad",
-        "hint": "An issue flag is set on the Work Done — outstanding before billing",
-        "cond": "IFNULL(wdx.any_issue_flag, 0) = 1",
-    },
     "cancel_pending": {
         "target": "plans",
         "label": "Cancel awaiting PM", "tone": "info",
@@ -18497,6 +18509,51 @@ LEFT JOIN `tabItem` itm ON itm.name = pd.item_code
 LEFT JOIN ({_DEX_SQL}) dex ON dex.rollout_plan = rp.name
 LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name
 """
+
+
+def _ea_materialise():
+    """Build `dex`/`wdx` once per request, and return the FROM that uses them.
+
+    The page is one call that runs fourteen aggregate queries over the same
+    set. Each one inlined `_DEX_SQL` and `_WDX_SQL` as derived tables, so
+    MariaDB materialised every Daily Execution and every Work Done roll-up
+    fourteen times and hash-joined it with no index: ~230 ms of identical
+    work per query, about 3.4 s for the page. Built once into an indexed
+    temporary table it is 138 ms, and each query then drops to ~50 ms — 837 ms
+    for the page.
+
+    The returned FROM is the same string with the two subqueries swapped for
+    the temp tables, so every bucket, dimension and date expression keeps
+    referring to `dex.` and `wdx.` exactly as before. Nothing else changes.
+
+    Temporary tables are per-connection, which is why each build drops first:
+    a worker reuses its connection across requests. `CREATE TEMPORARY TABLE`
+    does not implicitly commit in MariaDB, so this cannot disturb a
+    transaction. If the DB user cannot create them, the inline FROM is
+    returned and the page is merely slow.
+    """
+    try:
+        for name, sql in (("_ea_dex", _DEX_SQL), ("_ea_wdx", _WDX_SQL)):
+            frappe.db.sql(f"DROP TEMPORARY TABLE IF EXISTS {name}")
+            frappe.db.sql(f"CREATE TEMPORARY TABLE {name} AS {sql}")
+            # An index, not a primary key: a roll-up with no rows for a plan,
+            # or two, must not fail the build — it is a cache, not a schema.
+            frappe.db.sql(f"ALTER TABLE {name} ADD INDEX (rollout_plan)")
+    except Exception:
+        _ea_release()
+        return _EXEC_ANALYTICS_FROM
+    return (_EXEC_ANALYTICS_FROM
+            .replace(f"({_DEX_SQL}) dex", "_ea_dex dex")
+            .replace(f"({_WDX_SQL}) wdx", "_ea_wdx wdx"))
+
+
+def _ea_release():
+    """Drop the per-request temp tables. Never raises — this is cleanup."""
+    for name in ("_ea_dex", "_ea_wdx"):
+        try:
+            frappe.db.sql(f"DROP TEMPORARY TABLE IF EXISTS {name}")
+        except Exception:
+            pass
 
 
 def execution_bucket_condition(key):
@@ -18664,7 +18721,9 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
 
     empty = {
         "totals": {"lines": 0, "poids": 0, "duids": 0, "projects": 0, "value": 0.0,
-                   "closed": 0, "open": 0, "issues_open": 0, "issues_value": 0.0},
+                   "closed": 0, "open": 0, "issues_open": 0, "issues_value": 0.0,
+                   "wd_issues_open": 0, "wd_issues_value": 0.0,
+                   "wd_issue_flags": list(WORK_DONE_ISSUE_FLAGS)},
         "buckets": [], "dimensions": [], "trend": [],
         "concentration": {"visits": [], "top_poids": [], "duids": [], "top_duids": []},
         "meta": {"date_basis": (pf.get("date_basis") or "plan"),
@@ -18681,6 +18740,21 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
         return empty
 
     where_sql = " AND ".join(wheres)
+    ea_from = _ea_materialise()
+    try:
+        return _execution_analytics_body(
+            pf, im_resolved, dims, empty, wheres, params, where_sql, ea_from,
+            scope_clause_ir, scope_params_ir)
+    finally:
+        _ea_release()
+
+
+def _execution_analytics_body(pf, im_resolved, dims, empty, wheres, params,
+                              where_sql, _EXEC_ANALYTICS_FROM,
+                              scope_clause_ir, scope_params_ir):
+    """The rails themselves. Split out only so `get_execution_analytics` can
+    guarantee the temp tables are dropped — the parameter deliberately shadows
+    the module-level FROM so every query below reads unchanged."""
 
     # ── Tier A: totals + every attention bucket, in ONE statement ──────────
     bucket_keys = list(EXECUTION_ATTENTION_BUCKETS.keys())
@@ -18725,6 +18799,24 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
         if c:
             ir_wheres.append(c)
             ir_params.extend(p)
+    # Work Done issues — the other total that is not a bucket.
+    #
+    # It was a bucket, and in the Open view it read 1. 231 of its 232 plans
+    # are closed: a Work Done exists, so the line IS finished as execution,
+    # and the flag is what remains before it can be billed. A bucket lives
+    # inside the closure toggle, so the one view a PM works in could not
+    # reach them at all.
+    #
+    # Counted by the Work Done page's own rule rather than off the raw flag,
+    # so the tile and the list agree — see the `_count` path there.
+    wd_issue_filters = {"issue_flag": list(WORK_DONE_ISSUE_FLAGS)}
+    if im_resolved:
+        wd_issue_filters["im"] = [im_resolved]
+    for key in ("project_code", "site_code", "team"):
+        if pf.get(key):
+            wd_issue_filters[key] = _ensure_list(pf.get(key))
+    wd_issues = list_work_done_rows(filters=wd_issue_filters, _count=1) or {}
+
     ir = frappe.db.sql(
         f"""SELECT COUNT(*) AS n, SUM(IFNULL(pd.line_amount, 0)) AS value
             FROM `tabRollout Plan` rp
@@ -18757,7 +18849,11 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
                        SUM(IFNULL(pd.line_amount, 0)) AS value
                 {_EXEC_ANALYTICS_FROM}
                 WHERE {where_sql}
-                GROUP BY {expr} ORDER BY n DESC LIMIT 26""",
+                -- The key breaks ties. Without it a LIMIT over a tied set
+                -- returns whichever rows the plan happened to produce, so the
+                -- same page showed a different top 25 on a refresh — and a
+                -- different "Others" fold under it.
+                GROUP BY {expr} ORDER BY n DESC, k ASC LIMIT 26""",
             tuple(params), as_dict=True,
         ) or []
         top = rows[:25]
@@ -18814,7 +18910,8 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
                    COUNT(*) AS visits
             {_EXEC_ANALYTICS_FROM}
             WHERE {' AND '.join(conc_wheres)} AND IFNULL(rp.po_dispatch, '') <> ''
-            GROUP BY rp.po_dispatch HAVING visits > 1 ORDER BY visits DESC LIMIT 10""",
+            GROUP BY rp.po_dispatch HAVING visits > 1
+            ORDER BY visits DESC, rp.po_dispatch ASC LIMIT 10""",
         tuple(params), as_dict=True,
     ) or []
     duid_rows = frappe.db.sql(
@@ -18832,7 +18929,8 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
                    COUNT(*) AS lines_n, COUNT(DISTINCT pd.name) AS poids
             {_EXEC_ANALYTICS_FROM}
             WHERE {where_sql} AND IFNULL(pd.site_code, '') <> ''
-            GROUP BY pd.site_code HAVING lines_n > 1 ORDER BY lines_n DESC LIMIT 10""",
+            GROUP BY pd.site_code HAVING lines_n > 1
+            ORDER BY lines_n DESC, pd.site_code ASC LIMIT 10""",
         tuple(params), as_dict=True,
     ) or []
 
@@ -18847,6 +18945,9 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
             "open": total - closed_n,
             "issues_open": issues_n,
             "issues_value": issues_value,
+            "wd_issues_open": cint(wd_issues.get("n") or 0),
+            "wd_issues_value": flt(wd_issues.get("value") or 0),
+            "wd_issue_flags": list(WORK_DONE_ISSUE_FLAGS),
         },
         "buckets": buckets,
         "dimensions": out_dims,

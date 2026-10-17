@@ -71,7 +71,7 @@ function Seg({ options, value, onChange }) {
   );
 }
 
-export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideDimensions, issuesHref }) {
+export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideDimensions, issuesHref, workDoneHref }) {
   const navigate = useNavigate();
   const [closure, setClosure] = useState("all");
   const [basis, setBasis] = useState("plan");
@@ -179,6 +179,7 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
           <div style={bstatS}>
             {t.open || 0} open · {t.closed || 0} closed
             {(t.issues_open || 0) > 0 && ` · ${t.issues_open} on Issues & Risks`}
+            {(t.wd_issues_open || 0) > 0 && ` · ${t.wd_issues_open} flagged Work Done`}
           </div>
         </div>
       </div>
@@ -232,7 +233,34 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
               <div style={{ ...bstatS, color: C.muted, opacity: 0.85 }}>SAR {money(t.issues_value)}</div>
             </button>
           )}
-          {!(data?.buckets || []).some((b) => b.value > 0) && !(t.issues_open > 0)
+          {/* Work Done issues — the second total that is not a bucket, and
+              for the same reason. It was one, and in the Open view it read 1:
+              231 of its 232 plans are closed, because a Work Done exists and
+              the line IS finished as execution. What is left is the flag
+              blocking the bill — POD/PPT, TFM check list, spare part return,
+              PAT/HO approval — which the Work Done page owns, not this one.
+              A bucket lives inside the closure toggle, so the one view a PM
+              works in could not reach them at all. */}
+          {(t.wd_issues_open || 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => navigate(workDoneHref || "/work-done", {
+                state: { workDoneFilters: { issueFlagFilter: t.wd_issue_flags || [] } },
+              })}
+              title="Work Done carrying an issue flag — outstanding before the line can be billed · click to open them"
+              style={{
+                ...bstat, flex: "1 1 132px", minWidth: 128, textAlign: "left",
+                background: "#fff", borderColor: C.border,
+                borderStyle: "dashed", cursor: "pointer",
+              }}
+            >
+              <div style={{ ...bstatL, color: C.muted }}>Work Done issues</div>
+              <div style={{ ...bstatN, color: C.muted }}>{t.wd_issues_open}</div>
+              <div style={{ ...bstatS, color: C.muted, opacity: 0.85 }}>SAR {money(t.wd_issues_value)}</div>
+            </button>
+          )}
+          {!(data?.buckets || []).some((b) => b.value > 0)
+            && !(t.issues_open > 0) && !(t.wd_issues_open > 0)
             && <Empty text="Nothing outstanding in this range." />}
         </div>
       </Card>

@@ -548,8 +548,10 @@ Risks page, **per IM**:
 |---|---|---|
 | all IMs, open | 477 | 477 |
 | all IMs, Issues & Risks | 69 | 69 |
+| all IMs, Work Done issues | 119 | 119 |
 | IM-MAJID / IM-AJMAL / IM-Manu, open | 358 / 82 / 36 | 358 / 82 / 36 |
 | the same three, Issues & Risks | 6 / 24 / 39 | 6 / 24 / 39 |
+| the same three, Work Done issues | 4 / 106 / 9 | 4 / 106 / 9 |
 
 Mismatched IMs: **0**.
 
@@ -568,27 +570,63 @@ side by side does not double-count.
 `_issue_risk_open_sql()` is now the single definition of an open issue row,
 used by both the page and the tile, so they cannot drift.
 
-### `issue_flagged` counts the Work Done flag [D]
+### Work Done issues is the second total, for the same reason [D]
 
 The bucket read `rp.issue_category OR dex.any_issue` — the plan's reason a
 visit went wrong — while its `target` said `work_done`, so it opened a page
-that could not act on what it had counted. It now reads **Work Done's own**
-`issue_flag`: POD/PPT required, TFM check list, spare part return, PAT/HO
-approval — what is outstanding before a finished line can be billed.
+that could not act on what it had counted. Re-pointing it at **Work Done's
+own** `issue_flag` (POD/PPT required, TFM check list, spare part return,
+PAT/HO approval — what is outstanding before a finished line can be billed)
+fixed that and then exposed the deeper problem: **as a bucket it read 1 in
+the Open view.** 231 of its 232 plans are closed, necessarily — a Work Done
+exists, so the line IS finished as execution. A bucket lives inside the
+closure toggle, so the one view a PM works in could not reach them at all.
 
-**246** Work Done records carry a flag, on **232** distinct plans; 14 plans
-have two flagged confirmations (two teams on one plan). The tile reads 232
-because every tile counts plans. Nothing is dropped by an exclusion — 0 are
-superseded, 0 cancelled, 0 issue-blocked, 0 internal.
+It is a total now, like Issues & Risks, outside the toggle, routing to the
+Work Done page.
+
+**Counted by that page's own rule, not off the raw flag.** 246 Work Done
+records carry a flag; the page shows **119**. The other 127 are already
+invoiced and closed, hidden by the finished-row rule in `list_work_done_rows`,
+and their flag no longer blocks anything. A tile reading 246 would open a list
+of 119. The `_count` path there runs the same `wheres` the list runs, so the
+two cannot diverge; `WORK_DONE_ISSUE_FLAGS` is shipped in the response so the
+drill-through selects exactly what was counted.
 
 This also removed an exemption: `list_execution_monitor_rows` used to skip the
 issue block on a bucket drill-through, because the tile counted issue plans
 and the list did not. Both apply it unconditionally now.
 
+### The page is one call, and it was 2.4 s [D]
+
+Fourteen aggregate queries over one set, each inlining `_DEX_SQL` and
+`_WDX_SQL` as derived tables — so MariaDB materialised every Daily Execution
+and Work Done roll-up fourteen times and hash-joined it with no index. A
+plain `COUNT(*)` over the base cost 238 ms; the subqueries alone cost 82 ms.
+
+`_ea_materialise()` builds both into indexed temporary tables once per request
+(138 ms) and returns the same FROM string with the two subqueries swapped for
+them, so every bucket, dimension and date expression still reads `dex.` and
+`wdx.` unchanged. Each query then costs ~50 ms. **2,395 ms → 909 ms**, proven
+value-neutral: the same code with the temp tables forced off returns all 13
+test responses byte-for-byte identical.
+
+Two things to know about it. `CREATE TEMPORARY TABLE` does not implicitly
+commit in MariaDB, so it cannot disturb a transaction; and temp tables are
+per-connection and a worker reuses its connection, which is why the build
+drops first and `_ea_release()` runs in a `finally`.
+
+### The ranked rails were not deterministic [D]
+
+`ORDER BY n DESC LIMIT 26` over a tied set returns whichever rows the plan
+produced, so the same filters showed a different top 25 — and a different
+"Others" fold — between refreshes. It only became visible when the temp
+tables changed the plan. Every ranked rail now breaks ties on its key, and
+two consecutive runs of the 13-case snapshot are identical.
+
 | Bucket | Plans | Means |
 |---|---|---|
 | `im_confirmation_pending` | 306 | TL finished, IM has not confirmed the execution |
-| `issue_flagged` | 232 | Work Done flagged — outstanding before billing |
 | `dummy_unmapped` | 201 | dummy PO never mapped to a real line |
 | `ciag_pending` | 185 | CIAG still Open |
 | `qc_pending` | 173 | QC not settled |
@@ -597,8 +635,10 @@ and the list did not. Both apply it unconditionally now.
 | `no_execution` | 51 | planned, nothing filed |
 | `work_done_missing` | 41 | confirmed, no Work Done record yet |
 
-`totals` reports **3,040 lines · 2,563 closed · 477 open**, plus **69** on
-Issues & Risks counted separately.
+`totals` reports **3,040 lines · 2,563 closed · 477 open**, plus two counted
+separately and outside the closure toggle: **69** on Issues & Risks and
+**119** flagged Work Done. All three match the page they open, for every IM —
+0 mismatched.
 
 ---
 

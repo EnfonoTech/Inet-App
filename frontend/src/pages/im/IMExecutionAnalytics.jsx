@@ -35,6 +35,7 @@ export default function IMExecutionAnalytics() {
           imName={imName}
           hideDimensions={["im"]}
           issuesHref="/im-issues-risks"
+          workDoneHref="/im-work-done"
           onDrill={(f, target) =>
             navigate(target === "work_done" ? "/im-execution" : "/im-planning", {
               state: { execFilters: f },
