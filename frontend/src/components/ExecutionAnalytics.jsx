@@ -269,6 +269,18 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
           {!(data?.buckets || []).some((b) => b.value > 0)
             && !(t.issues_open > 0) && !(t.wd_issues_open > 0)
             && <Empty text="Nothing outstanding in this range." />}
+          {/* Asking for Cancelled gives a screen of rows and no tiles, which
+              reads like a bug and is not one: a cancelled plan is terminal,
+              so no attention bucket can apply to it. The lines are still in
+              the breakdowns below — say so rather than leave the rail
+              looking broken. */}
+          {(t.lines || 0) > 0 && !(data?.buckets || []).some((b) => b.value > 0) && (
+            <div style={{ fontSize: 11.5, color: C.muted, padding: "6px 2px" }}>
+              These {t.lines} lines are in the breakdowns below. No attention
+              bucket applies to them — a cancelled plan is terminal, so there
+              is nothing left to chase on it.
+            </div>
+          )}
         </div>
       </Card>
 

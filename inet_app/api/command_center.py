@@ -9176,6 +9176,33 @@ def _issue_blocked_sql(alias="rp"):
     )
 
 
+def _ciag_settled_sql(alias="rp"):
+    """No execution on this plan is still waiting on CIAG.
+
+    Gate 5 of `generate_work_done` is per-execution, deliberately: the Work
+    Done is built from one execution and it is that execution's own
+    `ciag_status` the closure rule reads afterwards, so one team's approval
+    does not license another's. `dex.ciag_ok` is `MAX(...)` across the plan —
+    the OR rule — and reported a plan settled when a sibling execution was
+    still Open. 13 plans on the production copy, all of them closed lines, so
+    nothing was visible yet; it would surface on the first two-team plan that
+    is still live.
+
+    QC keeps the OR rule, because gate 4 states it explicitly: any Pass is a
+    plan Pass. That asymmetry is intended — see section 6 of
+    EXECUTION_WORKFLOW.md. Cancelled executions are ignored, as everywhere.
+    """
+    if not frappe.db.has_column("Daily Execution", "ciag_status"):
+        return "1=1"
+    return (
+        "NOT EXISTS (SELECT 1 FROM `tabDaily Execution` de_cg"
+        f" WHERE de_cg.rollout_plan = {alias}.name"
+        " AND IFNULL(de_cg.docstatus, 0) < 2"
+        " AND IFNULL(de_cg.execution_status, '') <> 'Cancelled'"
+        " AND IFNULL(de_cg.ciag_status, '') NOT IN ('Approved', 'Not Applicable'))"
+    )
+
+
 def _work_done_for_visit_sql(alias="rp"):
     """A Work Done exists for this line's VISIT, on a plan that is not cancelled.
 
@@ -18339,7 +18366,8 @@ EXECUTION_ATTENTION_BUCKETS = {
         "target": "work_done",
         "label": "CIAG pending", "tone": "warn",
         "hint": "Executed, still waiting on CIAG approval",
-        "cond": f"dex.rollout_plan IS NOT NULL AND {_CIAG_REQ} = 1 AND IFNULL(dex.ciag_ok, 0) = 0",
+        "cond": (f"dex.rollout_plan IS NOT NULL AND {_CIAG_REQ} = 1"
+                 f" AND NOT ({_ciag_settled_sql()})"),
     },
     # The widest of the three: tl_status is Completed and execution_status is
     # not. It does NOT mean the IM is the only one holding it up — 136 of
@@ -18362,7 +18390,7 @@ EXECUTION_ATTENTION_BUCKETS = {
         "cond": (
             "IFNULL(dex.any_tl_done, 0) = 1 AND IFNULL(dex.any_im_done, 0) = 0"
             f" AND ({_QC_REQ} = 0 OR IFNULL(dex.qc_ok, 0) = 1)"
-            f" AND ({_CIAG_REQ} = 0 OR IFNULL(dex.ciag_ok, 0) = 1)"
+            f" AND ({_CIAG_REQ} = 0 OR {_ciag_settled_sql()})"
             " AND IFNULL(rp.plan_status, '') <> 'Cancelled'"
         ),
     },
@@ -18386,8 +18414,32 @@ EXECUTION_ATTENTION_BUCKETS = {
         "cond": (
             "IFNULL(dex.any_im_done, 0) = 1"
             f" AND ({_QC_REQ} = 0 OR IFNULL(dex.qc_ok, 0) = 1)"
-            f" AND ({_CIAG_REQ} = 0 OR IFNULL(dex.ciag_ok, 0) = 1)"
+            f" AND ({_CIAG_REQ} = 0 OR {_ciag_settled_sql()})"
             f" AND NOT {_work_done_for_visit_sql()}"
+            # Gate 7 — every other EXECUTION on this plan finished. Two teams
+            # on one plan are two Daily Executions, and the lead team
+            # finishing is not the line finishing. Cancelled siblings ignored.
+            " AND NOT EXISTS ("
+            "   SELECT 1 FROM `tabDaily Execution` de_g7"
+            "   WHERE de_g7.rollout_plan = rp.name"
+            "   AND IFNULL(de_g7.docstatus, 0) < 2"
+            "   AND IFNULL(de_g7.execution_status, '')"
+            "       NOT IN ('Completed', 'Cancelled'))"
+            # Gate 6 — every companion PLAN of the visit finished, judged by
+            # each companion's own qc_required. Cancelled companions ignored.
+            " AND NOT EXISTS ("
+            "   SELECT 1 FROM `tabRollout Plan` rp_g6"
+            "   WHERE rp_g6.po_dispatch = rp.po_dispatch"
+            "   AND rp_g6.name <> rp.name"
+            "   AND IFNULL(rp_g6.visit_number, 0) = IFNULL(rp.visit_number, 0)"
+            "   AND IFNULL(rp_g6.plan_status, '') <> 'Cancelled'"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM `tabDaily Execution` de_g6"
+            "     WHERE de_g6.rollout_plan = rp_g6.name"
+            "     AND de_g6.execution_status = 'Completed'"
+            "     AND (IFNULL(rp_g6.qc_required, 1) = 0"
+            "          OR IFNULL(de_g6.qc_status, '')"
+            "             IN ('Pass', 'Not Applicable'))))"
         ),
     },
     "dummy_unmapped": {
@@ -18792,24 +18844,53 @@ def _execution_analytics_body(pf, im_resolved, dims, empty, wheres, params,
     the module-level FROM so every query below reads unchanged."""
 
     # ── Tier A: totals + every attention bucket, in ONE statement ──────────
+    #
+    # Work is counted per PLAN, money per POID LINE. Two teams on one site
+    # get two companion plans on the same dispatch and both are real
+    # execution work — 3,040 lines against 3,029 POIDs is right — but the
+    # line is worth what it is worth once. Summed per row it charged those 8
+    # POIDs twice: SAR 2,626,261 where the lines hold 2,620,306, and SAR
+    # 1,770 each on `im_confirmation_pending` and `im_confirmation_only`.
+    #
+    # So the statement groups to the POID first and aggregates that. The
+    # dedup has to happen INSIDE the aggregate: an earlier attempt pinned
+    # the amount to one plan with a row-level CASE, chose it with MIN over
+    # the whole table rather than over this result set, and dropped every
+    # line whose chosen plan was not in it (2.62M -> 1.85M).
+    #
+    # A plan with no dispatch keeps its own group — COALESCE to rp.name —
+    # or they would all collapse into one.
     bucket_keys = list(EXECUTION_ATTENTION_BUCKETS.keys())
-    bucket_cols = ", ".join(
-        f"SUM(CASE WHEN {execution_bucket_condition(k)} THEN 1 ELSE 0 END) AS `b_{k}`,"
-        f" SUM(CASE WHEN {execution_bucket_condition(k)}"
-        f" THEN IFNULL(pd.line_amount, 0) ELSE 0 END) AS `v_{k}`"
+    inner_bucket_cols = ", ".join(
+        f"SUM(CASE WHEN {execution_bucket_condition(k)} THEN 1 ELSE 0 END) AS `b_{k}`"
+        for k in bucket_keys
+    )
+    outer_bucket_cols = ", ".join(
+        f"SUM(`b_{k}`) AS `b_{k}`,"
+        f" SUM(CASE WHEN `b_{k}` > 0 THEN amt ELSE 0 END) AS `v_{k}`"
         for k in bucket_keys
     )
     closed_sql = _visit_closed_exists_sql()
     head = frappe.db.sql(
-        f"""SELECT COUNT(*) AS lines_n,
-                   COUNT(DISTINCT pd.name) AS poids,
-                   COUNT(DISTINCT NULLIF(pd.site_code, '')) AS duids,
-                   COUNT(DISTINCT NULLIF(pd.project_code, '')) AS projects,
-                   SUM(IFNULL(pd.line_amount, 0)) AS value,
-                   SUM(CASE WHEN {closed_sql} THEN 1 ELSE 0 END) AS closed_n,
-                   {bucket_cols}
-            {_EXEC_ANALYTICS_FROM}
-            WHERE {where_sql}""",
+        f"""SELECT SUM(n) AS lines_n,
+                   COUNT(DISTINCT pd_name) AS poids,
+                   COUNT(DISTINCT site_code) AS duids,
+                   COUNT(DISTINCT project_code) AS projects,
+                   SUM(amt) AS value,
+                   SUM(closed_n) AS closed_n,
+                   {outer_bucket_cols}
+            FROM (
+              SELECT pd.name AS pd_name,
+                     COUNT(*) AS n,
+                     MAX(IFNULL(pd.line_amount, 0)) AS amt,
+                     MAX(NULLIF(pd.site_code, '')) AS site_code,
+                     MAX(NULLIF(pd.project_code, '')) AS project_code,
+                     SUM(CASE WHEN {closed_sql} THEN 1 ELSE 0 END) AS closed_n,
+                     {inner_bucket_cols}
+              {_EXEC_ANALYTICS_FROM}
+              WHERE {where_sql}
+              GROUP BY COALESCE(pd.name, rp.name), pd.name
+            ) z""",
         tuple(params), as_dict=True,
     ) or [{}]
     head = head[0] or {}
@@ -18878,17 +18959,29 @@ def _execution_analytics_body(pf, im_resolved, dims, empty, wheres, params,
         spec = EXECUTION_ANALYTICS_DIMENSIONS[key]
         expr = spec["expr"]
         label_expr = spec.get("label_expr") or expr
+        # Money deduped per POID within each group, exactly as the headline
+        # does it — otherwise the breakdown would not add up to the total it
+        # sits under. A POID whose companion plans fall in DIFFERENT groups
+        # (two teams, say) is counted once in each, which is the only honest
+        # answer when the question is "how much per team": the 8 split POIDs
+        # are the whole exposure.
         rows = frappe.db.sql(
-            f"""SELECT {expr} AS k, MAX({label_expr}) AS label, COUNT(*) AS n,
-                       COUNT(DISTINCT NULLIF(pd.site_code, '')) AS duids,
-                       SUM(IFNULL(pd.line_amount, 0)) AS value
-                {_EXEC_ANALYTICS_FROM}
-                WHERE {where_sql}
+            f"""SELECT k, MAX(label) AS label, SUM(n) AS n,
+                       COUNT(DISTINCT site_code) AS duids,
+                       SUM(amt) AS value
+                FROM (
+                  SELECT {expr} AS k, MAX({label_expr}) AS label, COUNT(*) AS n,
+                         MAX(NULLIF(pd.site_code, '')) AS site_code,
+                         MAX(IFNULL(pd.line_amount, 0)) AS amt
+                  {_EXEC_ANALYTICS_FROM}
+                  WHERE {where_sql}
+                  GROUP BY {expr}, COALESCE(pd.name, rp.name)
+                ) zd
                 -- The key breaks ties. Without it a LIMIT over a tied set
                 -- returns whichever rows the plan happened to produce, so the
                 -- same page showed a different top 25 on a refresh — and a
                 -- different "Others" fold under it.
-                GROUP BY {expr} ORDER BY n DESC, k ASC LIMIT 26""",
+                GROUP BY k ORDER BY n DESC, k ASC LIMIT 26""",
             tuple(params), as_dict=True,
         ) or []
         top = rows[:25]
@@ -18915,14 +19008,20 @@ def _execution_analytics_body(pf, im_resolved, dims, empty, wheres, params,
     basis_key = (pf.get("date_basis") or "plan").strip().lower()
     basis_expr = (_EXEC_DATE_BASES.get(basis_key) or _EXEC_DATE_BASES["plan"])["expr"]
     trend = frappe.db.sql(
-        f"""SELECT DATE_FORMAT({basis_expr}, '%%Y-%%m') AS month, COUNT(*) AS lines_n,
-                   COUNT(DISTINCT NULLIF(pd.site_code, '')) AS duids,
-                   SUM(IFNULL(pd.line_amount, 0)) AS value,
-                   SUM(CASE WHEN IFNULL(dex.any_im_done, 0) = 1 THEN 1 ELSE 0 END) AS im_confirmed,
-                   SUM(CASE WHEN wdx.rollout_plan IS NOT NULL THEN 1 ELSE 0 END) AS work_done
-            {_EXEC_ANALYTICS_FROM}
-            WHERE {where_sql} AND {basis_expr} IS NOT NULL
-            GROUP BY 1 ORDER BY 1""",
+        f"""SELECT month, SUM(n) AS lines_n, COUNT(DISTINCT site_code) AS duids,
+                   SUM(amt) AS value, SUM(im_confirmed) AS im_confirmed,
+                   SUM(work_done) AS work_done
+            FROM (
+              SELECT DATE_FORMAT({basis_expr}, '%%Y-%%m') AS month, COUNT(*) AS n,
+                     MAX(NULLIF(pd.site_code, '')) AS site_code,
+                     MAX(IFNULL(pd.line_amount, 0)) AS amt,
+                     SUM(CASE WHEN IFNULL(dex.any_im_done, 0) = 1 THEN 1 ELSE 0 END) AS im_confirmed,
+                     SUM(CASE WHEN {_work_done_for_visit_sql()} THEN 1 ELSE 0 END) AS work_done
+              {_EXEC_ANALYTICS_FROM}
+              WHERE {where_sql} AND {basis_expr} IS NOT NULL
+              GROUP BY 1, COALESCE(pd.name, rp.name)
+            ) zt
+            GROUP BY month ORDER BY month""",
         tuple(params), as_dict=True,
     ) or []
 
@@ -19174,10 +19273,33 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     if (pf.get("dummy_preset") or "").strip().lower() == "dummy":
         portal_clause += " AND IFNULL(pd.is_dummy_po, 0) = 1"
 
+    # Issue plans are hidden by default, and shown when asked for.
+    #
+    # The page never had this rule. It was hidden by accident instead: the
+    # frontend's default status list leaves out 'Planning with Issue', and
+    # every issue-blocked plan on the production copy is either that or
+    # Completed — so the default view was already clean and turning the rule
+    # on changes nothing there (measured: 0 rows across AJMAL/MAJID/Manu).
+    # Widen the status filter, though, and 90 plans parked on a reported
+    # issue reappeared on an execution list while also sitting on Issues &
+    # Risks, which is the thing _issue_blocked_sql exists to prevent.
+    #
+    # Not an unconditional block, which is what Rollout Work Done and the PM
+    # monitor use. Selecting 'Planning with Issue' here has to keep working —
+    # an unconditional rule would turn that option into one that always
+    # returns nothing. Same shape as the cancelled rule in
+    # _execution_analytics_where: a default the user can override, not a wall.
+    #
+    # A bucket drill-through passes an empty status list, so the block
+    # applies there — which is what makes a tile and this list agree.
+    _ps_sel = [str(x).strip() for x in _ensure_list(plan_status) if str(x).strip()]
+    if "Planning with Issue" not in _ps_sel:
+        portal_clause += " AND " + _issue_blocked_sql()
+
     # Drill-through from Execution Analytics. Same predicate registry the tile
-    # counted with, so the number and the list it opens agree. All three
-    # default to NO filtering — this page has never hidden closed or
-    # superseded plans, and that stays true for every ordinary call.
+    # counted with, so the number and the list it opens agree. Closure and
+    # visit filters still default to NO filtering — this page has never
+    # hidden closed or superseded plans on an ordinary call.
     bucket_join = ""
     _bucket = (pf.get("bucket") or "").strip()
     if _bucket:
@@ -19186,8 +19308,10 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
             f" LEFT JOIN ({_WDX_SQL}) wdx ON wdx.rollout_plan = rp.name "
         )
         portal_clause += " AND " + execution_bucket_condition(_bucket)
-        # Match the analytics base exactly: current visit only, and no
-        # internal work that is already finished.
+        # Match the analytics base exactly: current visit only and no
+        # internal work that is already finished. The issue block is the
+        # page-wide default above and needs nothing here — a drill-through
+        # passes an empty status list, so it applies.
         portal_clause += " AND NOT " + _execution_superseded_exists_sql()
         portal_clause += (
             " AND NOT (IFNULL(pd.is_internal_work, 0) = 1"
@@ -19556,7 +19680,12 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         )
         future_planned_clause = ""
         extended_clause = ""
-        issue_block_clause = ""
+        # issue_block_clause is NOT cleared here. It was, to match an
+        # analytics base that then counted issue plans; the base excludes
+        # them now, so clearing it is what breaks the match — IM-AJMAL's
+        # `qc_pending` read 17 and listed 33, 16 of them issue plans. The
+        # rating-history branch below still clears it, deliberately: that is
+        # a look back at past work, not a list of what is live.
     # Filtering the Rating column turns this page into a history view. Each
     # clause below hides an execution the IM has no live work left on, which
     # is most of the ones worth looking back at — so "show me the 2-star

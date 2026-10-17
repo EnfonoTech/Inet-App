@@ -21,7 +21,7 @@ with the answer.
 | **[D]** | Deliberate. The code states the reasoning, usually in a comment explaining what broke before. |
 | **[?]** | Unverified. The behaviour is real, the intent is not recorded anywhere. Treat as an open question. |
 
-Last reviewed: 16 October 2026, against `inet_backup` (a production copy).
+Last reviewed: 17 October 2026, against `inet_backup` (a production copy).
 Companion documents: `SYSTEM_OVERVIEW.md` (architecture, roles, navigation),
 `PARTIAL_QTY_AND_TRACKING_PLAN.md` (the partial-quantity build plan).
 
@@ -342,9 +342,9 @@ they still differ in grain and in which stage they cover, deliberately.
 
 | Page | Role | Endpoint | Grain | What removes a finished line |
 |---|---|---|---|---|
-| **Execution Monitor** | PM | `list_execution_monitor_rows` | Rollout Plan | `closure` defaults to `"open"` → `NOT _visit_closed_exists_sql()`; **plus `_issue_blocked_sql()`**, exempt on a bucket drill-through. Frontend status default is every live status except `Cancelled` and `Planning with Issue`. **[D]** |
-| **Rollout Execution** | IM | `list_im_rollout_plans` | Rollout Plan | No done-rule by default; finished work is hidden by the frontend `plan_status` whitelist (`IMPlanning.jsx`). **Current visit only, by default** since 17 Oct 2026. **[?]** on the whitelist |
-| **Rollout Work Done** | IM | `list_im_daily_executions` | Daily Execution | `NOT _visit_closed_exists_sql(de_alias="de")`, unless a bucket or rating-history filter is active; `_issue_blocked_sql()`; **no cancelled PLAN**. **[D]** |
+| **Execution Monitor** | PM | `list_execution_monitor_rows` | Rollout Plan | `closure` defaults to `"open"` → `NOT _visit_closed_exists_sql()`; **plus `_issue_blocked_sql()`, always, including on a bucket drill-through**. Frontend status default is every live status except `Cancelled` and `Planning with Issue`. **[D]** |
+| **Rollout Execution** | IM | `list_im_rollout_plans` | Rollout Plan | No done-rule by default; finished work is hidden by the frontend `plan_status` whitelist (`IMPlanning.jsx`). **Current visit only, by default** since 17 Oct 2026. **`_issue_blocked_sql()` by default, overridable** by selecting `Planning with Issue`. **[D]** · **[?]** on the whitelist |
+| **Rollout Work Done** | IM | `list_im_daily_executions` | Daily Execution | `NOT _visit_closed_exists_sql(de_alias="de")`, unless a bucket or rating-history filter is active; `_issue_blocked_sql()` **including on a bucket drill-through**, cleared only for rating-history; **no cancelled PLAN**. **[D]** |
 | **Work Done** | IM + PM | `list_work_done_rows` | Work Done record | n/a — it is the record list. Excludes cancelled lines. **[D]** |
 
 ### Two rules that were on one page and not the other
@@ -356,10 +356,41 @@ appeared both there and on the PM's own Issues & Risks page — 22 of
 IM-AJMAL's 106 monitor rows, all 22 already on Issues & Risks. Shared and
 applied to both, 17 Oct 2026.
 
-**Exempt on a bucket drill-through. [D]** The tile counted a population with
-its own predicate and the list must show exactly that, or `issue_flagged`
-opens an empty table. Adding the block without this exemption broke 10 of 16
-tiles immediately — the same reason `tab` is forced to `"all"` for a drill-in.
+**Applied on a bucket drill-through too, on all three surfaces. [D]** It was
+exempt while Execution Analytics still counted issue plans: the tile included
+them, so a list that dropped them showed fewer rows, and `issue_flagged` —
+then keyed on `rp.issue_category` — opened an empty table. Once the analytics
+base excluded them the exemption became the thing that broke the match, and
+it was removed from the PM monitor on 17 Oct 2026 and from both IM endpoints
+in the review that followed. The gaps it left were large: IM-Manu's
+`overdue_by_date` tile read 11 and listed 50, 39 of them issue plans;
+IM-AJMAL's `qc_pending` read 17 and listed 33.
+
+`list_im_rollout_plans` hides them **by default and shows them when asked
+for** — select `Planning with Issue` in the status filter and they come
+back. **[D]**, confirmed 17 Oct 2026.
+
+Not an unconditional block like the other two surfaces, because that status
+is an option on this page and an unconditional rule would make it always
+return nothing. Same shape as the cancelled rule in Execution Analytics: a
+default the user can override, not a wall.
+
+The page never had the rule at all. It was hidden by accident: the
+frontend's default status list leaves out `Planning with Issue`, and every
+issue-blocked plan is either that or `Completed`, so the default view was
+already clean — turning the rule on changes **0 rows** there. Widen the
+status filter and 90 plans parked on a reported issue reappeared on an
+execution list while also sitting on Issues & Risks.
+
+| IM | default | default + `Planning with Issue` | that status alone |
+|---|---|---|---|
+| IM-AJMAL | 12 | 34 | 22 |
+| IM-MAJID | 47 | 50 | 3 |
+| IM-Manu | 7 | 46 | 39 |
+
+The rating-history branch of `list_im_daily_executions` still clears the
+block deliberately — that view is a look back at past work, not a list of
+what is live.
 
 **Cancelled PLAN excluded from Rollout Work Done** — a cancelled plan is
 terminal, so its executions are not work anyone can act on. 117 rows sat
@@ -672,6 +703,89 @@ It is also scoped to the VISIT now, via `_work_done_for_visit_sql()`
 extracted from the closure rule: a companion plan never owns its visit's
 Work Done and can never acquire one, so a plan-scoped test would report it
 missing forever.
+
+### IM tiles reconcile with the IM pages too [D]
+
+Audited 17 Oct 2026, every non-zero bucket for three IMs, with each gap
+decomposed into its causes. Before: every tile was lower than the page it
+opened. After: **the only remaining difference is grain, and it is
+documented.**
+
+| IM | before | after |
+|---|---|---|
+| IM-AJMAL | 8 tiles, 7 mismatched (e.g. `overdue_by_date` 31 vs 53) | grain only: 2 tiles differ by 2 rows |
+| IM-MAJID | 11 tiles, 5 mismatched | grain only: 3 tiles differ by 1 row |
+| IM-Manu | 8 tiles, 6 mismatched (e.g. `overdue_by_date` 11 vs 50) | **0 differences** |
+
+Every gap decomposed to exactly two causes with **zero residual**: the issue
+block (now fixed, above) and Daily Execution grain. Rollout Work Done is one
+row per execution and a tile counts plans, so a two-team plan is 1 and 2.
+That one is not a defect and cannot be fixed without changing the page's
+grain.
+
+### `work_done_missing` encodes all of generate_work_done's gates [D]
+
+Gates 6 and 7 — every companion PLAN of the visit finished, and every other
+EXECUTION on this plan finished — were missing after the first correction.
+Both are 0 on today's data, so the tile still reads **20**; they are in the
+predicate now so the next two-team plan does not slip through.
+
+### The trend's work-done series is visit-scoped [D]
+
+It read `wdx.rollout_plan IS NOT NULL`, which is plan-scoped and contradicts
+section 10. The 4 companion plans that do not own their visit's Work Done
+were counted as having none: **2,563 against the 2,567 visits recorded.**
+
+### Work is counted per plan, money per POID line [D]
+
+Two teams on one site get two companion plans on the same dispatch; both are
+real execution work, so 3,040 lines against 3,029 POIDs is right. The line is
+worth what it is worth **once**. Summed per row it charged those 8 POIDs
+twice:
+
+| | was | is | over by |
+|---|---|---|---|
+| Headline, All | 2,626,261.40 | 2,620,306.40 | 5,955.00 |
+| Headline, Open | 236,737.00 | 234,699.00 | 2,038.00 |
+| Headline, Cancelled | 162,928.50 | 135,937.50 | 26,991.00 |
+| `im_confirmation_pending` | 124,961.00 | 123,191.00 | 1,770.00 |
+| `im_confirmation_only` | 88,844.00 | 87,074.00 | 1,770.00 |
+
+The head, dimension and trend queries now group to the POID first and
+aggregate that. **The dedup has to happen inside the aggregate.** A first
+attempt pinned the amount to one plan with a row-level CASE and chose it
+with `MIN(rp.name)` over the whole table rather than over the result set,
+so every line whose chosen plan was not in the set vanished — 2.62M → 1.85M.
+
+Verified against an independent per-POID sum on five filter combinations,
+exact to the cent; and across 13 cases **every count is unchanged** — only
+money moved. A POID whose companions land in different dimension groups
+(two teams) is counted once in each, which is the only honest answer to
+"how much per team".
+
+### CIAG is per-execution in the buckets too [D]
+
+`ciag_pending` and `im_confirmation_only` read `dex.ciag_ok` = `MAX(...)`
+across the plan, while gate 5 is per-execution — the Work Done is built from
+one execution and it is that execution's own `ciag_status` the closure rule
+reads. One team's approval was licensing another's.
+`_ciag_settled_sql()` replaces it: `ciag_pending` 185 → **197**, of which
++13 are siblings the OR hid and −1 is a plan whose only execution is
+Cancelled, now correctly ignored.
+
+**QC keeps the OR rule**, because gate 4 states it explicitly: any Pass is a
+plan Pass. The asymmetry is intended — section 6.
+
+### Known, not fixed
+
+- **[?] `qc_failed` is structurally near-dead.** Left as is, 17 Oct 2026. All 6 QC Fails on the
+  production copy sit on `Planning with Issue` plans — 5 issue-blocked, 4
+  superseded. By the designed flow a Fail becomes an issue and gets a
+  Re-Visit, both of which leave the base, so the tile reads 0 and essentially
+  always will.
+- **Cancelled, when opted into, shows rows and no tiles.** `_ACTIONABLE` is
+  right — nothing is actionable on a terminal plan — so the rule stands and
+  the rail now says so instead of looking broken.
 
 ### The ranked rails were not deterministic [D]
 
