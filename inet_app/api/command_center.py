@@ -9101,6 +9101,48 @@ def _settled_guard_sql(alias="rp", pd_alias="pd"):
     return "(" + " OR ".join(tests) + ")" if tests else ""
 
 
+def _issue_risk_open_sql(alias="rp"):
+    """An OPEN Issues & Risks row — the membership of that page, in one place.
+
+    Extracted so Execution Analytics can count exactly what the page lists
+    rather than re-deriving it. Three parts:
+
+    * tracked by issue_status, not yet Resolved — or, for old rows that never
+      had one, a plan in an issue state. visit_type='Re-Visit' is NOT a
+      marker: a Re-Visit created FROM I&R is a real execution plan, not an
+      issue-tracking row.
+    * not superseded. A follow-up plan existing for the line resolves the
+      earlier issue logically, even if nobody flipped its issue_status —
+      without this a dispatch showed two open rows at once, the original and
+      the issue on its own follow-up.
+    * no Work Done for the line. Creating one sets issue_status='Resolved';
+      this catches the rows where it did not.
+    """
+    return (
+        "("
+        f"  IFNULL({alias}.issue_status,'') NOT IN ('','Resolved')"
+        "  OR ("
+        f"    IFNULL({alias}.issue_status,'') = ''"
+        "    AND ("
+        f"      {alias}.plan_status = 'Planning with Issue'"
+        f"      OR IFNULL({alias}.issue_category,'') != ''"
+        "    )"
+        "  )"
+        ")"
+        " AND NOT EXISTS ("
+        "  SELECT 1 FROM `tabRollout Plan` rp_later"
+        f" WHERE rp_later.po_dispatch = {alias}.po_dispatch"
+        f" AND IFNULL(rp_later.visit_number,0) > IFNULL({alias}.visit_number,0)"
+        ")"
+        " AND NOT EXISTS ("
+        " SELECT 1 FROM `tabWork Done` wd_ir"
+        " INNER JOIN `tabDaily Execution` de_ir ON de_ir.name = wd_ir.execution"
+        " INNER JOIN `tabRollout Plan` rp_wd ON rp_wd.name = de_ir.rollout_plan"
+        f" WHERE rp_wd.po_dispatch = {alias}.po_dispatch"
+        ")"
+    )
+
+
 def _issue_blocked_sql(alias="rp"):
     """This plan is parked on an issue and belongs on Issues & Risks, not here.
 
@@ -9381,13 +9423,14 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     # not duplicated onto this list. Same rule the IM's Rollout Work Done has
     # always applied; see _issue_blocked_sql.
     #
-    # NOT on a bucket drill-through. The tile counted a population with its
-    # own predicate and this list must show exactly that population, or the
-    # number and the list it opens disagree — `issue_flagged` would open an
-    # empty table. Same reason `tab` is forced to "all" for a drill-in.
-    # Applied before the bucket is read, so it is gated on filters directly.
-    if not (str(filters.get("bucket") or "")).strip():
-        wheres.append(_issue_blocked_sql())
+    # Applied on a bucket drill-through as well. It was exempt while Execution
+    # Analytics had no issue rule: the tile counted issue plans, so a list that
+    # dropped them showed fewer rows than the tile promised, and `issue_flagged`
+    # — then keyed on rp.issue_category — opened an empty table. Analytics now
+    # excludes them from its base too, so the exemption is what would break the
+    # match. `issue_flagged` reads Work Done's own flag and no longer depends
+    # on issue plans being in scope.
+    wheres.append(_issue_blocked_sql())
 
     visits = (str(filters.get("visits") or "current")).strip().lower()
     if visits != "all":
@@ -12823,33 +12866,7 @@ def list_issue_risk_rows(im=None, limit=1000, search=None, portal_filters=None, 
     # the original issue (still "In Execution"/etc, never explicitly
     # resolved) AND the new issue on its own follow-up re-visit plan. Now
     # applies to both branches so only the latest plan's issue ever shows.
-    wheres = [
-        "("
-        # New data: tracked by issue_status
-        "  IFNULL(rp.issue_status,'') NOT IN ('','Resolved')"
-        "  OR ("
-        # Old data backward compat: no issue_status but plan is in issue state
-        # Note: visit_type='Re-Visit' is NOT used here — new Re-Visit plans
-        # created from I&R are real execution plans, not issue-tracking rows.
-        "    IFNULL(rp.issue_status,'') = ''"
-        "    AND ("
-        "      rp.plan_status = 'Planning with Issue'"
-        "      OR IFNULL(rp.issue_category,'') != ''"
-        "    )"
-        "  )"
-        ")",
-        "NOT EXISTS ("
-        "  SELECT 1 FROM `tabRollout Plan` rp_later"
-        "  WHERE rp_later.po_dispatch = rp.po_dispatch"
-        "  AND IFNULL(rp_later.visit_number,0) > IFNULL(rp.visit_number,0)"
-        ")",
-        "NOT EXISTS ("
-        " SELECT 1 FROM `tabWork Done` wd_ir"
-        " INNER JOIN `tabDaily Execution` de_ir ON de_ir.name = wd_ir.execution"
-        " INNER JOIN `tabRollout Plan` rp_wd ON rp_wd.name = de_ir.rollout_plan"
-        " WHERE rp_wd.po_dispatch = rp.po_dispatch"
-        ")",
-    ]
+    wheres = [_issue_risk_open_sql()]
     params = []
     if im_filter_value:
         if frappe.db.has_column("Rollout Plan", "im"):
@@ -17553,12 +17570,20 @@ ROLLOUT_WEEK_BUCKETS = {
 ROLLOUT_WEEK_EXCLUDED = ("Cancelled",)
 
 
-def _rollout_scope_clause(im, alias="pd"):
+def _rollout_scope_clause(im, alias="pd", include_plan_im=False):
     """(clause, params, resolved_im) for the rollout dashboards.
 
     An IM only ever sees their own lines. A PM asking for no particular IM sees
     every one — that is the whole difference between the two pages, so it lives
     here rather than in two near-identical endpoints.
+
+    `include_plan_im` also matches the IM stamped on the PLAN. The dispatch's
+    IM is the default because it is the line's owner of record, but the
+    Execution Monitor's IM filter, both IM list pages and Issues & Risks all
+    read `pd.im OR rp.im` — a plan can carry an IM its dispatch does not. A
+    page that compares itself to those has to scope the same way or it reports
+    fewer lines for the same IM: Ajmal's analytics read 82 against the
+    monitor's 99 on exactly this difference.
     """
     roles = set(frappe.get_roles(frappe.session.user))
     is_admin = bool(roles & PM_LEVEL_ROLES)
@@ -17568,6 +17593,9 @@ def _rollout_scope_clause(im, alias="pd"):
     if not im_identifiers:
         return None, [], im_resolved
     ph = ", ".join(["%s"] * len(im_identifiers))
+    if include_plan_im and frappe.db.has_column("Rollout Plan", "im"):
+        return (f"(IFNULL({alias}.im, '') IN ({ph}) OR IFNULL(rp.im, '') IN ({ph}))",
+                list(im_identifiers) * 2, im_resolved)
     return f"{alias}.im IN ({ph})", list(im_identifiers), im_resolved
 
 
@@ -18226,6 +18254,7 @@ _DEX_SQL = """
 # Work Done reaches a plan through its execution, never directly.
 _WDX_SQL = """
   SELECT de.rollout_plan,
+         MAX(CASE WHEN IFNULL(wd.issue_flag, '') <> '' THEN 1 ELSE 0 END) AS any_issue_flag,
          MIN(DATE(wd.creation)) AS wd_created,
          MAX(IFNULL(wd.ms1_closed, 0)) AS ms1_closed,
          MAX(IFNULL(wd.ms2_closed, 0)) AS ms2_closed
@@ -18349,11 +18378,18 @@ EXECUTION_ATTENTION_BUCKETS = {
         "hint": "Planned but the team never attended",
         "cond": "IFNULL(rp.plan_status, '') = 'Not Attended'",
     },
+    # Work Done's OWN issue flag — POD/PPT required, TFM check list, spare
+    # part return, PAT/HO approval. What is outstanding before a finished
+    # line can be billed, which is why `target` has always said work_done.
+    # It used to read rp.issue_category / dex.any_issue instead: the plan's
+    # reason a visit went wrong, a different thing entirely, and the page it
+    # routed to could not act on it. Plan and execution issues are counted by
+    # `issues_open` and belong on Issues & Risks.
     "issue_flagged": {
         "target": "work_done",
-        "label": "Issue flagged", "tone": "bad",
-        "hint": "An issue category is set on the plan or an execution",
-        "cond": "IFNULL(rp.issue_category, '') <> '' OR IFNULL(dex.any_issue, 0) = 1",
+        "label": "Work Done issues", "tone": "bad",
+        "hint": "An issue flag is set on the Work Done — outstanding before billing",
+        "cond": "IFNULL(wdx.any_issue_flag, 0) = 1",
     },
     "cancel_pending": {
         "target": "plans",
@@ -18486,7 +18522,7 @@ def _execution_analytics_where(pf, im):
     breakdowns and the concentration rail are readings of a single set, so
     they cannot describe different populations.
     """
-    scope_clause, scope_params, im_resolved = _rollout_scope_clause(im)
+    scope_clause, scope_params, im_resolved = _rollout_scope_clause(im, include_plan_im=True)
     if scope_clause is None:
         return None, [], im_resolved
 
@@ -18508,6 +18544,28 @@ def _execution_analytics_where(pf, im):
         "NOT (IFNULL(pd.is_internal_work, 0) = 1"
         " AND IFNULL(dex.any_im_done, 0) = 1)"
     )
+
+    # Match the PM Execution Monitor's population exactly, so "open" means the
+    # same work on the tile and in the list. Two rules were missing here:
+    #
+    #   * issue plans — they belong on Issues & Risks and are counted by their
+    #     own total (see `issues_open`), not folded into execution work. 66
+    #     plans, every one of them also on that page.
+    #   * cancelled plans — 234. _ACTIONABLE already kept them out of every
+    #     bucket; they were left in the totals so the plan_status dimension
+    #     could still show them. That made "open" 711 against the monitor's
+    #     477, counting work nobody can act on.
+    wheres.append(_issue_blocked_sql())
+
+    # Cancelled is hidden by default and shown when asked for — exactly how
+    # the monitor behaves. There the rule lives in the frontend's default
+    # status tick-list, so the SQL never excluded cancelled at all and a
+    # caller passing no planStatusFilter got them back. Here it is in the
+    # query, so the opt-out has to be explicit: ask for Cancelled in `status`
+    # and the base keeps them, and the plan_status dimension lists them.
+    status_sel = [str(x).strip() for x in _ensure_list(pf.get("status")) if str(x).strip()]
+    if "Cancelled" not in status_sel:
+        wheres.append("IFNULL(rp.plan_status, '') <> 'Cancelled'")
 
     basis_key = (pf.get("date_basis") or "plan").strip().lower()
     basis = _EXEC_DATE_BASES.get(basis_key) or _EXEC_DATE_BASES["plan"]
@@ -18595,6 +18653,7 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
     """
     pf = _portal_filters_dict(portal_filters)
     wheres, params, im_resolved = _execution_analytics_where(pf, im)
+    scope_clause_ir, scope_params_ir, _ = _rollout_scope_clause(im, include_plan_im=True)
 
     # One GROUP BY per selected dimension — capped at 6 so the page stays a
     # single round trip of bounded cost.
@@ -18605,7 +18664,7 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
 
     empty = {
         "totals": {"lines": 0, "poids": 0, "duids": 0, "projects": 0, "value": 0.0,
-                   "closed": 0, "open": 0},
+                   "closed": 0, "open": 0, "issues_open": 0, "issues_value": 0.0},
         "buckets": [], "dimensions": [], "trend": [],
         "concentration": {"visits": [], "top_poids": [], "duids": [], "top_duids": []},
         "meta": {"date_basis": (pf.get("date_basis") or "plan"),
@@ -18647,6 +18706,34 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
     head = head[0] or {}
     total = cint(head.get("lines_n") or 0)
     closed_n = cint(head.get("closed_n") or 0)
+
+    # ── Issues & Risks: a total, NOT a bucket ─────────────────────────────
+    # A bucket is a slice of the base, and issue plans are no longer in the
+    # base — a bucket for them would read 0. They are still open work the PM
+    # has to see, so they are counted alongside it and routed to the page that
+    # works them.
+    #
+    # Scoped exactly as that page scopes itself: IM, project, site, team, and
+    # no date filter, because the page has none. Narrowing this by the
+    # analytics date range would make the tile disagree with the list it opens.
+    ir_wheres = [_issue_risk_open_sql(), scope_clause_ir]
+    ir_params = list(scope_params_ir)
+    for col, key in (("IFNULL(pd.project_code,'')", "project_code"),
+                     ("IFNULL(pd.site_code,'')", "site_code"),
+                     ("IFNULL(rp.team,'')", "team")):
+        c, p = _sql_in_or_eq(col, pf.get(key))
+        if c:
+            ir_wheres.append(c)
+            ir_params.extend(p)
+    ir = frappe.db.sql(
+        f"""SELECT COUNT(*) AS n, SUM(IFNULL(pd.line_amount, 0)) AS value
+            FROM `tabRollout Plan` rp
+            LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+            WHERE {' AND '.join(ir_wheres)}""",
+        tuple(ir_params), as_dict=True,
+    ) or [{}]
+    issues_n = cint((ir[0] or {}).get("n") or 0)
+    issues_value = flt((ir[0] or {}).get("value") or 0)
 
     buckets = []
     for k in bucket_keys:
@@ -18758,6 +18845,8 @@ def get_execution_analytics(im=None, portal_filters=None, dimensions=None):
             "value": flt(head.get("value") or 0),
             "closed": closed_n,
             "open": total - closed_n,
+            "issues_open": issues_n,
+            "issues_value": issues_value,
         },
         "buckets": buckets,
         "dimensions": out_dims,

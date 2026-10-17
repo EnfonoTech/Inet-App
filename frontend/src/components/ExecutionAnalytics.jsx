@@ -71,7 +71,7 @@ function Seg({ options, value, onChange }) {
   );
 }
 
-export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideDimensions }) {
+export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideDimensions, issuesHref }) {
   const navigate = useNavigate();
   const [closure, setClosure] = useState("all");
   const [basis, setBasis] = useState("plan");
@@ -176,7 +176,10 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
         <div style={bstat}>
           <div style={bstatL}>Value</div>
           <div style={{ ...bstatN, fontSize: 20 }}>SAR {money(t.value)}</div>
-          <div style={bstatS}>{t.open || 0} open · {t.closed || 0} closed</div>
+          <div style={bstatS}>
+            {t.open || 0} open · {t.closed || 0} closed
+            {(t.issues_open || 0) > 0 && ` · ${t.issues_open} on Issues & Risks`}
+          </div>
         </div>
       </div>
 
@@ -207,7 +210,30 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
               </button>
             );
           })}
-          {!(data?.buckets || []).some((b) => b.value > 0) && <Empty text="Nothing outstanding in this range." />}
+          {/* Issues & Risks — counted apart, and drawn apart. A plan with an
+              open issue is not execution work: it is not in the totals above
+              and no bucket can slice it, because it left the base. It is
+              still open work somebody owns, so it is shown — dashed, to say
+              it belongs to a different page. Once the issue is planned out,
+              the follow-up plan appears in the monitor like any other. */}
+          {(t.issues_open || 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => navigate(issuesHref || "/issues-risks")}
+              title="Plans with an open issue or risk — counted separately, not part of Open · click to open them"
+              style={{
+                ...bstat, flex: "1 1 132px", minWidth: 128, textAlign: "left",
+                background: "#fff", borderColor: C.border,
+                borderStyle: "dashed", cursor: "pointer",
+              }}
+            >
+              <div style={{ ...bstatL, color: C.muted }}>Issues &amp; Risks</div>
+              <div style={{ ...bstatN, color: C.muted }}>{t.issues_open}</div>
+              <div style={{ ...bstatS, color: C.muted, opacity: 0.85 }}>SAR {money(t.issues_value)}</div>
+            </button>
+          )}
+          {!(data?.buckets || []).some((b) => b.value > 0) && !(t.issues_open > 0)
+            && <Empty text="Nothing outstanding in this range." />}
         </div>
       </Card>
 

@@ -516,24 +516,89 @@ backend sites, would remove it. Not done.
 
 `get_execution_analytics` and `list_execution_monitor_rows` are built from the
 same `_execution_analytics_where`, so a tile and the list it opens must agree.
-They do: all **16 buckets** match their drill-through exactly, verified after
-the rule was unified (17 Oct 2026). Any future change to
+They do: all **16 buckets** match their drill-through exactly, re-verified
+after the rules below (17 Oct 2026). Any future change to
 `_visit_closed_exists_sql` must re-check this — a tile that disagrees with the
 list it opens is the most visible way this can break.
 
-Worth knowing before redesigning that page: the buckets it already computes
-are the monitoring view the PM needs, with no new query required —
+### `open` means what the monitor means [D]
+
+The page used to report **777 open** against the monitor's **477** — the same
+work, two numbers, which is the whole reason this file exists. Three things
+were different; all three are now the same rule:
+
+1. **Issue plans** were in the analytics base and not in the monitor's. They
+   belong on Issues & Risks (§7) and are counted there, not here.
+2. **Cancelled plans** (234) were in the base. `_ACTIONABLE` already kept them
+   out of every bucket; they were left in the totals so the `plan_status`
+   dimension could still show them. Hidden by default now — but *reachable*:
+   tick `Cancelled` in the status filter and the base keeps them and the
+   dimension lists them (235 lines). That mirrors the monitor, where the rule
+   has always lived in the frontend's default status tick-list rather than in
+   SQL. The same rule in two places, one of them a default the user can clear.
+3. **IM scope.** Analytics scoped on `pd.im` while the monitor, both IM pages
+   and Issues & Risks read `pd.im OR rp.im` — a plan can carry an IM its
+   dispatch does not. `_rollout_scope_clause(..., include_plan_im=True)`.
+
+Measured on the production copy, 17 Oct 2026 — analytics `open` against the
+monitor under its own default statuses, and `issues_open` against the Issues &
+Risks page, **per IM**:
+
+| | analytics | the page it must match |
+|---|---|---|
+| all IMs, open | 477 | 477 |
+| all IMs, Issues & Risks | 69 | 69 |
+| IM-MAJID / IM-AJMAL / IM-Manu, open | 358 / 82 / 36 | 358 / 82 / 36 |
+| the same three, Issues & Risks | 6 / 24 / 39 | 6 / 24 / 39 |
+
+Mismatched IMs: **0**.
+
+### Issues & Risks is a total, not a bucket [D]
+
+A bucket is a slice of the base, and issue plans are no longer in the base —
+a bucket for them would read 0. They are still open work somebody owns, so
+they are counted beside the buckets as `totals.issues_open` and drawn dashed,
+routing to `/issues-risks` (PM) or `/im-issues-risks` (IM).
+
+Deliberately **not** folded into `open`: a line waiting on an issue is not
+execution work. Once the issue is planned out, the follow-up plan enters the
+monitor like any other, and is counted there — which is why showing the two
+side by side does not double-count.
+
+`_issue_risk_open_sql()` is now the single definition of an open issue row,
+used by both the page and the tile, so they cannot drift.
+
+### `issue_flagged` counts the Work Done flag [D]
+
+The bucket read `rp.issue_category OR dex.any_issue` — the plan's reason a
+visit went wrong — while its `target` said `work_done`, so it opened a page
+that could not act on what it had counted. It now reads **Work Done's own**
+`issue_flag`: POD/PPT required, TFM check list, spare part return, PAT/HO
+approval — what is outstanding before a finished line can be billed.
+
+**246** Work Done records carry a flag, on **232** distinct plans; 14 plans
+have two flagged confirmations (two teams on one plan). The tile reads 232
+because every tile counts plans. Nothing is dropped by an exclusion — 0 are
+superseded, 0 cancelled, 0 issue-blocked, 0 internal.
+
+This also removed an exemption: `list_execution_monitor_rows` used to skip the
+issue block on a bucket drill-through, because the tile counted issue plans
+and the list did not. Both apply it unconditionally now.
 
 | Bucket | Plans | Means |
 |---|---|---|
-| `im_confirmation_pending` | 320 | TL finished, IM has not confirmed the execution |
-| `ciag_pending` | 219 | CIAG still Open |
-| `qc_pending` | 215 | QC not settled |
-| `dummy_unmapped` | 206 | dummy PO never mapped to a real line |
-| `overdue_by_date` | 178 | past its plan date |
-| `work_done_missing` | 54 | confirmed, no Work Done record yet |
+| `im_confirmation_pending` | 306 | TL finished, IM has not confirmed the execution |
+| `issue_flagged` | 232 | Work Done flagged — outstanding before billing |
+| `dummy_unmapped` | 201 | dummy PO never mapped to a real line |
+| `ciag_pending` | 185 | CIAG still Open |
+| `qc_pending` | 173 | QC not settled |
+| `overdue_by_date` | 114 | past its plan date |
+| `internal_pending` | 92 | internal work, IM has not confirmed |
+| `no_execution` | 51 | planned, nothing filed |
+| `work_done_missing` | 41 | confirmed, no Work Done record yet |
 
-`totals` reports **2,564 closed / 777 open** on the same definition.
+`totals` reports **3,040 lines · 2,563 closed · 477 open**, plus **69** on
+Issues & Risks counted separately.
 
 ---
 
