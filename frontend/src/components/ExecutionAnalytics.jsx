@@ -24,10 +24,13 @@ import {
  * choice as the weekly dashboards — there are no rows to page through.
  */
 
+// Open first, and the default — the page opens on the work that still needs
+// someone. "All" is the historical read, which is what the rest of the page
+// is for, but it is not where a PM starts.
 const CLOSURE = [
-  { id: "all", label: "All" },
   { id: "open", label: "Open" },
   { id: "closed", label: "Closed" },
+  { id: "all", label: "All" },
 ];
 const BASES = [
   { id: "plan", label: "Plan date" },
@@ -73,7 +76,7 @@ function Seg({ options, value, onChange }) {
 
 export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideDimensions, issuesHref, workDoneHref }) {
   const navigate = useNavigate();
-  const [closure, setClosure] = useState("all");
+  const [closure, setClosure] = useState("open");
   const [basis, setBasis] = useState("plan");
   const [range, setRange] = useState({ from: "", to: "" });
   const hidden = useMemo(() => new Set(hideDimensions || []), [hideDimensions]);
@@ -176,11 +179,15 @@ export default function ExecutionAnalytics({ imName, monitorHref, onDrill, hideD
         <div style={bstat}>
           <div style={bstatL}>Value</div>
           <div style={{ ...bstatN, fontSize: 20 }}>SAR {money(t.value)}</div>
-          <div style={bstatS}>
-            {t.open || 0} open · {t.closed || 0} closed
-            {(t.issues_open || 0) > 0 && ` · ${t.issues_open} on Issues & Risks`}
-            {(t.wd_issues_open || 0) > 0 && ` · ${t.wd_issues_open} flagged Work Done`}
-          </div>
+          {/* Only in the All view. Under Open or Closed the Seg above already
+              says which is on screen and the other side reads 0, and the
+              Issues & Risks / Work Done counts have their own tiles — all of
+              it together widened this card past the other four. */}
+          {closure === "all" && (
+            <div style={{ ...bstatS, whiteSpace: "nowrap" }}>
+              {t.open || 0} open · {t.closed || 0} closed
+            </div>
+          )}
         </div>
       </div>
 

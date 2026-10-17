@@ -29,6 +29,14 @@ import { money } from "../../utils/numberFormat";
 import { SitePhotosView } from "../../components/AttachmentsSection";
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
+// A named constant because the drill-in Clear has to put it back — see the
+// banner below. A tile opens with every status selected, by necessity: it
+// counted a population this filter must not re-narrow. Clearing the bucket
+// used to leave that empty selection behind with nothing on screen saying
+// so, and the page carried on listing all 711 plans — 234 of them cancelled
+// — under a header that agreed with it and an Analytics tab that did not.
+const DEFAULT_PLAN_STATUS = ["Planned", "Overdue", "Not Attended",
+  "In Execution", "Extended", "Completed"];
 const PLAN_STATUS_OPTIONS = ["", "Planned", "Planning with Issue", "In Execution", "Overdue", "Not Attended", "Extended", "Completed", "Cancelled"];
 
 function badgeTone(value) {
@@ -170,9 +178,8 @@ export default function ExecutionMonitor() {
   //     other 338 are superseded, because resolving an issue creates a
   //     Re-Visit and the original plan becomes a past attempt. Listing the
   //     status implied such plans might appear here; none can.
-  const [planStatusFilter, setPlanStatusFilter] = useState(_navExec?.planStatusFilter
-    ?? ["Planned", "Overdue", "Not Attended", "In Execution", "Extended",
-        "Completed"]);
+  const [planStatusFilter, setPlanStatusFilter] = useState(
+    _navExec?.planStatusFilter ?? DEFAULT_PLAN_STATUS);
   const [executionStatusFilter, setExecutionStatusFilter] = useState(_navExec?.executionStatusFilter ?? []);
   // Accepts a visit type from dashboard drill-through (Command dashboard's
   // Re-Visits tile), same as planStatusFilter/fromDate/toDate above.
@@ -690,7 +697,7 @@ export default function ExecutionMonitor() {
         {navBucket && (
           <div className="notice" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, background: "#EEF4FE", border: "1px solid #CFE0F8", color: "#1D5AAE" }}>
             <span>Showing <strong>{navLabel || "one bucket"}</strong> — the plans behind that number.</span>
-            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }} onClick={() => { setNavBucket(""); setNavLabel(""); setNavClosure(""); setNavVisits(""); }}>
+            <button type="button" className="btn-secondary" style={{ marginLeft: "auto", padding: "3px 9px", fontSize: 11 }} onClick={() => { setNavBucket(""); setNavLabel(""); setNavClosure(""); setNavVisits(""); setPlanStatusFilter(DEFAULT_PLAN_STATUS); }}>
               Clear
             </button>
           </div>

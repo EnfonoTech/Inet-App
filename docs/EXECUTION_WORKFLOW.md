@@ -616,6 +616,31 @@ commit in MariaDB, so it cannot disturb a transaction; and temp tables are
 per-connection and a worker reuses its connection, which is why the build
 drops first and `_ea_release()` runs in a `finally`.
 
+### The page opens on Open, and the two headers then agree [D]
+
+Analytics defaulted to `closure=all` — 3,040 lines, SAR 2,626,261 — stacked
+directly under the monitor's own header card reading 711 plans and SAR
+398,896. Two headers on one screen describing different populations.
+
+It opens on **Open** now (and the toggle reads Open · Closed · All, in that
+order). Against the monitor under its default statuses:
+
+| | page header | Analytics (Open) |
+|---|---|---|
+| Plans / Lines | 477 | 477 |
+| DUIDs | 249 | 249 |
+| Value | 236,737.00 | 236,737.00 |
+
+Every tile still reconciles with its drill-through in this view; only
+`work_done_missing` (41 → 37) and `dummy_unmapped` (201 → 198) change, which
+is the closed work leaving.
+
+The 711 itself was a second bug, in the monitor. A tile drill-in selects
+every plan status, necessarily — it counted a population the filter must not
+re-narrow — and the banner's **Clear** removed the bucket but left that empty
+selection behind, with nothing on screen saying so. The page went on listing
+711 plans, 234 of them cancelled. Clear restores `DEFAULT_PLAN_STATUS`.
+
 ### The ranked rails were not deterministic [D]
 
 `ORDER BY n DESC LIMIT 26` over a tied set returns whichever rows the plan
