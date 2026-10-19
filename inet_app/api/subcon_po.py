@@ -653,7 +653,9 @@ def _batch_linked_purchase_docs(po_dispatch_names):
                          p.name, '|', UPPER(IFNULL(c.milestone, '')), '|',
                          CASE WHEN p.docstatus = 1 THEN 'Submitted'
                               WHEN p.docstatus = 0 THEN 'Draft'
-                              WHEN p.docstatus = 2 THEN 'Cancelled' ELSE '?' END)
+                              WHEN p.docstatus = 2 THEN 'Cancelled' ELSE '?' END,
+                         '|', TRIM(TRAILING '.' FROM TRIM(TRAILING '0'
+                              FROM CAST(IFNULL(c.qty, 0) AS CHAR))))
                          ORDER BY p.name SEPARATOR ', ') AS csv
                 FROM `tab{child_dt}` c
                 JOIN `tab{parent_dt}` p ON p.name = c.parent
@@ -1037,6 +1039,11 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         # "Not Ordered", and never offers the label that IS on screen.
         "subcon_ms1": "IF(IFNULL(pd.sub_po_status_ms1,'') = '', 'Not Ordered', pd.sub_po_status_ms1)",
         "subcon_ms2": "IF(IFNULL(pd.sub_po_status_ms2,'') = '', 'Not Ordered', pd.sub_po_status_ms2)",
+        # Quantity on live supplier POs. CAST to CHAR so the option list is
+        # built from the same text the cell shows; excel_options_from_query
+        # detects an all-numeric list and sorts it numerically.
+        "ordered_qty_ms1": "CAST(IFNULL(oq1.qty, 0) AS CHAR)",
+        "ordered_qty_ms2": "CAST(IFNULL(oq2.qty, 0) AS CHAR)",
         # Purchase Orders / Invoices are attached by _batch_linked_purchase_docs()
         # after the main query. Mirror that lookup (same child->parent hop and
         # same "PO-0001|MS1|Submitted" formatting) so these columns filter too.
@@ -1254,6 +1261,22 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
           pd.sub_po_date_ms1, pd.sub_po_date_ms2,
           pd.sub_paid_date_ms1, pd.sub_paid_date_ms2,
           pd.sub_po_remark_ms1, pd.sub_po_remark_ms2,
+          -- How much QUANTITY is actually on live supplier POs, per
+          -- milestone. The joins have always computed this for the
+          -- duplicate guard; it was never shown, so a line ordered at the
+          -- wrong quantity looked identical to a correct one and the only
+          -- way to find out was to open the purchase order.
+          IFNULL(oq1.qty, 0) AS ordered_qty_ms1,
+          IFNULL(oq2.qty, 0) AS ordered_qty_ms2,
+          -- What the milestone MAY be ordered for, from the same expression
+          -- the To Order tab uses. A PO quantity is milestone-scaled -- the
+          -- line quantity times the milestone percentage -- so comparing it
+          -- against the raw line quantity flags 347 perfectly correct lines
+          -- as short-ordered. (No literal percent sign in this comment on
+          -- purpose: pymysql reads one as a format placeholder, even inside
+          -- a comment, and the query dies with "not enough arguments".)
+          {_entitled_qty_ms_sql(1)} AS entitled_qty_ms1,
+          {_entitled_qty_ms_sql(2)} AS entitled_qty_ms2,
           pd.creation, pd.modified
         {_SUBCON_FROM_JOIN}
         WHERE {where_sql}
@@ -1937,7 +1960,14 @@ def get_subcon_line_documents(po_dispatch=None):
     orders = {}
     for r in frappe.db.sql("""
         SELECT po.name, po.docstatus, po.supplier, po.transaction_date,
-               po.currency, po.grand_total, UPPER(IFNULL(poi.milestone,'')) AS milestone
+               po.currency, po.grand_total, UPPER(IFNULL(poi.milestone,'')) AS milestone,
+               -- THIS line's own quantity and value inside the order.
+               -- grand_total is the whole document, which on a 26-line PO
+               -- says nothing about what was ordered for this POID, and
+               -- with two orders on one line there was no way at all to see
+               -- which one carried how much.
+               IFNULL(poi.qty, 0) AS qty, IFNULL(poi.rate, 0) AS rate,
+               IFNULL(poi.amount, 0) AS amount
         FROM `tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
         WHERE poi.poid = %s
@@ -1947,16 +1977,23 @@ def get_subcon_line_documents(po_dispatch=None):
             "name": r.name, "state": _state(r.docstatus), "supplier": r.supplier,
             "date": str(r.transaction_date or ""),
             "currency": r.currency, "grand_total": flt(r.grand_total or 0),
-            "milestones": [], "url": f"/app/purchase-order/{r.name}",
+            "milestones": [], "legs": [], "line_qty": 0.0, "line_amount": 0.0,
+            "url": f"/app/purchase-order/{r.name}",
         })
         if r.milestone and r.milestone not in d["milestones"]:
             d["milestones"].append(r.milestone)
+        d["legs"].append({"milestone": r.milestone or "—", "qty": flt(r.qty),
+                          "rate": flt(r.rate), "amount": flt(r.amount)})
+        d["line_qty"] = flt(d["line_qty"]) + flt(r.qty)
+        d["line_amount"] = flt(d["line_amount"]) + flt(r.amount)
 
     invoices = {}
     for r in frappe.db.sql("""
         SELECT pi.name, pi.docstatus, pi.supplier, pi.bill_no, pi.bill_date, pi.posting_date,
                pi.currency, pi.grand_total, pii.purchase_order,
-               UPPER(IFNULL(pii.milestone,'')) AS milestone
+               UPPER(IFNULL(pii.milestone,'')) AS milestone,
+               IFNULL(pii.qty, 0) AS qty, IFNULL(pii.rate, 0) AS rate,
+               IFNULL(pii.amount, 0) AS amount
         FROM `tabPurchase Invoice Item` pii
         JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
         WHERE pii.poid = %s
@@ -1968,10 +2005,15 @@ def get_subcon_line_documents(po_dispatch=None):
             "posting_date": str(r.posting_date or ""),
             "currency": r.currency, "grand_total": flt(r.grand_total or 0),
             "purchase_order": r.purchase_order, "milestones": [],
+            "legs": [], "line_qty": 0.0, "line_amount": 0.0,
             "attachments": [], "url": f"/app/purchase-invoice/{r.name}",
         })
         if r.milestone and r.milestone not in d["milestones"]:
             d["milestones"].append(r.milestone)
+        d["legs"].append({"milestone": r.milestone or "—", "qty": flt(r.qty),
+                          "rate": flt(r.rate), "amount": flt(r.amount)})
+        d["line_qty"] = flt(d["line_qty"]) + flt(r.qty)
+        d["line_amount"] = flt(d["line_amount"]) + flt(r.amount)
 
     # The supplier's invoice file, attached by the Receive Invoice action.
     if invoices:

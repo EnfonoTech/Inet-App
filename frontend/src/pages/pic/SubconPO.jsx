@@ -163,6 +163,42 @@ function DocStateChip({ state }) {
   );
 }
 
+// What a document carries for THIS line, milestone by milestone. The
+// header figure is the whole document — on a 26-line PO that says nothing
+// about this POID, and with two orders on one line there was no way to see
+// which one held how much.
+// "2.1 x 414.90 = 871.29" on a single-leg document. With two milestones at
+// different rates there is no one rate to show, so it falls back to the
+// quantity and the money — never a multiply sign with nothing after it.
+function legSummary(d) {
+  const legs = d.legs || [];
+  const qty = fmtQty.format(d.line_qty || 0);
+  const amt = money.format(d.line_amount || 0);
+  if (legs.length === 1 && legs[0].rate) {
+    return `${qty} × ${money.format(legs[0].rate)} = ${amt}`;
+  }
+  return `${qty} = ${amt}`;
+}
+
+function LineLegs({ legs }) {
+  const list = legs || [];
+  // One leg says exactly what the "This Line" field beside it already says,
+  // word for word. Only a document covering both milestones has anything
+  // extra to show, so that is the only case this renders.
+  if (list.length < 2) return null;
+  return (
+    <div style={{ marginTop: 4, fontSize: "0.74rem", color: "#475569" }}>
+      {list.map((l, i) => (
+        <span key={`${l.milestone}-${i}`}>
+          {i > 0 ? " · " : ""}
+          <strong>{l.milestone}</strong>{" "}
+          {fmtQty.format(l.qty)} × {money.format(l.rate || 0)} = {money.format(l.amount)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function DetailModal({ row, onClose }) {
   const [docs, setDocs] = useState(null);
   const name = row?.po_dispatch;
@@ -259,9 +295,11 @@ function DetailModal({ row, onClose }) {
                 <div style={{ fontSize: "0.74rem", color: "#64748b", marginTop: 2 }}>
                   {d.milestones.join("+") || "—"}
                 </div>
+                <LineLegs legs={d.legs} />
               </div>
               <KV label="PO Date" value={d.date} />
-              <KV label="Total (incl. VAT)" value={`${d.currency || "SAR"} ${money.format(d.grand_total)}`} />
+              <KV label="This Line" value={legSummary(d)} />
+              <KV label="Order Total (incl. VAT)" value={`${d.currency || "SAR"} ${money.format(d.grand_total)}`} />
             </div>
           ))}
         </div>
@@ -288,10 +326,12 @@ function DetailModal({ row, onClose }) {
                     {d.milestones.join("+") || "—"}
                     {d.purchase_order ? ` · from ${d.purchase_order}` : ""}
                   </div>
+                  <LineLegs legs={d.legs} />
                 </div>
                 <KV label="Supplier Bill No" value={d.bill_no} mono />
                 <KV label="Supplier Bill Date" value={d.bill_date} />
-                <KV label="Total (incl. VAT)" value={`${d.currency || "SAR"} ${money.format(d.grand_total)}`} />
+                <KV label="This Line" value={legSummary(d)} />
+                <KV label="Bill Total (incl. VAT)" value={`${d.currency || "SAR"} ${money.format(d.grand_total)}`} />
               </div>
               <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
@@ -427,27 +467,65 @@ function Summary({ rows }) {
 // The CSV carries one entry per (document, milestone) pair, so a single PO that
 // covers both MS1 and MS2 of a line arrives twice under the same name — group
 // by document and list its milestones once instead of repeating the name.
+// Ordered quantity against what the supplier is entitled to on that
+// milestone. Amber when the two disagree: a line ordered short, or ordered
+// for more than it should have been, was previously invisible here — the
+// only way to find out was to open the purchase order itself.
+//
+// `entitled` comes from the backend (_entitled_qty_ms_sql), not from
+// qty x ms% worked out here. A PO quantity is milestone-scaled, so
+// comparing it against the raw line quantity marks every ordinary
+// part-milestone line as wrong — 347 of them on the production copy.
+function OrderedQtyCell(ordered, entitled, msAmount) {
+  if (!msAmount) return <span style={{ color: "#cbd5e1" }}>—</span>;
+  const got = Number(ordered || 0);
+  const want = Number(entitled || 0);
+  if (!got) return <span style={{ color: "#cbd5e1" }} title="No purchase order raised">0</span>;
+  const off = want > 0 && Math.abs(got - want) > 0.0001;
+  return (
+    <span style={{ color: off ? "#b45309" : "#0f172a", fontWeight: off ? 700 : 400 }}
+          title={off ? `Ordered ${got} but the line carries ${want}` : undefined}>
+      {fmtQty.format(got)}{off ? ` / ${fmtQty.format(want)}` : ""}
+    </span>
+  );
+}
+
 function DocLinks({ csv, base }) {
   if (!csv) return <span style={{ color: "#94a3b8" }}>—</span>;
   const byName = new Map();
   String(csv).split(", ").filter(Boolean).forEach((chunk) => {
-    const [name, ms, state] = chunk.split("|");
-    const cur = byName.get(name) || { name, state, ms: [] };
+    // name|MS|state|qty — qty is the quantity this document actually
+    // ordered for this line, which until now was nowhere on the screen.
+    const parts = chunk.split("|");
+    const name = parts[0];
+    const ms = parts[1];
+    const state = parts[2];
+    const qty = parts[3];
+    const cur = byName.get(name) || { name, state, ms: [], qty: [] };
     if (ms && !cur.ms.includes(ms)) cur.ms.push(ms);
+    if (qty) cur.qty.push({ ms: ms || "?", qty });
     byName.set(name, cur);
   });
   const docs = Array.from(byName.values());
   return (
     <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4 }}>
-      {docs.map(({ name, state, ms }) => {
+      {docs.map(({ name, state, ms, qty }) => {
         const tone = state === "Submitted" ? "#047857" : state === "Cancelled" ? "#b91c1c" : "#b45309";
         const legs = ms.sort().join("+");
+        // One leg: the milestone is already in the label, so just the
+        // number. Two: name each, or "x3, x1" says nothing about which.
+        const legQty = qty || [];
+        const qtys = legQty.length === 1
+          ? `x${legQty[0].qty}`
+          : legQty.slice().sort((a, b) => a.ms.localeCompare(b.ms))
+              .map((q) => `${q.ms} x${q.qty}`).join(", ");
         return (
           <a key={name} href={`/app/${base}/${name}`} target="_blank" rel="noreferrer"
              onClick={(e) => e.stopPropagation()}
-             title={`${name} · ${legs || "—"} · ${state || "?"}`}
+             title={`${name} · ${legs || "—"} · ${state || "?"}${qtys ? ` · qty ${qtys}` : ""}`}
              style={{ fontFamily: "monospace", fontSize: "0.72rem", color: tone, textDecoration: "none", borderBottom: `1px dotted ${tone}` }}>
             {name}{legs ? ` ${legs}` : ""}
+            {qtys ? <span style={{ color: "#64748b" }}>{` (${qtys})`}</span> : null}
           </a>
         );
       })}
@@ -1040,7 +1118,7 @@ export default function SubconPO() {
     }
   }
 
-  const COLS = 32;
+  const COLS = 34;
 
   return (
     <div>
@@ -1226,11 +1304,13 @@ export default function SubconPO() {
                 <th style={{ textAlign: "right" }}>MS1 Amt</th>
                 <th>Cust. MS1</th>
                 <th>Subcon MS1</th>
+                <th style={{ textAlign: "right" }} title="Quantity actually on live supplier POs for MS1">Ord Qty MS1</th>
                 <th style={{ textAlign: "right" }}>Payout MS1</th>
                 <th style={{ textAlign: "right" }}>VAT MS1</th>
                 <th style={{ textAlign: "right" }}>MS2 Amt</th>
                 <th>Cust. MS2</th>
                 <th>Subcon MS2</th>
+                <th style={{ textAlign: "right" }} title="Quantity actually on live supplier POs for MS2">Ord Qty MS2</th>
                 <th style={{ textAlign: "right" }}>Payout MS2</th>
                 <th style={{ textAlign: "right" }}>VAT MS2</th>
                 <th>Purchase Orders</th>
@@ -1330,6 +1410,10 @@ export default function SubconPO() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms1_amount || 0)}</td>
                   <td><PicStatusBadge value={r.pic_status_ms1} /></td>
                   <td><SubPoStatusBadge value={r.sub_po_status_ms1} /></td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                      title="Quantity on live supplier POs for MS1">
+                    {OrderedQtyCell(r.ordered_qty_ms1, r.entitled_qty_ms1, r.ms1_amount)}
+                  </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
                       title={r.sub_po_amount_ms1 ? "Amount on the issued Purchase Order" : "Expected from the master payout %"}>
                     {money.format(r.sub_po_amount_ms1 || r.expected_payout_ms1 || 0)}
@@ -1339,6 +1423,10 @@ export default function SubconPO() {
                   <td><PicMs2Badge value={r.pic_status_ms2} ms2Pct={r.ms2_pct} /></td>
                   <td>{r.ms2_amount ? <SubPoStatusBadge value={r.sub_po_status_ms2} />
                         : <span style={{ color: "#cbd5e1" }}>—</span>}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                      title="Quantity on live supplier POs for MS2">
+                    {OrderedQtyCell(r.ordered_qty_ms2, r.entitled_qty_ms2, r.ms2_amount)}
+                  </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
                       title={r.sub_po_amount_ms2 ? "Amount on the issued Purchase Order" : "Expected from the master payout %"}>
                     {r.ms2_amount
@@ -1390,11 +1478,13 @@ export default function SubconPO() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.ms1_amount)}</td>
                   <td></td>{/* Cust. MS1 */}
                   <td></td>{/* Subcon MS1 */}
+                  <td></td>{/* Ord Qty MS1 */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.payout_ms1)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.vat_ms1)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.ms2_amount)}</td>
                   <td></td>{/* Cust. MS2 */}
                   <td></td>{/* Subcon MS2 */}
+                  <td></td>{/* Ord Qty MS2 */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.payout_ms2)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.vat_ms2)}</td>
                   <td></td>{/* Purchase Orders */}
