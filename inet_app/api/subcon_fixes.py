@@ -92,7 +92,15 @@ def _guard(label, dry_run, fn):
         return {"state": "FAILED", "why": "%s: %s" % (label, str(exc)[:160])}
 
 
-def _fix_order(po_name, pct, dry_run, skip_posted_check=False):
+def _fix_order(po_name, pct, dry_run, skip_posted_check=False, only_poids=None):
+    """Re-rate a submitted order to ``pct``.
+
+    ``only_poids`` limits the change to those PO Dispatch lines; every other
+    row is sent through Update Items at the rate it already carries, so it is
+    passed through untouched. Without it the whole order moves, which is what
+    the October correction needed and what the 40% correction must NOT do:
+    PO-00031 carries 88 lines that stay at 85% alongside the 21 that move.
+    """
     if not frappe.db.exists("Purchase Order", po_name):
         return {"state": "refuse", "why": "no such Purchase Order on this site"}
     doc = frappe.get_doc("Purchase Order", po_name)
@@ -107,8 +115,26 @@ def _fix_order(po_name, pct, dry_run, skip_posted_check=False):
                 "why": "%d item(s) carry no POID - cannot re-rate them safely"
                        % (len(doc.items) - len(items))}
 
+    scope = {str(x).strip() for x in only_poids if str(x).strip()} if only_poids else None
+
+    def _in_scope(item):
+        return scope is None or (item.get("poid") or "").strip() in scope
+
+    def _rate_for(item):
+        # Out of scope: whatever the row already says. Sending the current
+        # rate through Update Items is how a row is left alone -- the call
+        # replaces the whole item set, so every row has to be listed.
+        return _target_rate(item, pct, doc) if _in_scope(item) else flt(item.rate)
+
+    if scope is not None:
+        found = {(i.get("poid") or "").strip() for i in items} & scope
+        if not found:
+            return {"state": "skip", "why": "none of those POIDs are on this order"}
+
     targets = []
     for item in items:
+        if not _in_scope(item):
+            continue
         new_rate = _target_rate(item, pct, doc)
         if new_rate is None:
             return {"state": "refuse",
@@ -125,7 +151,7 @@ def _fix_order(po_name, pct, dry_run, skip_posted_check=False):
     if blocker:
         return {"state": "refuse", "why": blocker}
 
-    new_total = sum(flt(i.qty) * flt(_target_rate(i, pct, doc)) for i in items)
+    new_total = sum(flt(i.qty) * flt(_rate_for(i)) for i in items)
     why = ("%d of %d rows, %s, %.2f -> %.2f"
            % (len(targets), len(items), doc.transaction_date,
               flt(doc.total), round(new_total, 2)))
@@ -154,7 +180,7 @@ def _fix_order(po_name, pct, dry_run, skip_posted_check=False):
             "idx": item.idx,
             "item_code": item.item_code,
             "qty": flt(item.qty),
-            "rate": flt(_target_rate(item, pct, doc)),
+            "rate": flt(_rate_for(item)),
             "uom": item.uom,
             "conversion_factor": flt(item.conversion_factor) or 1,
             "schedule_date": str(item.schedule_date or doc.schedule_date or ""),
@@ -163,7 +189,8 @@ def _fix_order(po_name, pct, dry_run, skip_posted_check=False):
     from erpnext.controllers.accounts_controller import update_child_qty_rate
     update_child_qty_rate("Purchase Order", json.dumps(trans_items), po_name)
 
-    _stamp_milestone_amounts(frappe.get_doc("Purchase Order", po_name), pct)
+    _stamp_milestone_amounts(frappe.get_doc("Purchase Order", po_name), pct,
+                             only_poids=scope)
     return {"state": "ok", "why": "RE-RATED: " + why}
 
 
@@ -260,7 +287,7 @@ def _fix_draft_invoice(pi_name, pct, dry_run):
     return {"state": "ok", "why": "RE-RATED BILL " + why}
 
 
-def _stamp_milestone_amounts(doc, pct):
+def _stamp_milestone_amounts(doc, pct, only_poids=None):
     """What create_purchase_order_from_pic stamps at creation, applied after.
 
     ``on_purchase_order_update_after_submit`` now does this for every Update
@@ -275,6 +302,10 @@ def _stamp_milestone_amounts(doc, pct):
         pd_name = (item.get("poid") or "").strip()
         ms = (item.get("milestone") or "").upper()
         if not pd_name or ms not in ("MS1", "MS2"):
+            continue
+        # A partial re-rate must not stamp its pct onto the rows it left
+        # alone -- that is how 88 lines at 85% would start claiming 40%.
+        if only_poids is not None and pd_name not in only_poids:
             continue
         n = 1 if ms == "MS1" else 2
         payload = {
@@ -663,7 +694,7 @@ def redo_imdad_bills_at_85(dry_run=1, orders=None, payout_pct=None):
         print("  Nothing was written. Re-run with dry_run=0 to apply.")
 
 
-def _redo_one(po_name, pct, dry_run):
+def _redo_one(po_name, pct, dry_run, only_poids=None):
     log = []
     if not frappe.db.exists("Purchase Order", po_name):
         return {"state": "refuse", "log": ["no such Purchase Order on this site"]}
@@ -699,7 +730,8 @@ def _redo_one(po_name, pct, dry_run):
             log.append("would cancel + delete %s (docstatus %s, %s, grand %.2f)"
                        % (bill.name, bill.docstatus, bill.posting_date,
                           flt(bill.grand_total)))
-        probe = _fix_order(po_name, pct, 1, skip_posted_check=True)
+        probe = _fix_order(po_name, pct, 1, skip_posted_check=True,
+                           only_poids=only_poids)
         log.append(probe["why"])
         log.append("would re-bill from the corrected order and submit"
                    + (", keeping posting date %s" % carry.posting_date if carry else ""))
@@ -712,7 +744,7 @@ def _redo_one(po_name, pct, dry_run):
                           ignore_permissions=True)
         log.append("cancelled + deleted %s" % bill.name)
 
-    verdict = _fix_order(po_name, pct, 0)
+    verdict = _fix_order(po_name, pct, 0, only_poids=only_poids)
     log.append(verdict["why"])
     if verdict["state"] == "refuse":
         return {"state": "refuse", "log": log}
@@ -730,6 +762,354 @@ def _redo_one(po_name, pct, dry_run):
     pi.submit()
     log.append("re-billed as %s, submitted, grand %.2f"
                % (pi.name, flt(pi.grand_total)))
+    return {"state": "ok", "log": log}
+
+
+# ── The 40% correction: 46 of Imdad's lines, not all 134 ────────────────
+#
+# The client asked for 46 POIDs to move from 85% to 40%. Those 46 are spread
+# across three orders that also carry 88 lines staying at 85%, and all three
+# orders are already billed, so this is the October sequence again -- cancel
+# the bill, re-rate, re-bill, submit -- with the re-rate limited to the named
+# lines.
+#
+# Moving the lines onto the 40% Subcontract Master is a SEPARATE step and
+# must come after: dispatch_subcontractor_locks refuses to re-point a line
+# whose supplier holds an issued PO, and it is right to.
+IMDAD_40_MASTER = "Imdad Line Establishment 40%"
+IMDAD_40_PCT = 40.0
+IMDAD_40_ORDERS = ("PO-00031", "PO-00036", "PO-00101")
+IMDAD_40_POIDS = (
+    "1011HG3167911-169-2-1", "1011HG3167911-86-3-1", "1011HG3167911-553-5-1",
+    "1011HG3167911-553-2-1", "1011HG3167911-158-3-1", "1011HG3167911-626-2-1",
+    "1011HG3167911-136-5-1", "1011HG3167911-129-2-1", "1011HG3167911-135-2-1",
+    "1011HG3167911-118-1-1", "1011HG3167911-106-2-1", "1011HG3167911-69-1-1",
+    "1011HG3167911-105-2-1", "1011HG3167911-73-1-1", "1011HG3167911-126-1-1",
+    "1011HG3167911-125-3-1", "1011HG3167911-72-2-1", "1011HG3167911-71-3-1",
+    "1011HG3167911-70-2-1", "1011HG3167911-84-3-1", "1011HG3167911-67-1-1",
+    "1011HG3167911-168-4-1", "1011HG3167911-168-1-1", "1011HG3167911-58-3-1",
+    "1011HG3167911-139-3-1", "1011HG3167911-119-1-1", "1011HG3167911-128-2-1",
+    "1011HG3167911-87-2-1", "1011HG3167911-636-1-1", "1011HG3167911-156-2-1",
+    "1011HG3167911-255-1-1", "1011HG3167911-178-2-1", "1011HG3167911-178-4-1",
+    "1011HG3167911-177-1-1", "1011HG3167911-141-5-1", "1011HG3167911-141-4-1",
+    "1011HG3167911-254-2-1", "1011HG3167911-121-1-1", "1011HG3167911-88-2-1",
+    "1011HG3167911-123-2-1", "1011HG3167911-102-1-1", "1011HG3167911-173-3-1",
+    "1011HG3167911-122-2-1", "1011HG3167911-61-1-1", "1011HG3167911-155-2-1",
+    "1011HG3167911-60-3-1",
+)
+
+
+def _resolve_poids(poids):
+    """Client POIDs -> PO Dispatch names, which is what a PO row carries."""
+    out, missing = [], []
+    for poid in poids:
+        name = frappe.db.get_value("PO Dispatch", {"poid": poid}, "name")
+        if name:
+            out.append(name)
+        else:
+            missing.append(poid)
+    return out, missing
+
+
+def _attachment_backup_dir():
+    import os
+    return os.path.join(frappe.get_site_path(), "private", "files",
+                        "subcon_fix_backup")
+
+
+def _backup_filename(bill, file_name):
+    """One stable name per (bill, attachment), so the restore can find it.
+
+    The bill name is the prefix because the same supplier PDF can be attached
+    to more than one bill, and the restore has to put each copy back under
+    the document it belonged to.
+    """
+    return "%s__%s" % (bill, file_name)
+
+
+def backup_bill_attachments(bills=None, dry_run=1):
+    """Copy each bill's attachments aside BEFORE anything deletes them.
+
+    Run this first, always. Cancelling and deleting a Purchase Invoice takes
+    its File rows with it, and Frappe removes the stored blob when the last
+    row referencing it goes -- so the supplier's own invoice PDF is gone from
+    disk, not just unlinked. In October that cost a restore from the 03:16
+    backup tar to get three PDFs back.
+
+    Copies to <site>/private/files/subcon_fix_backup/ and prints every path,
+    so a re-upload afterwards is a drag and drop rather than an archaeology
+    exercise.
+    """
+    import os
+    import shutil
+
+    dry_run = int(dry_run)
+    names = list(bills or ("PI-00013", "PI-00014", "PI-00015"))
+    site = frappe.get_site_path()
+    dest_dir = _attachment_backup_dir()
+
+    rows = frappe.get_all(
+        "File",
+        filters={"attached_to_doctype": "Purchase Invoice",
+                 "attached_to_name": ["in", names]},
+        fields=["name", "file_name", "file_url", "is_private", "attached_to_name"])
+    if not rows:
+        print("  no attachments found on %s" % ", ".join(names))
+        return
+
+    if not dry_run:
+        os.makedirs(dest_dir, exist_ok=True)
+
+    copied = missing = 0
+    for r in rows:
+        url = r.get("file_url") or ""
+        rel = url.lstrip("/")
+        src = (os.path.join(site, rel) if url.startswith("/private/")
+               else os.path.join(site, "public", rel))
+        if not os.path.exists(src):
+            missing += 1
+            print("  %-10s MISSING ON DISK  %s" % (r["attached_to_name"], r["file_name"]))
+            print("             expected: %s" % src)
+            continue
+        copied += 1
+        dest = os.path.join(dest_dir, _backup_filename(r["attached_to_name"], r["file_name"]))
+        print("  %-10s %s" % (r["attached_to_name"], r["file_name"]))
+        print("             %s" % src)
+        if not dry_run:
+            shutil.copy2(src, dest)
+            print("             copied to %s" % dest)
+
+    print("  %d attachment(s) %s, %d missing on disk"
+          % (copied, "copied" if not dry_run else "would be copied", missing))
+    if dry_run:
+        print("  Nothing was copied. Re-run with dry_run=0 before deleting any bill.")
+
+
+def redo_imdad_bills_at_40(dry_run=1, orders=None, poids=None, payout_pct=None):
+    """Cancel each bill, re-rate ONLY the named lines to 40%, re-bill, submit.
+
+    Same sequence and the same guards as redo_imdad_bills_at_85 -- it refuses
+    outright if any bill has a payment or is part settled -- but the re-rate
+    is limited to ``poids``. Everything else on those orders is sent through
+    Update Items at its existing rate and comes out unchanged.
+    """
+    dry_run = int(dry_run)
+    pct = flt(payout_pct or IMDAD_40_PCT)
+    names = list(orders or IMDAD_40_ORDERS)
+
+    scope, missing = _resolve_poids(list(poids or IMDAD_40_POIDS))
+    for poid in missing:
+        print("  %-26s NOT FOUND on this site" % poid)
+    print("  %d POID(s) in scope, %d order(s), target %g%%"
+          % (len(scope), len(names), pct))
+    if not scope:
+        print("  nothing to do")
+        return
+
+    ok = failed = 0
+    for po_name in names:
+        verdict = _guard(po_name, dry_run,
+                         lambda: _redo_one(po_name, pct, dry_run, only_poids=scope))
+        for line in verdict.get("log", [verdict.get("why", "")]):
+            print("  %-10s %s" % (po_name, line))
+        if verdict["state"] == "FAILED":
+            failed += 1
+            print("  %-10s STOPPING - fix this before continuing" % po_name)
+            break
+        if verdict["state"] == "ok":
+            ok += 1
+
+    print("redo_imdad_bills_at_40 (%s): %d order(s) done, %d failed"
+          % ("DRY RUN" if dry_run else "APPLIED", ok, failed))
+    if dry_run:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
+# ── 1011HG3068810-966-2-1: the line says 3, the work was 2 ──────────────
+#
+# Client-confirmed. The customer side already agrees: ms1_invoiced is 348.00,
+# exactly 2 x 174.00, with 174.00 sitting unbilled -- so cutting the line to
+# 2 settles the unbilled remainder rather than creating one, and no customer
+# invoice is touched.
+#
+# The supplier side does have to move: PO-00022 was raised for 3 and
+# PI-00016 bills it, both submitted. Same sequence as the 40% correction --
+# cancel the bill, change the quantity, re-bill -- because a submitted bill
+# is posted accounting that a quantity change would strand.
+QTY_FIX_POID = "1011HG3068810-966-2-1"
+QTY_FIX_ORDER = "PO-00022"
+QTY_FIX_NEW_QTY = 2.0
+
+
+def fix_line_qty(dry_run=1, poid=None, order=None, new_qty=None):
+    """Cut one line's quantity everywhere it is recorded, bill included.
+
+    PO Dispatch, its Work Done, the supplier order row and the bill on top of
+    it. Refuses rather than guesses whenever the line is not the simple shape
+    this was written for -- several Work Done records, a closure ledger, a
+    rollout plan, or a bill that has been paid.
+    """
+    dry_run = int(dry_run)
+    poid = poid or QTY_FIX_POID
+    po_name = order or QTY_FIX_ORDER
+    new_qty = flt(new_qty if new_qty is not None else QTY_FIX_NEW_QTY)
+
+    pd_name = frappe.db.get_value("PO Dispatch", {"poid": poid}, "name")
+    if not pd_name:
+        print("  %s: not on this site" % poid)
+        return
+    pd = frappe.db.get_value(
+        "PO Dispatch", pd_name,
+        ["qty", "rate", "line_amount", "ms1_pct", "ms1_amount", "ms2_amount",
+         "ms1_invoiced", "ms1_unbilled", "confirmed_qty"], as_dict=True)
+    old_qty = flt(pd.qty)
+    rate = flt(pd.rate)
+    if old_qty == new_qty:
+        print("  %s already at qty %g" % (poid, new_qty))
+        return
+    if new_qty <= 0 or new_qty > old_qty:
+        print("  %s: refusing to go from %g to %g" % (poid, old_qty, new_qty))
+        return
+    if flt(pd.ms2_amount):
+        print("  %s: has an MS2 value - not the shape this handles" % poid)
+        return
+
+    new_line = flt(rate * new_qty, 2)
+    new_ms1 = flt(new_line * flt(pd.ms1_pct) / 100.0, 2)
+    print("  %s  qty %g -> %g" % (poid, old_qty, new_qty))
+    print("     line amount %.2f -> %.2f" % (flt(pd.line_amount), new_line))
+    print("     MS1 amount  %.2f -> %.2f   (invoiced %.2f, unbilled %.2f)"
+          % (flt(pd.ms1_amount), new_ms1, flt(pd.ms1_invoiced), flt(pd.ms1_unbilled)))
+
+    plans = frappe.db.count("Rollout Plan", {"po_dispatch": pd_name})
+    if plans:
+        print("     REFUSE: %d rollout plan(s) - the quantity is planned work, "
+              "not a correction" % plans)
+        return
+    wds = frappe.get_all("Work Done", filters={"system_id": pd_name},
+                         fields=["name", "executed_qty", "revenue_sar", "source"])
+    if len(wds) > 1:
+        print("     REFUSE: %d Work Done records" % len(wds))
+        return
+    wd = wds[0] if wds else None
+    if wd:
+        closures = frappe.db.count("Work Done Closure", {"parent": wd["name"]})
+        if closures:
+            print("     REFUSE: %s has %d closure row(s) - re-dividing a ledger "
+                  "is subcon_reconcile's job" % (wd["name"], closures))
+            return
+        print("     %s  executed %g -> %g, revenue %.2f -> %.2f  (%s)"
+              % (wd["name"], flt(wd["executed_qty"]), new_qty,
+                 flt(wd["revenue_sar"]), new_line, wd["source"]))
+
+    rows = frappe.db.sql(
+        """SELECT poi.name, poi.qty, poi.rate, poi.amount, po.docstatus
+             FROM `tabPurchase Order Item` poi
+             JOIN `tabPurchase Order` po ON po.name = poi.parent
+            WHERE poi.parent = %s AND poi.poid = %s""",
+        (po_name, pd_name), as_dict=True)
+    if len(rows) != 1:
+        print("     REFUSE: %d row(s) for this line on %s" % (len(rows), po_name))
+        return
+    row = rows[0]
+    print("     %s row  qty %g -> %g, amount %.2f -> %.2f"
+          % (po_name, flt(row.qty), new_qty, flt(row.amount),
+             flt(flt(row.rate) * new_qty, 2)))
+
+    verdict = _guard(po_name, dry_run, lambda: _redo_one_qty(
+        po_name, row.name, new_qty, pd_name, new_line, wd, dry_run))
+    for line in verdict.get("log", [verdict.get("why", "")]):
+        print("     %s" % line)
+    print("fix_line_qty (%s): %s" % ("DRY RUN" if dry_run else "APPLIED",
+                                     verdict["state"]))
+    if dry_run:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
+def _redo_one_qty(po_name, row_name, new_qty, pd_name, new_line, wd, dry_run):
+    """Cancel the bill, change the quantity, re-bill -- as _redo_one does."""
+    log = []
+    bills = frappe.db.sql(
+        """SELECT DISTINCT pi.name, pi.docstatus, pi.posting_date, pi.bill_no,
+                  pi.bill_date, pi.outstanding_amount, pi.grand_total
+             FROM `tabPurchase Invoice` pi
+             JOIN `tabPurchase Invoice Item` pii ON pii.parent = pi.name
+            WHERE pii.purchase_order = %s AND pi.docstatus < 2""",
+        (po_name,), as_dict=True)
+    for bill in bills:
+        paid = frappe.db.sql(
+            """SELECT pe.name FROM `tabPayment Entry Reference` per
+                 JOIN `tabPayment Entry` pe ON pe.name = per.parent AND pe.docstatus = 1
+                WHERE per.reference_doctype = 'Purchase Invoice'
+                  AND per.reference_name = %s LIMIT 1""", (bill.name,))
+        if paid:
+            return {"state": "refuse",
+                    "log": ["%s has a payment (%s)" % (bill.name, paid[0][0])]}
+        if bill.docstatus == 1 and flt(bill.outstanding_amount) < flt(bill.grand_total):
+            return {"state": "refuse",
+                    "log": ["%s is part settled" % bill.name]}
+
+    carry = bills[0] if bills else None
+    if dry_run:
+        for bill in bills:
+            log.append("would cancel + delete %s (grand %.2f)"
+                       % (bill.name, flt(bill.grand_total)))
+        log.append("would set the order row to %g and re-bill" % new_qty)
+        return {"state": "ok", "log": log}
+
+    for bill in bills:
+        if bill.docstatus == 1:
+            frappe.get_doc("Purchase Invoice", bill.name).cancel()
+        frappe.delete_doc("Purchase Invoice", bill.name, force=1,
+                          ignore_permissions=True)
+        log.append("cancelled + deleted %s" % bill.name)
+
+    _set_po_qty(po_name, row_name, new_qty)
+    log.append("order row set to %g" % new_qty)
+
+    # The line itself, and the Work Done built from it.
+    #
+    # The derived money is taken from the doctype's own _compute_ms_amounts
+    # rather than worked out here, then written field by field. Writing
+    # qty/line_amount alone left ms1_unbilled claiming 174.00 still to bill
+    # on a line that is now fully invoiced, and remaining_milestone_pct with
+    # it. A plain doc.save() would recompute them -- and re-run the PIC
+    # status machinery over a closed line, which is the thing to avoid.
+    doc = frappe.get_doc("PO Dispatch", pd_name)
+    doc.qty = new_qty
+    doc.line_amount = new_line
+    doc._compute_ms_amounts()
+    frappe.db.set_value("PO Dispatch", pd_name, {
+        "qty": flt(doc.qty),
+        "line_amount": flt(doc.line_amount),
+        "ms1_amount": flt(doc.ms1_amount),
+        "ms2_amount": flt(doc.ms2_amount),
+        "ms1_unbilled": flt(doc.ms1_unbilled),
+        "ms2_unbilled": flt(doc.ms2_unbilled),
+        "remaining_milestone_pct": flt(doc.remaining_milestone_pct),
+    }, update_modified=True)
+    log.append("PO Dispatch set to qty %g, line %.2f, MS1 %.2f, unbilled %.2f"
+               % (new_qty, flt(doc.line_amount), flt(doc.ms1_amount),
+                  flt(doc.ms1_unbilled)))
+    if wd:
+        frappe.db.set_value("Work Done", wd["name"], {
+            "executed_qty": new_qty, "revenue_sar": new_line,
+        }, update_modified=True)
+        log.append("%s set to %g / %.2f" % (wd["name"], new_qty, new_line))
+
+    from inet_app.api.subcon_po import receive_supplier_invoice
+    made = receive_supplier_invoice(
+        purchase_order=po_name,
+        bill_no=(carry.bill_no if carry else None),
+        bill_date=(carry.bill_date if carry else None))
+    pi = frappe.get_doc("Purchase Invoice", made["purchase_invoice"])
+    if carry and carry.posting_date:
+        pi.set_posting_time = 1
+        pi.posting_date = carry.posting_date
+        pi.save(ignore_permissions=True)
+    pi.submit()
+    log.append("re-billed as %s, submitted, grand %.2f" % (pi.name, flt(pi.grand_total)))
+    frappe.db.commit()
     return {"state": "ok", "log": log}
 
 
@@ -857,6 +1237,7 @@ def _restore_deleted_attachments(olds, dry_run):
     nothing is worse than an honest "re-upload this".
     """
     import os
+    import shutil
 
     wanted = set(olds)
     site = frappe.get_site_path()
@@ -881,12 +1262,27 @@ def _restore_deleted_attachments(olds, dry_run):
             already += 1
             continue
         if not os.path.exists(path):
-            missing += 1
-            print("  %-10s NEEDS RE-UPLOAD: %s" % (target, data.get("file_name")))
-            print("             looked for: %s" % path)
-            continue
+            # The bytes went with the bill, as they always do. Put them back
+            # from the copy backup_bill_attachments took beforehand -- at the
+            # ORIGINAL file_url, so the File row below describes a file that
+            # really is there, under the name the supplier sent.
+            spare = os.path.join(_attachment_backup_dir(),
+                                 _backup_filename(target, data.get("file_name") or ""))
+            if os.path.exists(spare):
+                print("  %-10s restoring %s from the pre-delete backup"
+                      % (target, data.get("file_name")))
+                if not dry_run:
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    shutil.copy2(spare, path)
+            else:
+                missing += 1
+                print("  %-10s NEEDS RE-UPLOAD: %s" % (target, data.get("file_name")))
+                print("             looked for: %s" % path)
+                print("             and no backup at: %s" % spare)
+                continue
         found += 1
-        print("  %-10s re-attaching %s" % (target, data.get("file_name")))
+        print("  %-10s %s %s" % (target, "re-attaching" if not dry_run
+                                   else "would re-attach", data.get("file_name")))
         if not dry_run:
             doc = frappe.new_doc("File")
             for field in ("file_name", "file_url", "is_private", "content_hash",
