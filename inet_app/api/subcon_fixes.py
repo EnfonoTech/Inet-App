@@ -925,6 +925,84 @@ def redo_imdad_bills_at_40(dry_run=1, orders=None, poids=None, payout_pct=None):
         print("  Nothing was written. Re-run with dry_run=0 to apply.")
 
 
+def restamp_subcontract_dimension(dry_run=1, poids=None):
+    """Put the `subcontract` tag on PO/PI item rows back in step with the line.
+
+    `subcontract` is a Custom Field on Purchase Order Item and Purchase
+    Invoice Item -- the supplier contract the row was raised under. Nothing
+    keeps it in step when a line is re-pointed at a different Subcontract
+    Master, so after move_imdad_lines_to_40 all 46 orders and all 46 bill
+    rows still read "Imdad Line Establishment 85%" while the line reads 40%.
+
+    It is not a registered Accounting Dimension and never reaches GL Entry,
+    so this is a tag correction with no accounting consequence -- which is
+    why a direct write is right. `allow_on_submit` is 0, so the UI cannot
+    do it on a submitted document anyway.
+
+    Two things it refuses rather than guesses:
+
+    * a line split across several allocations -- which leg an order belongs
+      to is not derivable from the line's single stamp;
+    * a row whose contract names a DIFFERENT SUPPLIER, not just a different
+      rate for the same one. That is not drift, it is an order raised on
+      somebody else, and it needs a person.
+    """
+    dry_run = int(dry_run)
+    fixed = skipped = refused = 0
+
+    for dt, parent in (("Purchase Order Item", "Purchase Order"),
+                       ("Purchase Invoice Item", "Purchase Invoice")):
+        if not frappe.db.has_column(dt, "subcontract"):
+            continue
+        where = ["IFNULL(c.subcontract,'') <> IFNULL(pd.contract,'')",
+                 "IFNULL(pd.contract,'') <> ''", "p.docstatus < 2"]
+        params = {}
+        if poids:
+            where.append("pd.poid IN %(poids)s")
+            params["poids"] = list(poids)
+        rows = frappe.db.sql(f"""
+            SELECT c.name, c.parent, pd.name AS pd_name, pd.poid,
+                   c.subcontract AS on_doc, pd.contract AS on_line
+            FROM `tab{dt}` c
+            JOIN `tab{parent}` p ON p.name = c.parent
+            JOIN `tabPO Dispatch` pd ON pd.name = c.poid
+            WHERE {' AND '.join(where)}
+            ORDER BY c.parent, c.idx""", params, as_dict=True)
+        if rows:
+            print("  %s: %d row(s) out of step" % (dt, len(rows)))
+        for r in rows:
+            allocs = frappe.db.count(
+                "PO Subcontract Allocation",
+                {"parent": r.pd_name, "parenttype": "PO Dispatch",
+                 "parentfield": "subcontract_allocations"})
+            if allocs > 1:
+                print("     %-26s %s SPLIT across %d suppliers - left alone"
+                      % (r.poid, r.parent, allocs))
+                skipped += 1
+                continue
+            sup_doc = frappe.db.get_value("Subcontract Master", r.on_doc, "supplier")
+            sup_line = frappe.db.get_value("Subcontract Master", r.on_line, "supplier")
+            if sup_doc and sup_line and sup_doc != sup_line:
+                print("     %-26s %s REFUSE: %s is a different supplier (%s vs %s)"
+                      % (r.poid, r.parent, r.on_doc, sup_doc, sup_line))
+                refused += 1
+                continue
+            print("     %-26s %s  %s -> %s"
+                  % (r.poid, r.parent, r.on_doc, r.on_line))
+            fixed += 1
+            if not dry_run:
+                frappe.db.set_value(dt, r.name, "subcontract", r.on_line,
+                                    update_modified=False)
+
+    if not dry_run:
+        frappe.db.commit()
+    print("restamp_subcontract_dimension (%s): %d corrected, %d split lines left "
+          "alone, %d refused" % ("DRY RUN" if dry_run else "APPLIED",
+                                 fixed, skipped, refused))
+    if dry_run and fixed:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
 def move_imdad_lines_to_40(dry_run=1, poids=None, master=None):
     """Re-point the 46 corrected lines onto the 40% Subcontract Master.
 
@@ -996,6 +1074,13 @@ def move_imdad_lines_to_40(dry_run=1, poids=None, master=None):
              "sub_po_date_ms2", "sub_paid_date_ms2"], as_dict=True) or {}
         _mirror_to_allocation(pd_name, {k: v for k, v in line.items() if v is not None})
         moved += 1
+
+    # The order and bill rows carry their own copy of the contract. Nothing
+    # keeps it in step with the line, so the move has to -- without this the
+    # 46 orders still read 85% while the line reads 40%.
+    if moved:
+        print("  re-stamping the subcontract tag on the order and bill rows:")
+        restamp_subcontract_dimension(dry_run=dry_run, poids=names)
 
     print("move_imdad_lines_to_40 (%s): %d moved, %d already there, %d refused"
           % ("DRY RUN" if dry_run else "APPLIED", moved, already, refused))
