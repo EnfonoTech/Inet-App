@@ -925,6 +925,84 @@ def redo_imdad_bills_at_40(dry_run=1, orders=None, poids=None, payout_pct=None):
         print("  Nothing was written. Re-run with dry_run=0 to apply.")
 
 
+def move_imdad_lines_to_40(dry_run=1, poids=None, master=None):
+    """Re-point the 46 corrected lines onto the 40% Subcontract Master.
+
+    The rate correction fixed the money; this fixes the label. Until it runs
+    the lines still read "Imdad Line Establishment 85%" while being paid at
+    40%, and the 40% master shows nothing at all.
+
+    Goes through set_subcontractor_allocation, so it keeps that endpoint's
+    guards -- including the supplier-PO lock, which now compares SUPPLIERS
+    rather than master names and therefore allows this move: both masters
+    are Imdad Line Establishment, so the orders are not contradicted.
+
+    The allocation's own PO tracking columns are re-mirrored afterwards.
+    _write_allocations carries them across by subcontractor name, and the
+    name is exactly what changes here, so without this the new row would
+    claim no order was ever raised.
+    """
+    from inet_app.api.subcon_reconcile import set_subcontractor_allocation
+
+    dry_run = int(dry_run)
+    target = master or IMDAD_40_MASTER
+    names = list(poids or IMDAD_40_POIDS)
+
+    if not frappe.db.exists("Subcontract Master", target):
+        print("  %s: no such Subcontract Master" % target)
+        return
+
+    moved = already = refused = 0
+    for poid in names:
+        pd_name = frappe.db.get_value("PO Dispatch", {"poid": poid}, "name")
+        if not pd_name:
+            print("  %-26s not on this site" % poid)
+            refused += 1
+            continue
+        current = str(frappe.db.get_value("PO Dispatch", pd_name, "contract") or "")
+        if current == target:
+            already += 1
+            continue
+
+        # The split must total what the line says was done -- the same rule
+        # set_subcontractor_allocation enforces, worked out the same way.
+        wd = frappe.get_all("Work Done", filters={"system_id": pd_name},
+                            fields=["executed_qty"], limit=1)
+        row = frappe.db.get_value("PO Dispatch", pd_name,
+                                  ["qty", "confirmed_qty"], as_dict=True) or {}
+        qty = (flt(wd[0]["executed_qty"]) if wd
+               else (flt(row.get("confirmed_qty")) or flt(row.get("qty"))))
+
+        print("  %-26s %s -> %s   qty %g" % (poid, current or "(none)", target, qty))
+        if dry_run:
+            moved += 1
+            continue
+
+        try:
+            set_subcontractor_allocation(
+                po_dispatch=pd_name,
+                allocation=json.dumps([{"subcontractor": target, "qty": qty}]),
+                remark="40 percent correction: re-pointed to %s" % target)
+        except Exception as exc:
+            print("     REFUSED: %s" % str(exc)[:160])
+            refused += 1
+            continue
+
+        line = frappe.db.get_value(
+            "PO Dispatch", pd_name,
+            ["sub_po_status_ms1", "sub_po_pct_ms1", "sub_po_amount_ms1",
+             "sub_po_date_ms1", "sub_paid_date_ms1",
+             "sub_po_status_ms2", "sub_po_pct_ms2", "sub_po_amount_ms2",
+             "sub_po_date_ms2", "sub_paid_date_ms2"], as_dict=True) or {}
+        _mirror_to_allocation(pd_name, {k: v for k, v in line.items() if v is not None})
+        moved += 1
+
+    print("move_imdad_lines_to_40 (%s): %d moved, %d already there, %d refused"
+          % ("DRY RUN" if dry_run else "APPLIED", moved, already, refused))
+    if dry_run:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
 # ── 1011HG3068810-966-2-1: the line says 3, the work was 2 ──────────────
 #
 # Client-confirmed. The customer side already agrees: ms1_invoiced is 348.00,

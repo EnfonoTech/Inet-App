@@ -382,21 +382,44 @@ def subcontractor_change_block(po_dispatch, allocation):
     fine (it is new work, ordered later); giving it less, or dropping it, is
     not — that is the PO being contradicted.
 
+    Compared by SUPPLIER, not by Subcontract Master. A purchase order is
+    raised on a supplier; the master is the rate agreed with them, and the
+    same supplier can have several. Imdad Line Establishment has an 85% and
+    a 40% master, and moving a line between the two contradicts no order —
+    the supplier, the quantity and the document are all unchanged. Keyed on
+    the master name it refused all 46 lines of a client-confirmed rate
+    correction. Moving to a DIFFERENT supplier while this one holds a PO is
+    still refused, which is the case the guard exists for.
+
     Returns ``(state, message)`` where state is SUBCON_LOCKED or SUBCON_WARN,
     or ``(SUBCON_FREE, None)``. The caller decides whether a warn blocks.
     """
     locks = dispatch_subcontractor_locks(po_dispatch)
     if not locks:
         return SUBCON_FREE, None
+
+    def _supplier(master):
+        """The supplier behind a master, or the master itself as a fallback.
+
+        A master with no supplier set must not collapse into every other
+        unset one, or two unrelated contracts would look like one party.
+        """
+        name = cstr(master or "").strip()
+        if not name:
+            return ""
+        sup = cstr(frappe.db.get_value("Subcontract Master", name, "supplier") or "")
+        return sup.strip() or name
+
     proposed = {}
     for a in (allocation or []):
         sub = cstr((a or {}).get("subcontractor") or "").strip()
         if sub:
-            proposed[sub] = proposed.get(sub, 0.0) + flt((a or {}).get("qty"))
+            key = _supplier(sub)
+            proposed[key] = proposed.get(key, 0.0) + flt((a or {}).get("qty"))
 
     hard, soft = [], []
     for sub, info in locks.items():
-        got = flt(proposed.get(sub, 0.0))
+        got = flt(proposed.get(_supplier(sub), 0.0))
         if got >= flt(info["qty"]) - 0.00005:
             continue
         where = " / ".join(info["statuses"])
