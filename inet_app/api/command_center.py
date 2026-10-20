@@ -29650,6 +29650,30 @@ _ADMIN_TEAM_EDITABLE_FIELDS = [
 ]
 
 
+# A plan that still belongs to a team on a given date.
+#
+# Not "plan_status is one of the live ones". plan_status is DERIVED from the
+# TL's flag and the IM's confirmation together, and a terminal state from
+# either side wins, so a TL marking tl_status = Completed drives the plan to
+# Completed before the IM has confirmed anything. Section 4 of
+# EXECUTION_WORKFLOW.md calls that normal and expected -- which makes the
+# status alone the wrong thing to ask. execution_status is the authority.
+#
+# So: a live status, OR a plan that is not Cancelled and has no execution
+# the IM has confirmed Completed. The team still owes that plan an outcome.
+_LIVE_PLAN_STATUSES = "('Planned', 'In Execution', 'Extended')"
+
+
+def _live_plan_for_team_sql(alias):
+    return (
+        f"({alias}.plan_status IN {_LIVE_PLAN_STATUSES}"
+        f" OR (IFNULL({alias}.plan_status, '') <> 'Cancelled'"
+        "     AND NOT EXISTS (SELECT 1 FROM `tabDaily Execution` de_live"
+        f"                     WHERE de_live.rollout_plan = {alias}.name"
+        "                       AND de_live.execution_status = 'Completed')))"
+    )
+
+
 @frappe.whitelist()
 def _team_today_status_sql(date_lit, *, backend_value="NULL"):
     """``INET Team.today_status`` for one date — the single definition.
@@ -29682,6 +29706,27 @@ def _team_today_status_sql(date_lit, *, backend_value="NULL"):
                      ``active_plan_count`` uses, so the two can no longer
                      disagree.
       Idle         — none of the above.
+
+    **Planned counts a plan the TL closed but the IM has not confirmed.**
+    plan_status is DERIVED from both sides and a terminal state from either
+    wins (section 4 of EXECUTION_WORKFLOW.md), so a team lead setting
+    tl_status = Completed drives the plan to Completed while the IM has not
+    confirmed -- which that section calls normal and expected. Reading the
+    status alone treated the TL's own flag as the end of the work, when
+    execution_status is the authority for membership everywhere else.
+
+    The symptom, reported from the floor: a team with a plan for that day
+    showing Idle. Reproduced on the production copy -- Team-13, plan
+    RPL-2026-119159 dated 2026-10-15 at status Completed, its execution
+    still In Progress and dated the 14th, read Idle on the 15th. Neither
+    Worked (the execution is on another date) nor Planned (the status is
+    terminal) could see it. 800 executions sit under a terminal plan this
+    way: 447 Completed, 338 Planning with Issue, 11 Overdue, 4 Not Attended.
+
+    In Execution was deliberately NOT loosened the same way. It means "right
+    now", and relaxing it promoted most of a past day's Worked teams into
+    In Execution -- 14 of 16 on 2026-10-13 -- which is the wrong word for a
+    day that has already gone.
     """
     return f"""CASE
                     WHEN IFNULL(it.team_category, '') = 'Backend Team' THEN {backend_value}
@@ -29708,7 +29753,7 @@ def _team_today_status_sql(date_lit, *, backend_value="NULL"):
                                 SELECT 1 FROM `tabRollout Plan Team` rpt_stat
                                 WHERE rpt_stat.parent = rp_s.name AND rpt_stat.team = it.name
                               ))
-                          AND rp_s.plan_status IN ('Planned', 'In Execution', 'Extended')
+                          AND {_live_plan_for_team_sql('rp_s')}
                           AND {date_lit} BETWEEN rp_s.plan_date AND IFNULL(rp_s.plan_end_date, rp_s.plan_date)
                     ) THEN 'Planned'
                     ELSE 'Idle'
@@ -29748,7 +29793,7 @@ def _team_today_driver_sql(date_lit):
                   WHERE (rp_d3.team = it.name OR EXISTS (
                           SELECT 1 FROM `tabRollout Plan Team` rpt_d3
                           WHERE rpt_d3.parent = rp_d3.name AND rpt_d3.team = it.name))
-                    AND rp_d3.plan_status IN ('Planned', 'In Execution', 'Extended')
+                    AND {_live_plan_for_team_sql('rp_d3')}
                     AND {date_lit} BETWEEN rp_d3.plan_date AND IFNULL(rp_d3.plan_end_date, rp_d3.plan_date)
                   ORDER BY rp_d3.plan_date, rp_d3.name LIMIT 1)
             )"""
@@ -29838,7 +29883,10 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
             "CAST((SELECT COUNT(*) FROM `tabRollout Plan` rp_a "
             "WHERE (rp_a.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_a "
             "WHERE rpt_a.parent = rp_a.name AND rpt_a.team = it.name)) "
-            "AND rp_a.plan_status IN ('Planned','In Execution','Extended') "
+            # Same rule as the Planned branch of _team_today_status_sql, on
+            # purpose: a team reading "Planned" with no active plans beside
+            # it is the contradiction that rule was built to end.
+            f"AND {_live_plan_for_team_sql('rp_a')} "
             f"AND {_date_lit} BETWEEN rp_a.plan_date AND IFNULL(rp_a.plan_end_date, rp_a.plan_date)"
             ") AS CHAR)"
         ),
@@ -29973,7 +30021,7 @@ def list_admin_teams(status=None, team_type=None, team_category=None, im=None, s
                         SELECT 1 FROM `tabRollout Plan Team` rpt_act
                         WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
                       ))
-                  AND rpa.plan_status IN ('Planned','In Execution','Extended')
+                  AND {_live_plan_for_team_sql('rpa')}
                   AND {date_expr} BETWEEN rpa.plan_date AND IFNULL(rpa.plan_end_date, rpa.plan_date)
             ) AS active_plan_count,
             ({_today_status_case}) AS today_status,
@@ -30064,7 +30112,10 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
             "CAST((SELECT COUNT(*) FROM `tabRollout Plan` rp_a "
             "WHERE (rp_a.team = it.name OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt_a "
             "WHERE rpt_a.parent = rp_a.name AND rpt_a.team = it.name)) "
-            "AND rp_a.plan_status IN ('Planned','In Execution','Extended') "
+            # Same rule as the Planned branch of _team_today_status_sql, on
+            # purpose: a team reading "Planned" with no active plans beside
+            # it is the contradiction that rule was built to end.
+            f"AND {_live_plan_for_team_sql('rp_a')} "
             f"AND {_date_lit} BETWEEN rp_a.plan_date AND IFNULL(rp_a.plan_end_date, rp_a.plan_date)"
             ") AS CHAR)"
         ),
@@ -30189,7 +30240,7 @@ def list_im_teams(im=None, status=None, team_type=None, team_category=None, sear
                         SELECT 1 FROM `tabRollout Plan Team` rpt_act
                         WHERE rpt_act.parent = rpa.name AND rpt_act.team = it.name
                       ))
-                  AND rpa.plan_status IN ('Planned','In Execution','Extended')
+                  AND {_live_plan_for_team_sql('rpa')}
                   AND {date_expr} BETWEEN rpa.plan_date AND IFNULL(rpa.plan_end_date, rpa.plan_date)
             ) AS active_plan_count,
             ({_today_status_case}) AS today_status,
