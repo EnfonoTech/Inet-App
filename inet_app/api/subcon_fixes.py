@@ -925,6 +925,315 @@ def redo_imdad_bills_at_40(dry_run=1, orders=None, poids=None, payout_pct=None):
         print("  Nothing was written. Re-run with dry_run=0 to apply.")
 
 
+# ── Jereesh Moosa: 66 lines from 80%% to 75%% ────────────────────────────
+#
+# Client-confirmed. Simpler than the Imdad correction in every way that
+# matters: one order, PO-00114, holding exactly these 66 lines and nothing
+# else, and no purchase invoice raised on it at all. So there is no bill to
+# cancel and re-issue -- the order is re-rated in place and the lines are
+# re-pointed at the 75%% master.
+#
+# MS2 is worth 3,225.60 across 32 of these lines but has no purchase order
+# behind it (the milestones the client is still deciding about), so only
+# MS1 moves: 29,867.52 at 80%% becomes 28,000.80 at 75%%.
+JEREESH_75_MASTER = "Jereesh Moosa 75%"
+JEREESH_75_PCT = 75.0
+JEREESH_75_ORDER = "PO-00114"
+JEREESH_75_POIDS = (
+    "1011HG3167911-226-1-1", "1011HG3167911-246-1-1",
+    "1011HG3068810-1007-1-1", "1011HG3068810-1007-3-1",
+    "1011HG3068810-1028-1-1", "1011HG3068810-1033-1-1",
+    "1011HG3068810-1045-1-1", "1011HG3167911-998-1-1",
+    "1011HG3167911-1345-1-1", "1011HG3167911-1346-1-1",
+    "1011HG3167911-1352-1-1", "1011HG3167911-1354-1-1",
+    "1011HG3167911-1355-1-1", "1011HG3167911-1368-1-1",
+    "1011HG3167911-1375-1-1", "1011HG3167911-1381-1-1",
+    "1011HG3167911-1383-1-1", "1011HG3167911-1390-1-1",
+    "1011HG3167911-1394-1-1", "1011HG3167911-1403-1-1",
+    "1011HG3167911-1411-1-1", "1011HG3167911-1413-1-1",
+    "1011HG3167911-1415-1-1", "1011HG3068810-1431-1-1",
+    "1011HG3692387-62-1-1", "1011HG3692387-64-1-1",
+    "1011HG3692387-161-1-1", "1011HG3692387-208-1-1",
+    "1011HG3692386-695-1-1", "1011HG3692387-362-3-1",
+    "1011HG3692387-426-1-1", "1011HG3692387-427-1-1",
+    "1011HG3692386-1182-1-1", "1011HG3692387-520-1-1",
+    "1011HG3692387-521-1-1", "1011HG3692386-1185-1-1",
+    "1011HG3692386-1187-1-1", "1011HG3692386-1188-1-1",
+    "1011HG3692386-1195-1-1", "1011HG3692386-1197-1-1",
+    "1011HG3692386-1198-1-1", "1011HG3692386-1200-1-1",
+    "1011HG3692386-1206-1-1", "1011HG3692386-1208-1-1",
+    "1011HG3692386-1210-1-1", "1011HG3692386-1212-1-1",
+    "1011HG3692386-1213-1-1", "1011HG3692387-532-1-1",
+    "1011HG3692386-1231-1-1", "1011HG3692386-1232-1-1",
+    "1011HG3692386-1240-1-1", "1011HG3692386-1241-1-1",
+    "1011HG3692386-1250-1-1", "1011HG3692386-1251-1-1",
+    "1011HG3692386-1252-1-1", "1011HG3692386-1255-1-1",
+    "1011HG3692386-1256-1-1", "1011HG3692386-1257-1-1",
+    "1011HG3692387-543-1-1", "1011HG3692387-552-1-1",
+    "1011HG3692387-555-1-1", "1011HG3692387-556-1-1",
+    "1011HG3692386-1263-1-1", "1011HG3692386-1274-1-1",
+    "1011HG3692387-635-1-1", "1011HG3692387-636-1-1"
+)
+
+
+def fix_jereesh_at_75(dry_run=1, poids=None, order=None, master=None, payout_pct=None):
+    """Re-rate the order to 75%, then move the lines onto the 75% master.
+
+    Two steps because they answer two different questions: the rate is what
+    the supplier is paid, the master is which contract the line belongs to.
+    Doing only the first leaves the line claiming 80% while being paid 75%,
+    which is the state the Imdad correction was left in until it was spotted
+    on screen.
+    """
+    dry_run = int(dry_run)
+    pct = flt(payout_pct or JEREESH_75_PCT)
+    po_name = order or JEREESH_75_ORDER
+    target = master or JEREESH_75_MASTER
+    names = list(poids or JEREESH_75_POIDS)
+
+    if not frappe.db.exists("Subcontract Master", target):
+        print("  %s: no such Subcontract Master - create it first" % target)
+        return
+
+    scope, missing = _resolve_poids(names)
+    for x in missing:
+        print("  %-26s NOT FOUND on this site" % x)
+    print("  %d POID(s) in scope, order %s, target %g%% on %s"
+          % (len(scope), po_name, pct, target))
+    if not scope:
+        return
+
+    print("  step 1 - re-rate the order:")
+    verdict = _guard(po_name, dry_run,
+                     lambda: _fix_order(po_name, pct, dry_run, only_poids=scope))
+    print("     %-10s %-7s %s" % (po_name, verdict["state"], verdict["why"]))
+    if verdict["state"] in ("refuse", "FAILED"):
+        print("  stopping - the rate must be right before the lines move")
+        return
+
+    print("  step 2 - move the lines onto %s:" % target)
+    move_lines_to_master(dry_run=dry_run, poids=names, master=target)
+
+    print("fix_jereesh_at_75 (%s): done" % ("DRY RUN" if dry_run else "APPLIED"))
+    if dry_run:
+        print("  Nothing was written. Re-run with dry_run=0 to apply.")
+
+
+# ── Jereesh MS2: closed, paid, and never ordered ───────────────────────
+#
+# 32 milestones marked Closed and paid 17-Sep-2026 with no purchase order
+# behind them, so they carry pct 0 and amount 0 and sit in the To Order
+# list for good. The client chose to raise the orders (Option A in the
+# record-of-changes report) so the agreed amount is recorded against each
+# line; their invoicing process is unchanged, and no bill is raised.
+#
+# A normally settled milestone is Closed WITH a pct and a PO -- the Imdad
+# lines are exactly that. These end up the same shape.
+#
+# The status has to be stood down and put back: create_purchase_order_from_pic
+# refuses a milestone that is already Closed, which is the right rule and
+# the reason this needs a deliberate correction rather than a click.
+JEREESH_MS2_POIDS = (
+    "1011HG3692386-1182-1-1", "1011HG3692386-1185-1-1",
+    "1011HG3692386-1187-1-1", "1011HG3692386-1188-1-1",
+    "1011HG3692386-1195-1-1", "1011HG3692386-1197-1-1",
+    "1011HG3692386-1198-1-1", "1011HG3692386-1200-1-1",
+    "1011HG3692386-1206-1-1", "1011HG3692386-1208-1-1",
+    "1011HG3692386-1210-1-1", "1011HG3692386-1212-1-1",
+    "1011HG3692386-1213-1-1", "1011HG3692386-1231-1-1",
+    "1011HG3692386-1232-1-1", "1011HG3692386-1240-1-1",
+    "1011HG3692386-1241-1-1", "1011HG3692386-1250-1-1",
+    "1011HG3692386-1251-1-1", "1011HG3692386-1252-1-1",
+    "1011HG3692386-1255-1-1", "1011HG3692386-1256-1-1",
+    "1011HG3692386-1257-1-1", "1011HG3692386-1263-1-1",
+    "1011HG3692386-1274-1-1", "1011HG3692387-520-1-1",
+    "1011HG3692387-521-1-1", "1011HG3692387-532-1-1",
+    "1011HG3692387-543-1-1", "1011HG3692387-552-1-1",
+    "1011HG3692387-555-1-1", "1011HG3692387-556-1-1"
+)
+
+
+def reopen_ms2_for_ordering(dry_run=1, poids=None, clear_paid_date=1):
+    """Clear the Closed stamp on MS2 so the line can be ordered normally.
+
+    These 32 milestones were closed without a purchase order ever being
+    raised, so they carry pct 0 and amount 0 and the To Order list has no
+    way to offer them: create_purchase_order_from_pic refuses a milestone
+    that is already Closed, which is the right rule.
+
+    Standing the status down is all this does. The PIC team then raises the
+    orders through the normal screen, which is where the rate, the document
+    and the status transitions all come from -- nothing here second-guesses
+    that.
+
+    MS1 is not touched. Every one of these lines already has its MS1 order,
+    and that is checked per line rather than assumed.
+
+    The MS2 paid date is cleared with it. A milestone that reads "not
+    ordered yet" while carrying a payment date is the same contradiction
+    the Mabran MS2 lines had -- the order comes first, and the payment
+    record follows it. Pass ``clear_paid_date=0`` to keep the date.
+    """
+    dry_run = int(dry_run)
+    clear_paid_date = int(clear_paid_date)
+    names_in = list(poids or JEREESH_MS2_POIDS)
+    scope, missing = _resolve_poids(names_in)
+    for x in missing:
+        print("  %-26s NOT FOUND on this site" % x)
+    if not scope:
+        print("  nothing to do")
+        return
+
+    ready = []
+    for pd_name in scope:
+        r = frappe.db.get_value(
+            "PO Dispatch", pd_name,
+            ["poid", "ms2_amount", "sub_po_status_ms2", "sub_paid_date_ms2",
+             "sub_po_status_ms1", "contract"], as_dict=True) or {}
+        ms2_po = frappe.db.sql(
+            """SELECT COUNT(*) FROM `tabPurchase Order Item` poi
+                 JOIN `tabPurchase Order` po ON po.name = poi.parent AND po.docstatus < 2
+                WHERE poi.poid = %s AND UPPER(IFNULL(poi.milestone,'')) = 'MS2'""",
+            (pd_name,))[0][0]
+        ms1_po = frappe.db.sql(
+            """SELECT COUNT(*) FROM `tabPurchase Order Item` poi
+                 JOIN `tabPurchase Order` po ON po.name = poi.parent AND po.docstatus < 2
+                WHERE poi.poid = %s AND UPPER(IFNULL(poi.milestone,'')) = 'MS1'""",
+            (pd_name,))[0][0]
+        if ms2_po:
+            print("  %-26s already has an MS2 order - left alone" % r.get("poid"))
+            continue
+        if not flt(r.get("ms2_amount")):
+            print("  %-26s has no MS2 value - left alone" % r.get("poid"))
+            continue
+        if not ms1_po:
+            print("  %-26s has NO MS1 order either - left alone, that is a "
+                  "different problem" % r.get("poid"))
+            continue
+        already_open = not str(r.get("sub_po_status_ms2") or "")
+        date_left = bool(clear_paid_date and r.get("sub_paid_date_ms2"))
+        if already_open and not date_left:
+            print("  %-26s MS2 already orderable" % r.get("poid"))
+            continue
+        if already_open:
+            print("  %-26s MS2 already orderable, clearing the paid date"
+                  % r.get("poid"))
+        ready.append((pd_name, r))
+
+    if not ready:
+        print("  nothing to reopen")
+        return
+
+    base = sum(flt(r.get("ms2_amount")) for _, r in ready)
+    pct = frappe.db.get_value("Subcontract Master", ready[0][1].get("contract"),
+                              "sub_payout_pct")
+    print("  %d MS2 milestone(s) to reopen, base %.2f" % (len(ready), base))
+    print("     status %s -> blank (shows as Not Ordered)"
+          % ", ".join(sorted({str(r.get("sub_po_status_ms2")) for _, r in ready})))
+    print("     contract %s at %s%% -> they will offer %.2f when ordered"
+          % (ready[0][1].get("contract"), pct, base * flt(pct) / 100.0))
+    dates = sorted({str(r.get("sub_paid_date_ms2")) for _, r in ready
+                    if r.get("sub_paid_date_ms2")})
+    print("     paid date %s: %s" % (", ".join(dates) or "(none set)",
+                                     "CLEARED" if clear_paid_date else "kept"))
+    print("     MS1: untouched, every line already has its MS1 order")
+
+    if dry_run:
+        print("  DRY RUN - nothing written. Re-run with dry_run=0 to apply.")
+        return
+
+    for pd_name, r in ready:
+        payload = {"sub_po_status_ms2": ""}
+        if clear_paid_date:
+            payload["sub_paid_date_ms2"] = None
+        frappe.db.set_value("PO Dispatch", pd_name, payload, update_modified=True)
+        _mirror_to_allocation(pd_name, payload)
+    frappe.db.commit()
+    print("  APPLIED: %d MS2 milestone(s) are now orderable" % len(ready))
+
+
+def set_purchase_order_date(po_name=None, new_date=None, dry_run=1):
+    """Change a submitted order's date, and every copy of it on the lines.
+
+    PO Dispatch keeps its own ``sub_po_date_msN``, stamped from the order
+    when the PO was raised, and nothing keeps it in step afterwards. Change
+    only the order and 26 lines go on reporting the old date -- the same
+    shape of miss as the `subcontract` tag.
+
+    ``transaction_date`` is not allow_on_submit, so a direct write is the
+    only way; a Purchase Order posts no GL entries, so there is nothing
+    accounting-side to strand. The schedule date is checked, not moved: a
+    required-by date that now precedes the order date would be nonsense.
+    """
+    dry_run = int(dry_run)
+    po_name = (po_name or "").strip()
+    new_date = (str(new_date or "")).strip()
+    if not po_name or not new_date:
+        print("  need po_name and new_date (YYYY-MM-DD)")
+        return
+    if not frappe.db.exists("Purchase Order", po_name):
+        print("  %s: no such Purchase Order" % po_name)
+        return
+
+    doc = frappe.db.get_value(
+        "Purchase Order", po_name,
+        ["transaction_date", "schedule_date", "docstatus", "status"], as_dict=True)
+    old_date = str(doc.transaction_date or "")
+    print("  %s  date %s -> %s   (docstatus %s, %s)"
+          % (po_name, old_date or "(none)", new_date, doc.docstatus, doc.status))
+    if old_date == new_date:
+        print("     already on that date")
+        return
+    if doc.schedule_date and str(doc.schedule_date) < new_date:
+        print("     REFUSE: required-by date %s would fall before the order date"
+              % doc.schedule_date)
+        return
+
+    bills = frappe.db.sql(
+        """SELECT DISTINCT pi.name, pi.posting_date FROM `tabPurchase Invoice Item` pii
+             JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent AND pi.docstatus < 2
+            WHERE pii.purchase_order = %s""", (po_name,), as_dict=True)
+    for b in bills:
+        flag = "  <-- bill now predates the order" if str(b.posting_date) < new_date else ""
+        print("     bill %s posted %s%s" % (b.name, b.posting_date, flag))
+
+    rows = frappe.db.sql(
+        """SELECT DISTINCT pd.name, pd.poid, UPPER(IFNULL(poi.milestone,'')) ms,
+                  pd.sub_po_date_ms1, pd.sub_po_date_ms2
+             FROM `tabPurchase Order Item` poi
+             JOIN `tabPO Dispatch` pd ON pd.name = poi.poid
+            WHERE poi.parent = %s""", (po_name,), as_dict=True)
+    touched = 0
+    for r in rows:
+        n = 1 if r.ms == "MS1" else 2 if r.ms == "MS2" else 0
+        if not n:
+            continue
+        held = r.get("sub_po_date_ms%d" % n)
+        if not held or str(held) == new_date:
+            continue
+        touched += 1
+    print("     %d line(s) carry the old date in sub_po_date_msN" % touched)
+
+    if dry_run:
+        print("  DRY RUN - nothing written. Re-run with dry_run=0 to apply.")
+        return
+
+    frappe.db.set_value("Purchase Order", po_name, "transaction_date", new_date,
+                        update_modified=True)
+    for r in rows:
+        n = 1 if r.ms == "MS1" else 2 if r.ms == "MS2" else 0
+        if not n:
+            continue
+        held = r.get("sub_po_date_ms%d" % n)
+        if not held or str(held) == new_date:
+            continue
+        payload = {"sub_po_date_ms%d" % n: new_date}
+        frappe.db.set_value("PO Dispatch", r.name, payload, update_modified=True)
+        _mirror_to_allocation(r.name, payload)
+    frappe.db.commit()
+    print("  APPLIED: order date set, %d line date(s) brought with it" % touched)
+
+
 def restamp_subcontract_dimension(dry_run=1, poids=None):
     """Put the `subcontract` tag on PO/PI item rows back in step with the line.
 
@@ -1004,27 +1313,44 @@ def restamp_subcontract_dimension(dry_run=1, poids=None):
 
 
 def move_imdad_lines_to_40(dry_run=1, poids=None, master=None):
-    """Re-point the 46 corrected lines onto the 40% Subcontract Master.
+    """The 46 corrected Imdad lines onto the 40% master. See move_lines_to_master."""
+    return move_lines_to_master(dry_run=dry_run,
+                                poids=list(poids or IMDAD_40_POIDS),
+                                master=master or IMDAD_40_MASTER)
 
-    The rate correction fixed the money; this fixes the label. Until it runs
-    the lines still read "Imdad Line Establishment 85%" while being paid at
-    40%, and the 40% master shows nothing at all.
+
+def move_lines_to_master(dry_run=1, poids=None, master=None):
+    """Re-point lines onto a different Subcontract Master.
+
+    A rate correction fixes the money on the order; this fixes which
+    contract the line belongs to. Until it runs the line still names the old
+    master while being paid at the new rate, and the new master shows
+    nothing at all.
 
     Goes through set_subcontractor_allocation, so it keeps that endpoint's
-    guards -- including the supplier-PO lock, which now compares SUPPLIERS
-    rather than master names and therefore allows this move: both masters
-    are Imdad Line Establishment, so the orders are not contradicted.
+    guards -- including the supplier-PO lock, which compares SUPPLIERS
+    rather than master names. That is what allows a move between two rates
+    for one supplier (Imdad 85% to 40%, Jereesh 80% to 75%) while still
+    refusing a move to somebody else while they hold an order.
 
-    The allocation's own PO tracking columns are re-mirrored afterwards.
-    _write_allocations carries them across by subcontractor name, and the
-    name is exactly what changes here, so without this the new row would
-    claim no order was ever raised.
+    Afterwards it re-mirrors the allocation's PO tracking columns and
+    re-stamps the `subcontract` tag on the order and bill rows. Both carry
+    their own copy of the contract and neither follows the line on its own:
+    _write_allocations carries the tracking across by subcontractor NAME,
+    which is exactly what changes here, and nothing at all keeps the
+    document rows in step.
     """
     from inet_app.api.subcon_reconcile import set_subcontractor_allocation
 
     dry_run = int(dry_run)
-    target = master or IMDAD_40_MASTER
-    names = list(poids or IMDAD_40_POIDS)
+    target = master
+    names = list(poids or [])
+    if not target:
+        print("  no target master given")
+        return
+    if not names:
+        print("  no POIDs given")
+        return
 
     if not frappe.db.exists("Subcontract Master", target):
         print("  %s: no such Subcontract Master" % target)
@@ -1060,7 +1386,7 @@ def move_imdad_lines_to_40(dry_run=1, poids=None, master=None):
             set_subcontractor_allocation(
                 po_dispatch=pd_name,
                 allocation=json.dumps([{"subcontractor": target, "qty": qty}]),
-                remark="40 percent correction: re-pointed to %s" % target)
+                remark="Rate correction: re-pointed to %s" % target)
         except Exception as exc:
             print("     REFUSED: %s" % str(exc)[:160])
             refused += 1
@@ -1082,8 +1408,8 @@ def move_imdad_lines_to_40(dry_run=1, poids=None, master=None):
         print("  re-stamping the subcontract tag on the order and bill rows:")
         restamp_subcontract_dimension(dry_run=dry_run, poids=names)
 
-    print("move_imdad_lines_to_40 (%s): %d moved, %d already there, %d refused"
-          % ("DRY RUN" if dry_run else "APPLIED", moved, already, refused))
+    print("move_lines_to_master (%s): %d moved, %d already on %s, %d refused"
+          % ("DRY RUN" if dry_run else "APPLIED", moved, already, target, refused))
     if dry_run:
         print("  Nothing was written. Re-run with dry_run=0 to apply.")
 
