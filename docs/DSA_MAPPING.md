@@ -182,13 +182,63 @@ Work Done or anything else. Observational first.
 
 | where | what |
 |---|---|
-| Rollout Planning | IM attaches DSAs when creating the plans, **one section per DUID** — the same shape the material dispatch panel in that modal uses, because a selection routinely spans several sites. Which created plan gets which DSA is resolved server-side by `map_dsas_to_plans`: `create_rollout_plans` returns a flat list of names, and pairing them in the browser would be guessing. |
+| **Every planning form** | IM attaches DSAs when creating the plans — see below |
 | Rollout Execution | attach or change afterwards |
 | Rollout Work Done | DSA + MSA read-only |
-| QC / CIAG screen | DSA + MSA read-only, so whoever approves CIAG sees what they are signing off |
+| QC / CIAG screen, and the **Set CIAG** dialog | DSA + MSA read-only, so whoever approves CIAG sees what they are signing off |
 | **Execution form** (field) | which DSA this plan draws on, read-only, **no pickup** |
 | **My Stock → Incoming** (field) | the DSAs still to collect, in the SAME list and the SAME card as Material Requests |
 | Material Management | a temporary DSA list — see below |
+
+### Every planning form, not just the one
+
+Plans are created from **five** places, and they do **not** share a
+component:
+
+| form | how it gets the picker |
+|---|---|
+| Rollout Planning (`IMDispatch`) | `RolloutPlanModal` |
+| Rollout Planning, PM (`admin/RolloutPlanning`) | `RolloutPlanModal` |
+| Close Remainder, from Work Done | `RolloutPlanModal` |
+| Issues & Risks, IM | its **own** form — wires the hook itself |
+| Issues & Risks, PM | its **own** form — wires the hook itself |
+
+The last two hand-roll their planning modal and call
+`create_rollout_plans` directly, so anything added only to
+`RolloutPlanModal` silently skips them. That is why the picker is
+`components/DsaPlanningPicker.jsx` — a hook plus the UI it drives — and
+each form wires two lines instead of growing its own copy:
+
+```js
+const dsa = useDsaPlanning({ open, enabled: ciagRequired, dispatchNames });
+<DsaPlanningPicker state={dsa} />
+await dsa.mapToPlans(result?.names);   // after the plans exist
+```
+
+Which created plan gets which DSA is resolved server-side by
+`map_dsas_to_plans`: `create_rollout_plans` returns a flat list of names,
+and pairing them in the browser would be guessing.
+
+The PM's Issues & Risks form had no QC/CIAG toggles at all, while the IM's
+copy of the same form did. It has them now, defaulting to on, which is
+what its plans already got by omission — `_truthy(None)` is True in
+`create_rollout_plans`, not False. The picker follows the CIAG switch
+there as everywhere else.
+
+**Nothing shown is ambiguous.** An IM who sees no DSA box cannot tell
+"this site has no DSA" from "this screen does not do DSAs" — and most
+sites have no DSA, since only 374 of 6,750 outbound plans are iNet's. So
+once the backend has answered for a real selection, a site with nothing
+says one muted line rather than rendering nothing at all.
+
+Two things the group header must not say:
+
+* **"0 available"** on a site with nothing to collect. It reads as a
+  quantity of something; it says **"No DSA"**. The box as a whole is
+  hidden unless at least one DUID in the selection has a DSA, so "No DSA"
+  only ever appears beside a site that does.
+* **an unlabelled date.** `Received · 2026-08-13` left the reader to guess
+  which date that was; it is the DSA's **Outbound Date**, and now says so.
 
 ### What the field user sees
 

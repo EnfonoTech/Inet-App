@@ -6,6 +6,7 @@ import { pmApi } from "../services/api";
 import { missingFields, missingFieldsMessage } from "../utils/requiredFields";
 import { qty } from "../utils/numberFormat";
 import { isoLocal, weekRangeLabel } from "../utils/weeks";
+import DsaPlanningPicker, { useDsaPlanning } from "./DsaPlanningPicker";
 
 /**
  * The rollout planning dialog, shared by every page that creates a plan.
@@ -53,26 +54,14 @@ export default function RolloutPlanModal({
   const [projectDomainOverride, setProjectDomainOverride] = useState("");
   const [qcRequired, setQcRequired] = useState(true);
   const [ciagRequired, setCiagRequired] = useState(true);
-  // DSA at planning time. The modal creates one plan per dispatch, and a
-  // DSA belongs to a DUID, so this is only offered when the whole
-  // selection is one site -- the backend decides that, not this component.
-  const [dsaInfo, setDsaInfo] = useState(null);
-  const [dsaPicked, setDsaPicked] = useState({});
-  const [dsaOpenDuid, setDsaOpenDuid] = useState("");
-  // One pickup for the whole DSA selection, the same way the material
-  // dispatch panel above takes one pickup for the whole dispatch.
-  const [dsaPickupDate, setDsaPickupDate] = useState("");
-  const [dsaPickupTime, setDsaPickupTime] = useState("");
+  // DSA at planning time -- the shared picker, so every planning form in
+  // the app offers the same thing. See components/DsaPlanningPicker.jsx.
   const dispatchKey = (rows || []).map((r) => r.name).join(",");
-  useEffect(() => {
-    // No CIAG means no material was used, so there is no DSA to map.
-    if (!open || !ciagRequired || !dispatchKey) { setDsaInfo(null); setDsaPicked({}); return; }
-    let dead = false;
-    pmApi.listDsaForDispatches(dispatchKey.split(","))
-      .then((res) => { if (!dead) setDsaInfo(res || null); })
-      .catch(() => { if (!dead) setDsaInfo(null); });
-    return () => { dead = true; };
-  }, [open, ciagRequired, dispatchKey]);
+  const dsa = useDsaPlanning({
+    open,
+    enabled: ciagRequired,
+    dispatchNames: dispatchKey ? dispatchKey.split(",") : [],
+  });
   const [visitType, setVisitType] = useState(defaultVisitType);
   const [planQty, setPlanQty] = useState("");
   const [managerRemark, setManagerRemark] = useState("");
@@ -255,31 +244,7 @@ export default function RolloutPlanModal({
         manager_remark: managerRemark || undefined,
         plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
       });
-      // The plans exist now, so the DSAs can be attached. Every plan in
-      // this batch shares the DUID -- that is the condition for the picker
-      // being offered at all -- so each one is a valid home for the DSA.
-      // Which plan belongs to which site is resolved server-side —
-      // create_rollout_plans returns a flat list of names, and guessing
-      // the pairing here would be guessing.
-      const anyPicked = Object.values(dsaPicked).some((v) => (v || []).length);
-      if (anyPicked && Array.isArray(result?.names) && result.names.length) {
-        try {
-          const pickup = {};
-          if (dsaPickupDate || dsaPickupTime) {
-            for (const [duid, names] of Object.entries(dsaPicked)) {
-              pickup[duid] = {};
-              for (const n of (names || [])) {
-                pickup[duid][n] = { pickup_date: dsaPickupDate, pickup_time: dsaPickupTime };
-              }
-            }
-          }
-          await pmApi.mapDsasToPlans(result.names, dsaPicked, pickup);
-        } catch (e) {
-          // The plans exist; a failed mapping must not read as failed
-          // planning. It is re-doable on Rollout Execution.
-          console.warn("DSA mapping failed", e);
-        }
-      }
+      await dsa.mapToPlans(result?.names);
       await onCreated?.(result, { team: planTeam, dispatches });
       onClose?.();
     } catch (err) {
@@ -599,87 +564,7 @@ export default function RolloutPlanModal({
           </label>
         </div>
 
-        {ciagRequired && dsaInfo?.offered && (
-          <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginBottom: 16 }}>
-            <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#475569", marginBottom: 8 }}>MATERIAL (DSA)</div>
-            <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 140px" }}>
-                <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Date</label>
-                <input type="date" value={dsaPickupDate} onChange={(e) => setDsaPickupDate(e.target.value)}
-                  style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
-              </div>
-              <div style={{ flex: "1 1 140px" }}>
-                <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "#64748b", marginBottom: 3 }}>Pickup Time</label>
-                <input type="time" value={dsaPickupTime} onChange={(e) => setDsaPickupTime(e.target.value)}
-                  style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0", fontSize: "0.82rem", boxSizing: "border-box" }} />
-              </div>
-            </div>
-            {/* One section per DUID, the same shape the material dispatch
-                panel in this modal uses. A DSA belongs to a site, and
-                planning several sites together is the normal case. */}
-            {(dsaInfo.groups || []).map((g) => {
-              const picked = dsaPicked[g.duid] || [];
-              const expanded = dsaOpenDuid === g.duid;
-              return (
-                <div key={g.duid} style={{ border: "1px solid #e2e8f0", borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
-                  <button type="button" onClick={() => setDsaOpenDuid(expanded ? "" : g.duid)}
-                    style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fff", border: "none", cursor: "pointer", textAlign: "left" }}>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: "ui-monospace, monospace" }}>{g.duid}</span>
-                      <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 8 }}>{g.count} line{g.count !== 1 ? "s" : ""}</span>
-                    </span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {picked.length > 0 && (
-                        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#1d4ed8", background: "#eff6ff", padding: "2px 8px", borderRadius: 999 }}>
-                          {picked.length} DSA{picked.length !== 1 ? "s" : ""} selected
-                        </span>
-                      )}
-                      <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
-                        {g.note || `${(g.rows || []).length} available`}
-                      </span>
-                      <span style={{ color: "#94a3b8" }}>{expanded ? "\u25b2" : "\u25bc"}</span>
-                    </span>
-                  </button>
-                  {expanded && (
-                    <div style={{ padding: "8px 12px", borderTop: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 6 }}>
-                      {(g.rows || []).length === 0 ? (
-                        <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>
-                          {g.note || "No DSA recorded for this site."}
-                        </div>
-                      ) : g.rows.map((d) => {
-                        const on = picked.includes(d.name);
-                        return (
-                          <label key={d.name}
-                                 style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "7px 9px",
-                                          border: `1px solid ${on ? "#bfdbfe" : "#e2e8f0"}`, borderRadius: 6,
-                                          background: on ? "#eff6ff" : "#fff", cursor: "pointer" }}>
-                            <input type="checkbox" checked={on} style={{ marginTop: 2 }}
-                                   onChange={() => setDsaPicked((cur) => {
-                                     const was = cur[g.duid] || [];
-                                     const next = was.includes(d.name)
-                                       ? was.filter((x) => x !== d.name) : [...was, d.name];
-                                     return { ...cur, [g.duid]: next };
-                                   })} />
-                            <span style={{ minWidth: 0 }}>
-                              <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 700 }}>{d.bill_no}</span>
-                              <span style={{ fontSize: "0.73rem", color: "#64748b" }}>{"  MSA "}{d.request_no || "\u2014"}</span>
-                              <div style={{ fontSize: "0.71rem", color: "#94a3b8", marginTop: 1 }}>
-                                {[d.outbound_status, d.outbound_date ? String(d.outbound_date).slice(0, 10) : null].filter(Boolean).join(" \u00b7 ")}
-                                {(d.mapped_on || []).length > 0 && (
-                                  <span style={{ color: "#b45309" }}> \u00b7 already on {d.mapped_on.length} plan{d.mapped_on.length > 1 ? "s" : ""}</span>
-                                )}
-                              </div>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {ciagRequired && <DsaPlanningPicker state={dsa} />}
 
         <div className="form-group" style={{ marginBottom: 16 }}>
           <label>Remark</label>

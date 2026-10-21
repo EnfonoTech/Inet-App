@@ -22,6 +22,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { copySelectedPoids } from "../../utils/selectedPoids";
+import DsaPlanningPicker, { useDsaPlanning } from "../../components/DsaPlanningPicker";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -430,7 +431,7 @@ export default function IMIssuesRisks() {
               : { team: r.team, assigned_pct: Number(r.assigned_pct) || 0 })),
           ]
         : (partialPlan ? [{ team: planTeam, assigned_qty: leadShare }] : []);
-      await pmApi.createRolloutPlans({
+      const result = await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
         plan_end_date: planEndDate,
@@ -448,6 +449,8 @@ export default function IMIssuesRisks() {
         issue_remarks: issueRemarks || undefined,
         plan_documents: planDocUrls.length ? JSON.stringify(planDocUrls) : undefined,
       });
+
+      await dsa.mapToPlans(result?.names);
 
       // Dispatch any materials selected per-DUID — a separate call from
       // plan creation, so a failed material request doesn't roll back
@@ -513,6 +516,14 @@ export default function IMIssuesRisks() {
   const createPlanDuidGroups = createPlanDuids.map((duid) => {
     const groupRows = selectedIssueRows.filter((r) => r.site_code === duid);
     return { duid, poid: groupRows[0]?.po_dispatch || "", count: groupRows.length };
+  });
+  // DSA mapping, the same picker Rollout Planning uses -- this form does
+  // not share that modal, so it wires the hook itself rather than going
+  // without.
+  const dsa = useDsaPlanning({
+    open: showModal,
+    enabled: ciagRequired,
+    dispatchNames: [...new Set(selectedIssueRows.map((r) => r.po_dispatch).filter(Boolean))],
   });
 
   return (
@@ -872,6 +883,8 @@ export default function IMIssuesRisks() {
                 CIAG Required
               </label>
             </div>
+
+            {ciagRequired && <DsaPlanningPicker state={dsa} />}
 
             <div className="form-group" style={{ marginTop: 10 }}>
               <label>Issue Remarks</label>

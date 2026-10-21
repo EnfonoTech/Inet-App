@@ -20,6 +20,7 @@ import useFilterOptions from "../../hooks/useFilterOptions";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { copySelectedPoids } from "../../utils/selectedPoids";
+import DsaPlanningPicker, { useDsaPlanning } from "../../components/DsaPlanningPicker";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -96,6 +97,11 @@ export default function IssuesRisks() {
   const [selected, setSelected] = useState(new Set());
   const [copyNotice, setCopyNotice] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  // Same two switches the IM's Issues & Risks form has. Without them this
+  // form could only ever create plans at the doctype default, so a PM
+  // re-planning a line that needs no QC had no way to say so.
+  const [qcRequired, setQcRequired] = useState(true);
+  const [ciagRequired, setCiagRequired] = useState(true);
   const [planDate, setPlanDate] = useState(todayDate());
   const [planEndDate, setPlanEndDate] = useState(todayDate());
   const [planTeam, setPlanTeam] = useState("");
@@ -404,7 +410,7 @@ export default function IssuesRisks() {
               : { team: r.team, assigned_pct: Number(r.assigned_pct) || 0 })),
           ]
         : (partialPlan ? [{ team: planTeam, assigned_qty: leadShare }] : []);
-      await pmApi.createRolloutPlans({
+      const result = await pmApi.createRolloutPlans({
         dispatches,
         plan_date: planDate,
         plan_end_date: planEndDate,
@@ -412,6 +418,8 @@ export default function IssuesRisks() {
         teams: teamsPayload,
         access_time: accessTime,
         access_period: accessPeriod,
+        qc_required: qcRequired ? 1 : 0,
+        ciag_required: ciagRequired ? 1 : 0,
         visit_type: visitType || "Re-Visit",
         huawei_im: replanNeedsHuaweiIm ? huaweiImFill || undefined : undefined,
         project_domain: replanNeedsDomain ? projectDomainFill || undefined : undefined,
@@ -419,6 +427,8 @@ export default function IssuesRisks() {
         fill_missing_only: 1,
         issue_remarks: issueRemarks || undefined,
       });
+
+      await dsa.mapToPlans(result?.names);
 
       // Dispatch any materials selected per-DUID — a separate call from
       // plan creation, so a failed material request doesn't roll back
@@ -479,6 +489,12 @@ export default function IssuesRisks() {
     const groupRows = selectedIssueRows.filter((r) => r.site_code === duid);
     return { duid, poid: groupRows[0]?.po_dispatch || "", count: groupRows.length };
   });
+  // DSA mapping. No CIAG means no material was used, so nothing to map.
+  const dsa = useDsaPlanning({
+    open: showModal,
+    enabled: ciagRequired,
+    dispatchNames: [...new Set(selectedIssueRows.map((r) => r.po_dispatch).filter(Boolean))],
+  });
 
   return (
     <div>
@@ -533,7 +549,7 @@ export default function IssuesRisks() {
           <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
             Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
           </button>
-          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setMaterialItemsByDuid({}); setExpandedMaterialDuid(""); setMaterialPickupDate(""); setMaterialPickupTime(""); setPlanQty(openPlanQtySeed()); setShowModal(true); }}>
+          <button className="btn-primary" disabled={selected.size === 0} onClick={() => { setMaterialItemsByDuid({}); setExpandedMaterialDuid(""); setMaterialPickupDate(""); setMaterialPickupTime(""); setPlanQty(openPlanQtySeed()); setQcRequired(true); setCiagRequired(true); setShowModal(true); }}>
             Create Plans ({selected.size})
           </button>
         </div>
@@ -830,6 +846,26 @@ export default function IssuesRisks() {
             {selected.size === 1 && (
               <PoidMaterialsDispatched poDispatch={filteredRows.find((r) => selected.has(r.rollout_plan))?.po_dispatch} />
             )}
+
+            {/* QC / CIAG */}
+            <div style={{
+              display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap",
+              padding: "10px 12px", background: "#f8fafc",
+              border: "1px solid #e2e8f0", borderRadius: 6, marginTop: 16, marginBottom: 4,
+            }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+                <input type="checkbox" checked={qcRequired} onChange={(e) => setQcRequired(e.target.checked)} />
+                QC Required
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.86rem", cursor: "pointer", fontWeight: 600 }}>
+                <input type="checkbox" checked={ciagRequired} onChange={(e) => setCiagRequired(e.target.checked)} />
+                CIAG Required
+              </label>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              {ciagRequired && <DsaPlanningPicker state={dsa} />}
+            </div>
 
             {createPlanDuidGroups.length > 0 && (
               <div style={{ background: "#fafbfc", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 16 }}>
