@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import PageSummary from "../../components/PageSummary";
 import { pmApi } from "../../services/api";
+import DsaRegisterTab from "../../components/DsaRegisterTab";
 import { useTableRowLimit, TABLE_ROW_LIMIT_ALL } from "../../context/TableRowLimitContext";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import SearchableSelect from "../../components/SearchableSelect";
@@ -2044,6 +2045,7 @@ export default function IMMaterialRequest() {
     { id: "duid", label: "DUID Stock" },
     { id: "balance", label: "Stock Balance" },
     { id: "billwise", label: "Bill Wise Material" },
+    { id: "dsa", label: "DSA Register" },
     { id: "returns", label: "Returns", count: pendingReturnCount },
   ];
 
@@ -2116,6 +2118,9 @@ export default function IMMaterialRequest() {
       )}
       {tab === "billwise" && (
         <BillWiseMaterialTab />
+      )}
+      {tab === "dsa" && (
+        <DsaRegisterTab imName={isAdmin ? "" : imName} />
       )}
       {tab === "returns" && (
         <ReturnRequestsTab

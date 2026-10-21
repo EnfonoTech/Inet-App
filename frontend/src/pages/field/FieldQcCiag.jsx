@@ -6,6 +6,7 @@ import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
+import PlanDsaMapping from "../../components/PlanDsaMapping";
 import { isNotRequired } from "../../utils/qcCiagFlags";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
@@ -128,6 +129,14 @@ function QcEditModal({ row, onClose, onSaved }) {
                 CIAG not required for this plan.
               </div>
             )}
+
+            {/* The DSA this plan draws on. Approving CIAG is what closes it
+                (see docs/DSA_MAPPING.md), so the person doing the approving
+                should be able to see what they are signing off. Read-only —
+                the mapping itself is the IM's to set, on Rollout Execution. */}
+            {/* `row.name` IS the Rollout Plan: this page is fed by
+                list_execution_monitor_rows, which is at plan grain. */}
+            <PlanDsaMapping rolloutPlan={row.name} readOnly />
           </>
         )}
 

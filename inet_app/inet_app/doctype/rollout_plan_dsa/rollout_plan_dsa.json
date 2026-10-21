@@ -1,0 +1,88 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "outbound_plan",
+  "bill_no",
+  "request_no",
+  "column_break_dsa",
+  "du_id",
+  "outbound_status",
+  "pickup_date",
+  "pickup_time",
+  "remark"
+ ],
+ "fields": [
+  {
+   "fieldname": "outbound_plan",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Outbound Plan",
+   "options": "Huawei Outbound Plan",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bill_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DSA",
+   "fetch_from": "outbound_plan.bill_no",
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "MSA",
+   "fetch_from": "outbound_plan.request_no",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_dsa",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "du_id",
+   "fieldtype": "Data",
+   "label": "DU ID",
+   "fetch_from": "outbound_plan.du_id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outbound_status",
+   "fieldtype": "Data",
+   "label": "Outbound Status",
+   "fetch_from": "outbound_plan.outbound_status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pickup_date",
+   "fieldtype": "Date",
+   "label": "Pickup Date",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "pickup_time",
+   "fieldtype": "Time",
+   "label": "Pickup Time"
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "Rollout Plan DSA",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

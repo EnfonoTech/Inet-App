@@ -22,7 +22,8 @@
   "enable_backend_assign",
   "feature_column",
   "enable_partial_close",
-  "enable_subcontractor_split"
+  "enable_subcontractor_split",
+  "enable_dsa_mapping"
  ],
  "fields": [
   {
@@ -137,6 +138,12 @@
    "fieldtype": "Check",
    "default": "1",
    "label": "Subcontractor Quantity Split"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_dsa_mapping",
+   "fieldtype": "Check",
+   "label": "DSA Mapping (temporary)"
   }
  ],
  "index_web_pages_for_search": 1,

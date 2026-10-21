@@ -4,7 +4,7 @@ import re
 
 from inet_app.roles import PM_LEVEL_ROLES
 import frappe
-from frappe.utils import cint, flt, now, nowdate
+from frappe.utils import cint, cstr, flt, now, nowdate
 
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
@@ -3133,8 +3133,14 @@ def list_pending_team_confirmations():
         "INET Team", {"field_user": frappe.session.user, "status": "Active"},
         ["name", "warehouse", "team_name"], as_dict=True,
     )
-    if not team or not team.warehouse:
+    if not team:
         return []
+    # No warehouse means no Material Request side -- but the DSA flow
+    # exists BECAUSE material management is not set up, and only 3 of 30
+    # teams on the production copy have a warehouse at all. Gating the
+    # whole list on one would hide a team's DSAs from 27 of them.
+    if not team.warehouse:
+        return _awaiting_dsa_rows(team.name)
 
     rows = frappe.db.get_all(
         "Material Request",
@@ -3149,7 +3155,7 @@ def list_pending_team_confirmations():
         order_by="creation asc",
     )
     if not rows:
-        return []
+        return _awaiting_dsa_rows(team.name)
 
     poid_links = list({r["poid"] for r in rows if r.get("poid")})
     poid_map = {}
@@ -3168,10 +3174,53 @@ def list_pending_team_confirmations():
             filters={"parent": r["pending_transfer_se"]},
             fields=["item_code", "item_name", "qty", "uom"],
         )
-    return rows
+        r["source"] = "Material Request"
+    return rows + _awaiting_dsa_rows(team.name)
 
 
 @frappe.whitelist()
+
+def _awaiting_dsa_rows(team):
+    """DSAs this team still has to collect, shaped like a transfer row.
+
+    Both flows answer the same question -- what do I collect, and when --
+    so they belong in ONE list with one pickup line and one urgency badge,
+    not a second block elsewhere on the page. A row carries ``source`` so
+    the card can drop what does not apply: a DSA has no item lines and
+    nothing to confirm, because CIAG is what closes it.
+
+    Only while outstanding. A DSA whose plan has CIAG approved has been
+    collected and signed off, and does not belong on a list of things to do.
+    """
+    if not team or not dsa_mapping_enabled():
+        return []
+    rows = frappe.db.sql(
+        """
+        SELECT d.bill_no AS name, d.name AS row_key, d.request_no, d.du_id AS duid,
+               d.pickup_date, d.pickup_time, d.outbound_status, d.remark,
+               rp.name AS rollout_plan, rp.plan_date AS request_date,
+               pd.poid
+          FROM `tabRollout Plan DSA` d
+          JOIN `tabRollout Plan` rp ON rp.name = d.parent AND d.parenttype = 'Rollout Plan'
+          LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+         WHERE (rp.team = %(team)s OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt
+                 WHERE rpt.parent = rp.name AND rpt.team = %(team)s))
+           AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+           AND NOT EXISTS (SELECT 1 FROM `tabDaily Execution` de_c
+                            WHERE de_c.rollout_plan = rp.name
+                              AND de_c.ciag_status = 'Approved')
+         ORDER BY d.pickup_date IS NULL, d.pickup_date, rp.plan_date
+        """,
+        {"team": team}, as_dict=True)
+    for r in rows:
+        r["source"] = "DSA"
+        r["items"] = []
+        r["request_date"] = str(r.get("request_date") or "")
+        r["pickup_date"] = str(r.get("pickup_date") or "")
+        r["pickup_time"] = str(r.get("pickup_time") or "")
+    return rows
+
+
 def list_team_requests_awaiting_approval():
     """Material Requests submitted for this Team Lead's team warehouse that
     are still sitting at Pending Approval — the Warehouse Manager hasn't
@@ -5254,3 +5303,484 @@ def create_direct_return_transfer(payload):
     frappe.db.commit()
 
     return {"name": mr.name, "status": "Pending Approval"}
+
+
+# ── DSA mapping: a temporary flow until Material Management is used ─────
+#
+# See docs/DSA_MAPPING.md. The IM records which DSA a plan draws on, and
+# nothing else: no receipt, no stock entry, no batch, no item line, no
+# quantity. CIAG is the closure -- get_site_verify_status above is the
+# proof, "the TL has completed work (material used) but the client hasn't
+# yet approved CIAG". There is deliberately no second "done" state here.
+
+
+# Huawei Outbound Plan.subcon is the contractor the material went OUT to,
+# and most of it is not ours: 9,866 outbound plans on the production copy,
+# of which 568 are INET's. The rest belong to REZAIK, GTEL, ALPHA, SAMHAN
+# and the other forty-odd Huawei subcontractors. Showing an IM a DSA from
+# another contractor is not a filter miss, it is somebody else's material.
+# get_bill_wise_status has always carried this filter; the DSA mapping
+# shipped without it and listed all 9,866.
+DSA_OWN_SUBCON = "INET"
+
+
+def dsa_mapping_enabled():
+    """The whole feature is off until someone turns it on."""
+    try:
+        return bool(cint(frappe.db.get_single_value(
+            "INET Settings", "enable_dsa_mapping")))
+    except Exception:
+        return False
+
+
+def _dsa_plan_context(rollout_plan):
+    """(po_dispatch, duid, im, ciag_required) for a plan, or None."""
+    rp = frappe.db.get_value(
+        "Rollout Plan", rollout_plan,
+        ["name", "po_dispatch", "ciag_required", "im"], as_dict=True)
+    if not rp:
+        return None
+    pd = frappe.db.get_value(
+        "PO Dispatch", rp.po_dispatch, ["site_code", "im"], as_dict=True) or {}
+    return frappe._dict({
+        "rollout_plan": rp.name,
+        "po_dispatch": rp.po_dispatch,
+        "duid": (pd.get("site_code") or "").strip(),
+        # The record's own stamp, which is what IM scoping reads everywhere.
+        "im": (pd.get("im") or rp.get("im") or "").strip(),
+        # Missing means required -- the same default qc/ciag take elsewhere.
+        "ciag_required": 1 if rp.get("ciag_required") is None
+                         else cint(rp.get("ciag_required")),
+    })
+
+
+@frappe.whitelist()
+def list_dsa_candidates(rollout_plan, include_mapped=0):
+    """DSAs this plan may be mapped to.
+
+    Three narrowings, each asked for and each measured on the production
+    copy (docs/DSA_MAPPING.md):
+
+      * the IM's own sites -- never the whole outbound table. 9,866 DSAs
+        become 67 to 431 depending on the IM.
+      * this plan's DUID. That is what makes it simple: 1.2 DSAs on
+        average, 3 at worst, so this is "confirm the DSA for this site"
+        rather than a search.
+      * not already closed. A DSA whose site has a CIAG-approved execution
+        has been signed off and does not come back.
+
+    Returns ``{"enabled", "offered", "reason", "rows"}``. ``offered`` is
+    false when the feature is off or the plan needs no CIAG -- no CIAG
+    means no material was used, so there is no DSA to map and the caller
+    should show nothing at all rather than an empty box.
+    """
+    if not dsa_mapping_enabled():
+        return {"enabled": 0, "offered": 0, "reason": "DSA mapping is off", "rows": []}
+
+    ctx = _dsa_plan_context(rollout_plan)
+    if not ctx:
+        return {"enabled": 1, "offered": 0, "reason": "No such plan", "rows": []}
+    if not ctx.ciag_required:
+        return {"enabled": 1, "offered": 0,
+                "reason": "CIAG is not required on this plan, so no material was used",
+                "rows": []}
+    if not ctx.duid:
+        return {"enabled": 1, "offered": 0,
+                "reason": "This line has no DUID, so its DSAs cannot be identified",
+                "rows": []}
+    if not ctx.im:
+        return {"enabled": 1, "offered": 0,
+                "reason": "This line has no IM stamped on it", "rows": []}
+
+    already = {
+        r.outbound_plan for r in frappe.get_all(
+            "Rollout Plan DSA",
+            filters={"parent": rollout_plan, "parenttype": "Rollout Plan"},
+            fields=["outbound_plan"])
+    }
+
+    rows = _normalise_mapped_on(_dsa_rows(ctx.duid, ctx.im, exclude_plan=rollout_plan))
+    if not cint(include_mapped):
+        rows = [r for r in rows if r["name"] not in already]
+    return {"enabled": 1, "offered": 1, "reason": "", "rows": rows,
+            "duid": ctx.duid, "im": ctx.im}
+
+
+def _dsa_rows(duid, im, exclude_plan=None):
+    """The scoped DSA list, shared by the plan picker and the planning one.
+
+    Planning has no plan yet -- the modal is creating them -- so the scope
+    has to be expressible as (DUID, IM) alone. Everything that decides what
+    an IM may see lives here, once, so neither caller can widen it.
+    """
+    return frappe.db.sql(
+        """
+        SELECT h.name, h.bill_no, h.request_no, h.du_id, h.outbound_status,
+               h.outbound_date, h.project_name, h.total_volume,
+               -- Mapped elsewhere already. Shown, not blocked: whether one
+               -- DSA may serve two plans is an open question and the answer
+               -- should come from use, not from a guess made up front.
+               (SELECT GROUP_CONCAT(DISTINCT d2.parent)
+                  FROM `tabRollout Plan DSA` d2
+                 WHERE d2.outbound_plan = h.name
+                   AND d2.parenttype = 'Rollout Plan'
+                   AND (%(plan)s IS NULL OR d2.parent <> %(plan)s)) AS mapped_on
+          FROM `tabHuawei Outbound Plan` h
+         WHERE h.duid_master = %(duid)s
+           -- ours, not another Huawei contractor's material
+           AND IFNULL(h.subcon, '') = %(own)s
+           -- the IM's own sites
+           AND EXISTS (SELECT 1 FROM `tabPO Dispatch` pd_s
+                        WHERE pd_s.site_code = h.duid_master
+                          AND IFNULL(pd_s.im, '') = %(im)s)
+           -- Closed means signed off, and a signed-off DSA is not offered
+           -- again. Keyed on the DSA's OWN mapping, not on the DUID: a site
+           -- carries several POIDs, and an approved execution on one of them
+           -- says nothing about this DSA. Asked at DUID level it hid 270
+           -- DSAs site-wide, including the only DSA of the first plan
+           -- tested -- that DUID has 7 POIDs and 5 approved executions.
+           -- An unmapped DSA can never be closed, which is why this is an
+           -- EXISTS over its mappings rather than a test on the site.
+           AND NOT EXISTS (
+                 SELECT 1 FROM `tabRollout Plan DSA` d_c
+                   JOIN `tabDaily Execution` de_c ON de_c.rollout_plan = d_c.parent
+                  WHERE d_c.outbound_plan = h.name
+                    AND d_c.parenttype = 'Rollout Plan'
+                    AND de_c.ciag_status = 'Approved')
+         ORDER BY h.outbound_date DESC, h.bill_no
+        """,
+        {"duid": duid, "im": im, "plan": exclude_plan,
+         "own": DSA_OWN_SUBCON}, as_dict=True)
+
+
+def _normalise_mapped_on(rows):
+    for r in rows:
+        r["mapped_on"] = (r.get("mapped_on") or "").split(",") if r.get("mapped_on") else []
+    return rows
+
+
+@frappe.whitelist()
+def set_plan_dsas(rollout_plan, outbound_plans=None, remarks=None, pickup=None):
+    """Replace a plan's DSA mappings with the given set.
+
+    Written as a whole set rather than add/remove calls: the grid is small
+    (1.2 rows on average) and a replace cannot leave a half-applied edit
+    behind. Re-validates the scope on every write -- the picker narrowed
+    the list, but a caller is not the picker.
+    """
+    if not dsa_mapping_enabled():
+        frappe.throw("DSA mapping is not enabled.")
+    ctx = _dsa_plan_context(rollout_plan)
+    if not ctx:
+        frappe.throw(f"No such Rollout Plan: {rollout_plan}")
+    if not ctx.ciag_required:
+        frappe.throw("CIAG is not required on this plan, so there is no "
+                     "material to map a DSA to.")
+
+    if isinstance(outbound_plans, str):
+        outbound_plans = frappe.parse_json(outbound_plans)
+    if isinstance(remarks, str):
+        remarks = frappe.parse_json(remarks)
+    # {outbound_plan: {"pickup_date": "...", "pickup_time": "..."}} -- when
+    # the material is to be collected. The same thing Material Request
+    # carries as schedule_date + pickup_time; there is no Material Request
+    # in this flow, so it lives on the mapping.
+    if isinstance(pickup, str):
+        pickup = frappe.parse_json(pickup)
+    pickup = pickup or {}
+    wanted, seen = [], set()
+    for name in (outbound_plans or []):
+        name = cstr(name).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        wanted.append(name)
+
+    if wanted:
+        allowed = {
+            r["name"] for r in (list_dsa_candidates(rollout_plan, include_mapped=1)
+                                .get("rows") or [])
+        }
+        bad = [n for n in wanted if n not in allowed]
+        if bad:
+            frappe.throw(
+                "Not available for this plan: %s. A DSA must be on this "
+                "line's DUID, belong to this IM, and not already be closed."
+                % ", ".join(bad[:5]))
+
+    doc = frappe.get_doc("Rollout Plan", rollout_plan)
+    doc.set("dsa_mappings", [])
+    for name in wanted:
+        row = doc.append("dsa_mappings", {"outbound_plan": name})
+        if isinstance(remarks, dict) and remarks.get(name):
+            row.remark = cstr(remarks.get(name))[:1000]
+        got = (pickup.get(name) or {}) if isinstance(pickup, dict) else {}
+        if got.get("pickup_date"):
+            row.pickup_date = got.get("pickup_date")
+        if got.get("pickup_time"):
+            row.pickup_time = got.get("pickup_time")
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return get_plan_dsas(rollout_plan)
+
+
+@frappe.whitelist()
+def get_plan_dsas(rollout_plan):
+    """What is mapped to this plan, with the CIAG state that closes it.
+
+    The status is not stored on the mapping -- it is read from the
+    execution, because CIAG is the closure and a second copy would be a
+    second definition of done.
+    """
+    # Joined to the DSA itself, not read from the child alone: these rows are
+    # also the RECORD shown after closure, when the candidate list no longer
+    # carries the DSA, so they must stand on their own.
+    rows = frappe.db.sql(
+        """
+        SELECT d.name, d.outbound_plan, d.bill_no, d.request_no, d.du_id,
+               d.outbound_status, d.remark, d.pickup_date, d.pickup_time, d.idx,
+               h.outbound_date, h.project_name, h.total_volume
+          FROM `tabRollout Plan DSA` d
+          LEFT JOIN `tabHuawei Outbound Plan` h ON h.name = d.outbound_plan
+         WHERE d.parent = %s AND d.parenttype = 'Rollout Plan'
+         ORDER BY d.idx
+        """,
+        (rollout_plan,), as_dict=True)
+    ciag = frappe.db.sql(
+        """SELECT de.ciag_status, de.ciag_status_date
+             FROM `tabDaily Execution` de
+            WHERE de.rollout_plan = %s
+            ORDER BY FIELD(IFNULL(de.ciag_status,''), 'Approved', 'Not Applicable', 'Open'),
+                     de.modified DESC
+            LIMIT 1""",
+        (rollout_plan,), as_dict=True)
+    state = (ciag[0] if ciag else {}) or {}
+    return {
+        "rows": rows,
+        "ciag_status": state.get("ciag_status") or "",
+        "ciag_status_date": state.get("ciag_status_date"),
+        "closed": 1 if (state.get("ciag_status") == "Approved") else 0,
+    }
+
+
+@frappe.whitelist()
+def list_dsa_register(im=None, mapped=None, search=None, limit=500):
+    """The DSAs an IM can see, and what has been mapped to them.
+
+    Purpose-built rather than reusing get_bill_wise_status, which cannot
+    serve this: that report needs the batch-tracked Receipt flow for its
+    quantities and filters to `subcon = 'INET'`, so on a site with no
+    receipts it returns 0 rows out of 9,866 outbound plans. The temporary
+    flow has no receipts by definition.
+
+    Scoped exactly as the picker is -- an IM sees only DSAs whose DUID
+    carries one of their own PO lines, never the whole outbound table.
+
+    ``mapped``: "yes" / "no" to filter on whether a plan has claimed it.
+    """
+    if not dsa_mapping_enabled():
+        return {"enabled": 0, "rows": []}
+
+    wheres = ["IFNULL(h.subcon, '') = %(own)s"]
+    params = {"own": DSA_OWN_SUBCON}
+    im = cstr(im or "").strip()
+    if im:
+        wheres.append(
+            "EXISTS (SELECT 1 FROM `tabPO Dispatch` pd_s"
+            "  WHERE pd_s.site_code = h.duid_master"
+            "    AND IFNULL(pd_s.im, '') = %(im)s)")
+        params["im"] = im
+    term = cstr(search or "").strip()
+    if term:
+        wheres.append("(h.bill_no LIKE %(term)s OR h.request_no LIKE %(term)s"
+                      " OR h.du_id LIKE %(term)s OR h.project_name LIKE %(term)s)")
+        params["term"] = f"%{term}%"
+
+    mapped = cstr(mapped or "").strip().lower()
+    mapped_exists = (
+        "EXISTS (SELECT 1 FROM `tabRollout Plan DSA` d_m"
+        "  WHERE d_m.outbound_plan = h.name AND d_m.parenttype = 'Rollout Plan')")
+    if mapped == "yes":
+        wheres.append(mapped_exists)
+    elif mapped == "no":
+        wheres.append("NOT " + mapped_exists)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT h.name, h.bill_no, h.request_no, h.du_id, h.duid_master,
+               h.project_name, h.subcon, h.outbound_status, h.outbound_date,
+               h.total_volume,
+               (SELECT GROUP_CONCAT(DISTINCT d_p.parent)
+                  FROM `tabRollout Plan DSA` d_p
+                 WHERE d_p.outbound_plan = h.name
+                   AND d_p.parenttype = 'Rollout Plan') AS mapped_on,
+               -- CIAG is the closure, so it is read from the execution of
+               -- whichever plan claimed this DSA, never stored here.
+               (SELECT MAX(de_s.ciag_status = 'Approved')
+                  FROM `tabRollout Plan DSA` d_s
+                  JOIN `tabDaily Execution` de_s ON de_s.rollout_plan = d_s.parent
+                 WHERE d_s.outbound_plan = h.name
+                   AND d_s.parenttype = 'Rollout Plan') AS closed
+          FROM `tabHuawei Outbound Plan` h
+         WHERE {' AND '.join(wheres)}
+         ORDER BY h.outbound_date DESC, h.bill_no
+         {_stock_limit_suffix(limit)}
+        """,
+        params, as_dict=True)
+    for r in rows:
+        r["mapped_on"] = (r.get("mapped_on") or "").split(",") if r.get("mapped_on") else []
+        r["closed"] = 1 if cint(r.get("closed")) else 0
+    return {"enabled": 1, "rows": rows}
+
+
+@frappe.whitelist()
+def list_dsa_for_dispatches(po_dispatches=None):
+    """DSAs offerable while PLANNING, grouped by DUID.
+
+    The planning modal creates one plan per dispatch and the selection
+    routinely spans several sites. A DSA belongs to a DUID, so the answer
+    is one group per DUID -- the same shape the material dispatch panel in
+    that modal already uses -- not a refusal. An earlier version refused
+    anything but a single DUID, which made the picker useless on the normal
+    case of planning a few sites together.
+
+    Returns ``{"enabled", "offered", "groups": [{duid, count, rows}]}``.
+    """
+    if not dsa_mapping_enabled():
+        return {"enabled": 0, "offered": 0, "groups": []}
+
+    if isinstance(po_dispatches, str):
+        po_dispatches = frappe.parse_json(po_dispatches)
+    names = [cstr(n).strip() for n in (po_dispatches or []) if cstr(n).strip()]
+    if not names:
+        return {"enabled": 1, "offered": 0, "groups": []}
+
+    lines = frappe.get_all("PO Dispatch", filters={"name": ["in", names]},
+                           fields=["name", "site_code", "im"])
+    by_duid = {}
+    for r in lines:
+        duid = (r.get("site_code") or "").strip()
+        im = (r.get("im") or "").strip()
+        if not duid or not im:
+            continue
+        g = by_duid.setdefault(duid, {"duid": duid, "count": 0, "ims": set()})
+        g["count"] += 1
+        g["ims"].add(im)
+
+    groups = []
+    for duid in sorted(by_duid):
+        g = by_duid[duid]
+        # One site worked by two IMs is not a thing this should guess at.
+        im = next(iter(g["ims"])) if len(g["ims"]) == 1 else ""
+        rows = _normalise_mapped_on(_dsa_rows(duid, im)) if im else []
+        groups.append({"duid": duid, "count": g["count"], "rows": rows,
+                       "note": "" if im else "This site has more than one IM"})
+
+    return {"enabled": 1,
+            "offered": 1 if any(g["rows"] for g in groups) else 0,
+            "groups": groups}
+
+
+@frappe.whitelist()
+def map_dsas_to_plans(plan_names=None, by_duid=None, pickup=None):
+    """Attach the DSAs chosen per DUID to the plans just created.
+
+    create_rollout_plans returns a flat list of plan names, so which plan
+    belongs to which site is resolved here rather than guessed in the
+    browser. Each plan gets the DSAs picked for ITS OWN DUID; a plan on a
+    site nobody picked for is left alone.
+
+    Never fails the caller: the plans exist by this point, and a mapping
+    that did not take is re-doable on Rollout Execution. Returns what it
+    did, per plan.
+    """
+    if not dsa_mapping_enabled():
+        return {"enabled": 0, "applied": [], "failed": []}
+    if isinstance(plan_names, str):
+        plan_names = frappe.parse_json(plan_names)
+    if isinstance(by_duid, str):
+        by_duid = frappe.parse_json(by_duid)
+    if isinstance(pickup, str):
+        pickup = frappe.parse_json(pickup)
+    plan_names = [cstr(n).strip() for n in (plan_names or []) if cstr(n).strip()]
+    by_duid = by_duid or {}
+    if not plan_names or not by_duid:
+        return {"enabled": 1, "applied": [], "failed": []}
+
+    applied, failed = [], []
+    for plan in plan_names:
+        ctx = _dsa_plan_context(plan)
+        if not ctx or not ctx.duid:
+            continue
+        picked = by_duid.get(ctx.duid) or []
+        if not picked:
+            continue
+        try:
+            set_plan_dsas(plan, frappe.as_json(picked),
+                          pickup=frappe.as_json((pickup or {}).get(ctx.duid) or {}))
+            applied.append({"plan": plan, "duid": ctx.duid, "count": len(picked)})
+        except Exception as exc:
+            failed.append({"plan": plan, "duid": ctx.duid, "error": cstr(exc)[:200]})
+    return {"enabled": 1, "applied": applied, "failed": failed}
+
+
+@frappe.whitelist()
+def list_team_dsas(team=None, rollout_plan=None, days_back=14, days_ahead=14):
+    """DSAs the field team has to collect, for their own plans.
+
+    The field side of the temporary flow. A team sees a DSA because a plan
+    of theirs was mapped to it -- never the outbound table, and never
+    another team's material.
+
+    Windowed around today on the plan date so the list stays a day's work
+    rather than a history. `rollout_plan` narrows it to one plan, which is
+    what the execution form wants.
+    """
+    if not dsa_mapping_enabled():
+        return {"enabled": 0, "rows": []}
+
+    wheres = ["1=1"]
+    params = {}
+    team = cstr(team or "").strip()
+    plan = cstr(rollout_plan or "").strip()
+    if plan:
+        wheres.append("rp.name = %(plan)s")
+        params["plan"] = plan
+    elif team:
+        # The plan's lead team or any team on it -- the same either/or the
+        # rest of the app uses for "is this team on this plan".
+        wheres.append(
+            "(rp.team = %(team)s OR EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt"
+            "   WHERE rpt.parent = rp.name AND rpt.team = %(team)s))")
+        params["team"] = team
+        wheres.append(
+            "rp.plan_date BETWEEN DATE_SUB(CURDATE(), INTERVAL %(back)s DAY)"
+            "                 AND DATE_ADD(CURDATE(), INTERVAL %(ahead)s DAY)")
+        params["back"] = cint(days_back)
+        params["ahead"] = cint(days_ahead)
+    else:
+        return {"enabled": 1, "rows": []}
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT d.name AS row_name, d.outbound_plan, d.bill_no, d.request_no,
+               d.du_id, d.outbound_status, d.pickup_date, d.pickup_time, d.remark,
+               rp.name AS rollout_plan, rp.plan_date, rp.plan_status, rp.team,
+               pd.poid, pd.site_code, pd.item_description,
+               -- CIAG is the closure, so the field user sees the same state
+               -- the IM does rather than a copy kept here.
+               (SELECT de_c.ciag_status FROM `tabDaily Execution` de_c
+                 WHERE de_c.rollout_plan = rp.name
+                 ORDER BY FIELD(IFNULL(de_c.ciag_status,''), 'Approved', 'Not Applicable', 'Open'),
+                          de_c.modified DESC LIMIT 1) AS ciag_status
+          FROM `tabRollout Plan DSA` d
+          JOIN `tabRollout Plan` rp ON rp.name = d.parent AND d.parenttype = 'Rollout Plan'
+          LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+         WHERE {' AND '.join(wheres)}
+           AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+         ORDER BY d.pickup_date IS NULL, d.pickup_date, rp.plan_date, d.bill_no
+        """,
+        params, as_dict=True)
+    for r in rows:
+        r["closed"] = 1 if (r.get("ciag_status") == "Approved") else 0
+    return {"enabled": 1, "rows": rows}

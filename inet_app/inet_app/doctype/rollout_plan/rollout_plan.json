@@ -26,6 +26,8 @@
   "plan_status",
   "issue_status",
   "not_attended_remark",
+  "section_dsa",
+  "dsa_mappings",
   "section_teams",
   "teams",
   "plan_team_members",
@@ -188,6 +190,18 @@
   {
    "fieldname": "column_break_dtdy",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_dsa",
+   "fieldtype": "Section Break",
+   "label": "Material (DSA)",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "dsa_mappings",
+   "fieldtype": "Table",
+   "label": "DSA / MSA",
+   "options": "Rollout Plan DSA"
   },
   {
    "collapsible": 1,

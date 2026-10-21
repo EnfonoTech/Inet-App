@@ -1212,6 +1212,28 @@ export const pmApi = {
   getDuidStockSummary:     (o)      => call("inet_app.api.material_management.get_duid_stock_summary", { column_filters: JSON.stringify(o?.column_filters || {}), limit: o?.limit ?? 0 }),
   getDuidReceivedItems:    (duid)   => call("inet_app.api.material_management.get_duid_received_items", { duid }),
   getDuidBillMaterials:    (duid)   => call("inet_app.api.material_management.get_duid_bill_materials", { duid }),
+  // DSA mapping — the temporary flow while Material Management is unused.
+  // See docs/DSA_MAPPING.md. The candidate list is already scoped to the
+  // IM and the plan's DUID server-side; the caller passes nothing but the
+  // plan, deliberately, so no screen can widen it.
+  listDsaCandidates:       (rolloutPlan, includeMapped) =>
+    call("inet_app.api.material_management.list_dsa_candidates",
+         { rollout_plan: rolloutPlan, include_mapped: includeMapped ? 1 : 0 }),
+  listDsaRegister:         (args)   => call("inet_app.api.material_management.list_dsa_register", args || {}),
+  listDsaForDispatches:    (names)  =>
+    call("inet_app.api.material_management.list_dsa_for_dispatches",
+         { po_dispatches: JSON.stringify(names || []) }),
+  mapDsasToPlans:          (planNames, byDuid, pickup) =>
+    call("inet_app.api.material_management.map_dsas_to_plans",
+         { plan_names: JSON.stringify(planNames || []), by_duid: JSON.stringify(byDuid || {}),
+           pickup: JSON.stringify(pickup || {}) }),
+  listTeamDsas:            (args)   => call("inet_app.api.material_management.list_team_dsas", args || {}),
+  getPlanDsas:             (rolloutPlan) =>
+    call("inet_app.api.material_management.get_plan_dsas", { rollout_plan: rolloutPlan }),
+  setPlanDsas:             (rolloutPlan, outboundPlans, pickup) =>
+    call("inet_app.api.material_management.set_plan_dsas",
+         { rollout_plan: rolloutPlan, outbound_plans: JSON.stringify(outboundPlans || []),
+           pickup: JSON.stringify(pickup || {}) }),
   searchItems:             (args)   => call("inet_app.api.material_management.search_items", args || {}),
   createMaterialRequest:   (payload) => call("inet_app.api.material_management.create_material_request", { payload: JSON.stringify(payload) }),
   approveMaterialRequest:  (name)   => call("inet_app.api.material_management.approve_material_request", { name }),

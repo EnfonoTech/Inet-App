@@ -466,13 +466,22 @@ function ReturnDetailSheet({ row, onClose, onActioned }) {
 function IncomingTransferCard({ row, onOpen }) {
   const items = row.items || [];
   const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
+  // A DSA row is the same job — collect this, by then — reached through the
+  // temporary mapping instead of a Material Request. Same card, same pickup
+  // line, same urgency: what differs is that it has no item lines and
+  // nothing to confirm, because CIAG is what closes it.
+  const isDsa = row.source === "DSA";
   return (
-    <div className="history-card" style={{ borderLeftColor: "var(--amber)", cursor: "pointer" }} onClick={() => onOpen(row)}>
+    <div className="history-card"
+         style={{ borderLeftColor: isDsa ? "var(--blue, #2563eb)" : "var(--amber)",
+                  cursor: isDsa ? "default" : "pointer" }}
+         onClick={() => { if (!isDsa) onOpen(row); }}>
       <div className="history-card-row">
         <span style={{ fontFamily: "monospace", fontSize: "0.78rem", fontWeight: 700 }}>{row.name}</span>
         <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{row.request_date}</span>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", marginTop: 3, fontSize: "0.76rem", color: "var(--text-muted)" }}>
+        {isDsa && row.request_no && <span>MSA: <strong style={{ color: "#0f172a" }}>{row.request_no}</strong></span>}
         {row.duid && <span>DUID: <strong style={{ color: "#0f172a" }}>{row.duid}</strong></span>}
         {row.poid && <span>POID: {row.poid}</span>}
       </div>
@@ -484,9 +493,13 @@ function IncomingTransferCard({ row, onOpen }) {
       )}
       <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: "0.82rem" }}>
-          {items.length} item{items.length !== 1 ? "s" : ""} · <strong>{fmt(totalQty)}</strong> qty
+          {isDsa
+            ? <span style={{ color: "var(--text-muted)" }}>{row.outbound_status || "DSA"}</span>
+            : <>{items.length} item{items.length !== 1 ? "s" : ""} · <strong>{fmt(totalQty)}</strong> qty</>}
         </span>
-        <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#2563eb" }}>View & Confirm →</span>
+        {isDsa
+          ? <span style={{ fontSize: "0.7rem", fontWeight: 800, color: "#1d4ed8", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 999, padding: "2px 8px" }}>DSA</span>
+          : <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#2563eb" }}>View &amp; Confirm →</span>}
       </div>
     </div>
   );
@@ -645,7 +658,8 @@ function IncomingTransfers({ refresh, onCount, onDueCount, onDone }) {
     <>
       {rows.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {rows.map(r => <IncomingTransferCard key={r.name} row={r} onOpen={setOpenRow} />)}
+          {/* row_key, not name: the same DSA bill can be mapped to two plans. */}
+          {rows.map(r => <IncomingTransferCard key={r.row_key || r.name} row={r} onOpen={setOpenRow} />)}
         </div>
       ) : loading ? (
         <div className="history-card" style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: 18 }}>

@@ -12,6 +12,7 @@ import { EXECUTION_STATUS_OPTIONS, TL_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } f
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
 import RecordDetailView from "../../components/RecordDetailView";
+import PlanDsaMapping from "../../components/PlanDsaMapping";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
 import DispatchVisitHistory from "../../components/DispatchVisitHistory";
 import ExecutionMaterialUsage from "../../components/ExecutionMaterialUsage";
@@ -1079,7 +1080,7 @@ export default function IMExecution() {
 
       {ciagFor && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setCiagFor(null)}>
-          <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width: "min(520px, 94vw)", maxHeight: "85dvh", overflowY: "auto", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
             <h4 style={{ margin: "0 0 12px" }}>Set CIAG: {ciagFor.name}</h4>
             {ciagErr && <div className="notice error" style={{ marginBottom: 10 }}>{ciagErr}</div>}
             <div className="form-group" style={{ marginBottom: 12 }}>
@@ -1088,8 +1089,13 @@ export default function IMExecution() {
                 {CIAG_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <button className="btn-primary" disabled={ciagBusy} onClick={submitCiag}>{ciagBusy ? "…" : "Submit CIAG"}</button>
-            <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setCiagFor(null)}>Cancel</button>
+            {/* What CIAG actually signs off on: approving it closes the DSA,
+                so the IM should see which material that is before clicking. */}
+            <PlanDsaMapping rolloutPlan={ciagFor.rollout_plan} readOnly recordOnly />
+            <div style={{ marginTop: 16 }}>
+              <button className="btn-primary" disabled={ciagBusy} onClick={submitCiag}>{ciagBusy ? "…" : "Submit CIAG"}</button>
+              <button type="button" className="btn-secondary" style={{ marginLeft: 8 }} onClick={() => setCiagFor(null)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
@@ -1998,6 +2004,7 @@ export default function IMExecution() {
                 currentPlanName={detailRow.rollout_plan}
               />
               <ExecutionMaterialUsage execution={detailRow.name} />
+              <PlanDsaMapping rolloutPlan={detailRow.rollout_plan} readOnly />
               <div style={{ marginTop: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.05em" }}>Reschedule History</span>

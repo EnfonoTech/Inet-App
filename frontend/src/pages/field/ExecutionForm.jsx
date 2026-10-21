@@ -15,6 +15,7 @@ import IMNoteCallout from "../../components/IMNoteCallout";
 import AttachmentsSection, { parseFileList } from "../../components/AttachmentsSection";
 import Modal from "../../components/Modal";
 import { HuaweiBadge, CompanyBadge } from "../../components/MaterialItemPicker";
+import TeamDsaList from "../../components/TeamDsaList";
 
 import SitePhotoCapture from "../../components/SitePhotoCapture";
 // Treat 0/false/"0"/"false" as the not-required signal. null/undefined
@@ -1638,6 +1639,11 @@ export default function ExecutionForm() {
 
           {/* Materials transferred for this POID — field team can
               adjust used qtys before final issue. */}
+          {/* Which DSA this plan draws on, so the item numbers below can be
+              checked against it. No pickup here — whoever is filling this
+              in is already on site; collection lives on My Stock. */}
+          <TeamDsaList rolloutPlan={plan?.name || ""} compact showPickup={false} />
+
           <MaterialsSection
             duid={plan?.site_code || ""}
             teamId={plan?.my_team || teamId}
