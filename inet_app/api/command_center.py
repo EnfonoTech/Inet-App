@@ -11924,8 +11924,17 @@ def _apply_confirmed_qty(dispatch_name, confirmed_qty, *, remaining_action=None,
         )
 
     previously_confirmed = flt(pd.get("confirmed_qty") or 0)
-    is_reduction = previously_confirmed > 0 and confirmed < previously_confirmed - 0.00005
-    if is_reduction or not previously_confirmed:
+    # Baselined on the ORDERED quantity before a first confirmation, because
+    # that is the figure PIC has been working with -- the line is not worth
+    # zero until someone confirms it. Baselining on zero instead made EVERY
+    # first confirmation look like a reduction, so a line PIC had rejected
+    # could not be re-confirmed at its full quantity at all: the IM fixes the
+    # documents, re-submits 1 of 1, and is told the quantity "can no longer be
+    # reduced" when nothing is being reduced. A first confirmation BELOW the
+    # ordered quantity is still a reduction and still blocked.
+    baseline = previously_confirmed or ordered
+    is_reduction = baseline > 0 and confirmed < baseline - 0.00005
+    if is_reduction:
         for field, amt_f, inv_f, pct_f, label in (
             ("pic_status", "ms1_amount", "ms1_invoiced", "ms1_pct", "MS1"),
             ("pic_status_ms2", "ms2_amount", "ms2_invoiced", "ms2_pct", "MS2"),
