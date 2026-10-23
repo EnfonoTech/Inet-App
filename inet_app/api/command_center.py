@@ -6818,14 +6818,18 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
 
     if any_tl_completed or any_im_completed:
         effective = "Completed"
-    elif any_cancelled:
-        effective = "Cancelled"
     elif any_postponed:
         effective = "Postponed"
     elif any_not_attended:
         effective = "Not Attended"
     elif any_in_progress_like:
         effective = "In Progress"
+    # LAST on purpose. This used to sit second, so one cancelled execution
+    # out-ranked every live sibling: a plan with two executions, one called
+    # off and one in progress, read as cancelled. Demoted to the end, it
+    # only speaks when nothing else on the plan has anything to say.
+    elif any_cancelled:
+        effective = "Cancelled"
     else:
         effective = ""
 
@@ -6889,7 +6893,21 @@ def _sync_rollout_plan_from_daily_execution(rollout_plan, exec_doc):
         if tgt > 0 and ach_amt >= 0:
             updates["completion_pct"] = min(100.0, (ach_amt / tgt) * 100.0)
     elif effective == "Cancelled":
-        updates["plan_status"] = "Cancelled"
+        # A cancelled EXECUTION is a visit that was called off. The work
+        # still has to happen, so the plan goes back on the list exactly as
+        # a postponed one does -- it is NOT a cancelled plan.
+        #
+        # This used to write "Cancelled", and 213 of the 442 cancelled plans
+        # on the production copy got there this way: nobody asked for them.
+        # Worse, that route never told `PO Dispatch`, so the line sat at
+        # "Planned" with no live plan behind it and vanished from every
+        # To Plan list -- 33 lines, SAR 21,685, all one IM.
+        #
+        # Cancelling a PLAN now has exactly one owner: the IM requests it and
+        # a PM approves, and that path already reverts the line (see
+        # pm_decide_cancel_plan). Back to Planned here also means the nightly
+        # job can mark it Overdue, which "In Execution" would never allow.
+        updates["plan_status"] = "Planned"
     elif effective == "Postponed":
         updates["plan_status"] = "Planned"
     elif effective == "Not Attended":
