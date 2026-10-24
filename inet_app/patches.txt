@@ -36,3 +36,4 @@ inet_app.patches.backfill_closure_subcontractor
 inet_app.patches.backfill_subcontract_allocations
 inet_app.patches.default_feature_switches_on
 inet_app.patches.fix_over_allocated_subcontract_lines
+inet_app.patches.fix_single_milestone_direct_close_stuck_dispatched

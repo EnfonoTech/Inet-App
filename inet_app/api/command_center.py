@@ -24621,9 +24621,25 @@ def _direct_close_one(role, im_identifiers, im_doc, name, close_type, subcontrac
         if project_domain:
             pd_updates["project_domain"] = project_domain
 
-        # Only set Completed when both milestones are now closed
+        # Only set Completed when nothing is left to close — which is NOT the
+        # same as both flags being 1. A single-milestone line carries
+        # ms2_amount = 0 and has no MS2 to close, so the literal AND could
+        # never become true and the line kept whatever dispatch_status it
+        # arrived with. 22 of them sat at 'Dispatched' on the production copy:
+        # work finished and handed to PIC, while Rollout Planning's To Plan
+        # list (dispatch_status = 'Dispatched') still offered them for
+        # planning. They only ever escaped later, when PIC reached Commercial
+        # Invoice Submitted/Closed and _compute_dispatch_status_from_pic
+        # overwrote the status from the other side.
+        #
+        # ms2_amount is the same test _compute_dispatch_status_from_pic uses
+        # for "does MS2 exist"; a blank pic_status_ms2 does NOT mean no MS2.
         wd_check = frappe.db.get_value("Work Done", wd_name, ["ms1_closed", "ms2_closed"], as_dict=True) or {}
-        both_closed = cint(wd_check.get("ms1_closed")) and cint(wd_check.get("ms2_closed"))
+        ms2_exists = flt(pd.get("ms2_amount") or 0) > 0
+        both_closed = bool(
+            cint(wd_check.get("ms1_closed"))
+            and (cint(wd_check.get("ms2_closed")) or not ms2_exists)
+        )
         if pd_updates:
             frappe.db.set_value("PO Dispatch", name, pd_updates, update_modified=False)
 
