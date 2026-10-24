@@ -371,6 +371,46 @@ committed, so building while unfinished work sits in the tree commits that work
 as compiled output. Before building, either commit or make sure the tree holds
 only what you intend to ship.
 
+**Never filter `yarn build` output down to `✓ built`.** Vite prints that line
+when BUNDLING finishes; the `vite-plugin-pwa` step runs after it and is what
+writes `index.html`. A build cut short between the two leaves
+`inet_app/public/portal/index.html` at **0 bytes**, and every page in the
+portal goes white — not just the one you edited, which sends you hunting the
+component instead of the shell. Only `Done in …` means the build finished.
+Read the whole tail, and if a white screen ever appears, check
+`ls -la inet_app/public/portal/index.html` before anything else.
+
+**Nothing may sit between `.page-content` and `.data-table-wrapper`.** The
+full-height layout in `pages.css` keys on `:has(.page-content >
+.data-table-wrapper)` — a DIRECT child. Pages that keep a table mounted while
+showing another view (WorkDone's Summary, ExecutionMonitor's Analytics,
+RolloutPlanning's Week/Forecast) used to wrap the whole `DataTableWrapper` in
+a hider div. That one div broke the selector on all three: the outer page
+scrolled instead of the table and the row-limit footer fell below the fold.
+Put the hider INSIDE the wrapper, around the table, and move the alternate
+view inside too — left as a sibling it becomes `flex-shrink: 0` and clips
+instead of scrolling.
+
+**DataTablePro's toolbar is a sibling BEFORE the wrapper**
+(`wrapper.parentElement.insertBefore`), not a child of it. So hiding the table
+does not hide Manage Table / Filters / Reset — they stayed on the Summary tab
+looking operable. Hide them with a class on the wrapper instead; `pages.css`
+has `.tablepro-toolbar:has(+ .data-table-wrapper.tablepro-inactive)`.
+
+**`_synthesize_subcon_workdone_rows` silently ignores any filter it has not
+been taught.** It appends backend rows to whatever `list_work_done_rows`
+returns, so a filter added to the main query and not to it lands on EVERY
+slice. It has happened twice: new `tab` values put 12 synthesized rows on both
+Commercial and Operational, and `age_band` put 10 on every ageing band, so
+each card opened 10 rows more than it counted. Add new filters to both, or
+have the synthesizer return nothing for filters it cannot honour.
+
+**A tile and the list it opens must share one SQL expression.** Build the
+predicate once (see `wd_pipeline_case()`) and use it for the count and the
+filter. Two copies drift, and the drift shows up as a card saying 18 that
+opens 33 — which is also what happens when a tile counts one tab's rows and
+its click lands on another.
+
 ---
 
 ## Domain rules that are easy to get wrong
