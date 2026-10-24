@@ -50,6 +50,51 @@ TRACKED_FIELDS = (
 _SECONDS_PER_DAY = 86400.0
 
 
+# Which stamp each submission_status writes. "" (not set) writes none of
+# them -- a line that has never been submitted has no submission date.
+_SUBMISSION_DATE_FIELDS = {
+    "Ready for Confirmation": "ready_for_confirmation_at",
+    "Confirmation Done": "confirmed_at",
+    "PIC Rejected": "pic_rejected_at",
+}
+
+
+def stamp_submission_status_dates(work_done, new_status, when=None):
+    """Record WHEN a Work Done reached this submission status.
+
+    Called from every place submission_status is written, so a date can
+    never disagree with the status beside it. Derived answers were tried
+    first and both failed: `modified` moves on any edit, and PO Status Event
+    covered 49 of 936 operational rows because the PIC rejection path never
+    logged.
+
+    ``submission_status_changed_at`` is the ageing anchor -- "how long has
+    this line been sitting here" is today minus that, whatever the status.
+    The per-status stamps answer "when did this happen", and record the
+    LATEST occurrence: a line confirmed, rejected, then confirmed again
+    carries the second confirmation, because that is the one still true.
+
+    Never raises. A missing stamp must not fail the transition that was the
+    point of the call.
+    """
+    if not work_done:
+        return
+    try:
+        when = when or now_datetime()
+        updates = {"submission_status_changed_at": when}
+        field = _SUBMISSION_DATE_FIELDS.get((new_status or "").strip())
+        if field:
+            updates[field] = when
+        updates = {k: v for k, v in updates.items()
+                   if frappe.db.has_column("Work Done", k)}
+        if updates:
+            frappe.db.set_value("Work Done", work_done, updates,
+                                update_modified=False)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(),
+                         "stamp_submission_status_dates failed")
+
+
 def _previous_event(po_dispatch, field_changed):
     """The most recent event for this line and field, or None."""
     rows = frappe.db.sql(

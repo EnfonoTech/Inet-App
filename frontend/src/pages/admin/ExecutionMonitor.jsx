@@ -709,6 +709,16 @@ export default function ExecutionMonitor() {
           </div>
         )}
 
+        {/* Hidden, never unmounted — see RolloutPlanning.jsx for the same
+            rule: DataTablePro observes this wrapper, and losing it loses the
+            table's enhancement state.
+
+            The hider sits INSIDE the wrapper. The full-height CSS keys on
+            `.page-content > .data-table-wrapper`, a DIRECT child, so a div
+            in between stopped it matching and the whole page scrolled
+            instead of the table. Analytics moves inside for the same
+            reason: as a sibling it would be flex-shrink:0 and clip. */}
+        <DataTableWrapper className={tab === "analytics" ? "tablepro-inactive" : ""} scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
         {tab === "analytics" && (
           <ExecutionAnalyticsPanel
             onDrill={(f) => {
@@ -731,11 +741,7 @@ export default function ExecutionMonitor() {
           />
         )}
 
-        {/* Hidden, never unmounted — see RolloutPlanning.jsx for the same
-            rule: DataTablePro observes this wrapper, and losing it loses the
-            table's enhancement state. */}
         <div style={tab === "analytics" ? { display: "none" } : undefined}>
-        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           {tab === "internal_done" ? (
             <table key="execution-monitor-internal-done" className="data-table" data-excel-filter-all="1" data-table-key="execution-monitor-internal-done">
               <thead>
@@ -1046,7 +1052,9 @@ export default function ExecutionMonitor() {
               )}
             </table>
           )}
+        </div>
         </DataTableWrapper>
+        {tab !== "analytics" && (
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={tab === "internal_done" ? displayedInternalCount : displayedMainCount}
@@ -1055,7 +1063,7 @@ export default function ExecutionMonitor() {
           value={effectiveRowLimit}
           onChange={confirmRowLimit}
         />
-        </div>
+        )}
       </div>
 
       {tlStatusFor && (

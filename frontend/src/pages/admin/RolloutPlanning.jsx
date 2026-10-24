@@ -688,6 +688,16 @@ export default function RolloutPlanning() {
           </div>
         )}
 
+        {/* Hidden, never unmounted — DataTablePro's observer lives on this
+            wrapper, so unmounting it costs the table its Manage Table,
+            filters and column state on the way back.
+
+            The hider goes INSIDE the wrapper, not around it. The full-height
+            CSS keys on `.page-content > .data-table-wrapper`, a DIRECT
+            child; a div in between stopped it matching, so the whole page
+            scrolled instead of the table and the row-limit footer sat below
+            the fold. */}
+        <DataTableWrapper className={view === "table" ? "" : "tablepro-inactive"} scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
         {view === "week" && (
           <RolloutWeeklyPlan portal={queryArgs?.portal} refreshKey={refreshKey} reportHref="/reports?tab=rollout_commercial" />
         )}
@@ -697,11 +707,7 @@ export default function RolloutPlanning() {
             refreshKey={refreshKey}
           />
         )}
-        {/* Hidden, never unmounted — DataTablePro's observer lives on this
-            wrapper, so unmounting it costs the table its Manage Table,
-            filters and column state on the way back. */}
         <div style={view === "table" ? undefined : { display: "none" }}>
-        <DataTableWrapper scrollRef={tableScrollRef} loading={loading && rows.length > 0}>
           <table key={`admin-rollout-planning-${planScope}`} className="data-table" data-excel-filter-all="1" data-table-key={`admin-rollout-planning-${planScope}`}>
               <thead>
                 <tr>
@@ -908,14 +914,16 @@ export default function RolloutPlanning() {
               </tfoot>
               )}
             </table>
+        </div>
         </DataTableWrapper>
+        {view === "table" && (
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={displayedCount}
           filteredCount={displayedCount}
           filterActive={filterActiveForFooter}
         />
-        </div>
+        )}
       </div>
 
       {/* ── Create Plans Modal ────────────────────────────────── */}

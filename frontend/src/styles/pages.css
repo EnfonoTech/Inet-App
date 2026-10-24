@@ -920,6 +920,17 @@
 }
 
 /* ── Table Personalization (DataTablePro) ───────────────────── */
+/* DataTablePro injects its toolbar as a SIBLING before the wrapper
+ * (wrapper.parentElement.insertBefore). On pages that swap the table for a
+ * Summary/Analytics view, the table stays mounted-but-hidden so it keeps its
+ * column state — which used to hide the toolbar too, because the hider div
+ * wrapped them both. That div had to go (it broke `.page-content >
+ * .data-table-wrapper`, the full-height selector), so the toolbar is now
+ * hidden by marking the wrapper instead. */
+.tablepro-toolbar:has(+ .data-table-wrapper.tablepro-inactive) {
+  display: none;
+}
+
 .tablepro-toolbar {
   display: flex;
   align-items: center;

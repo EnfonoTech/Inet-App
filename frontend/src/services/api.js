@@ -563,8 +563,9 @@ export const pmApi = {
       filters: JSON.stringify(filters || {}),
       ...(limit != null ? { limit } : {}),
     }),
-  getWorkDoneSummary: () =>
-    call("inet_app.api.command_center.get_work_done_summary"),
+  getWorkDoneSummary: (filters) =>
+    call("inet_app.api.command_center.get_work_done_summary",
+         filters ? { filters: JSON.stringify(filters) } : {}),
   listIssueRiskRows: (im, limit, search, portalFilters) => {
     const args = {
       im: im || "",

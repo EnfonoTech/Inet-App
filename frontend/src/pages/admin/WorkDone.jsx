@@ -311,6 +311,44 @@ function Pill({ label, value, tone = "blue" }) {
   );
 }
 
+// Colour by meaning, not by position: rejected is red wherever it appears,
+// money-out-the-door green, waiting amber.
+const PIPELINE_BAR = {
+  "Handed over, PIC not started": "#dc2626",
+  "Under Process to Apply": "#cbd5e1",
+  "Under ISDP":         "#f59e0b",
+  "Under I-BUY":        "#fb923c",
+  "Ready for Invoice":  "#3b82f6",
+  "Rejected at ISDP / I-BUY": "#ef4444",
+  "Partly invoiced":    "#10b981",
+  "Cancelled":          "#94a3b8",
+};
+
+// PIC's normal in-flight statuses: shown in the milestone breakdown, not
+// as headline tiles.
+// Days in status: the longer a line sits, the louder it gets.
+const AGE_TONE = {
+  "0-7 days":   { bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" },
+  "8-30 days":  { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+  "31-90 days": { bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+  "90+ days":   { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
+};
+
+const PIPELINE_IN_FLIGHT = new Set([
+  "Under Process to Apply", "Under ISDP", "Under I-BUY", "Ready for Invoice",
+]);
+
+const PIPELINE_TONE = {
+  "Handed over, PIC not started": { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
+  "Under Process to Apply": { bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" },
+  "Under ISDP":          { bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+  "Under I-BUY":         { bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+  "Ready for Invoice":   { bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
+  "Rejected at ISDP / I-BUY": { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca" },
+  "Partly invoiced":     { bg: "#fffbeb", fg: "#92400e", bd: "#fde68a" },
+  "Cancelled":           { bg: "#f8fafc", fg: "#94a3b8", bd: "#e2e8f0" },
+};
+
 export default function WorkDone() {
   const { rowLimit } = useTableRowLimit();
   const location = useLocation();
@@ -343,10 +381,12 @@ export default function WorkDone() {
   // opens are the same set.
   const [issueFlagFilter, setIssueFlagFilter] = useState(_navWD?.issueFlagFilter ?? []);
   const [submissionFilter, setSubmissionFilter] = useState([]);
+  const [pipelineFilter, setPipelineFilter] = useState([]);
+  const [ageBandFilter, setAgeBandFilter] = useState([]);
   // Accepts a work type from dashboard drill-through (Command dashboard's
   // Direct Close section), same as fromDate/toDate above.
   const [workTypeFilter, setWorkTypeFilter] = useState(_navWD?.workTypeFilter ?? []);
-  const [tab, setTab] = useState("list");
+  const [tab, setTab] = useState("operational");
 
   // The single <DataTableWrapper> below is always mounted — List and
   // Summary both render as its children, switched by tab, so its inner
@@ -685,7 +725,11 @@ export default function WorkDone() {
       // Deliberately NOT sending include_finished: this page keeps hiding
       // rows whose milestones have all reached a terminal PIC status, which
       // is how it has always behaved. Only the IM's "All" tab asks for those.
-      const filters = { tab: "all" };
+      const filters = {
+        tab: tab === "commercial" ? "commercial"
+           : tab === "operational" ? "operational"
+           : "all",
+      };
       if (poStatusFilter.length) filters.dispatch_status = poStatusFilter;
       if (imFilter.length) filters.im = imFilter;
       if (teamFilter.length) filters.team = teamFilter;
@@ -695,6 +739,8 @@ export default function WorkDone() {
       if (fromDate) filters.from_date = fromDate;
       if (toDate) filters.to_date = toDate;
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
+      if (pipelineFilter.length) filters.pipeline = pipelineFilter;
+      if (ageBandFilter.length) filters.age_band = ageBandFilter;
       if (workTypeFilter.length) {
         // "Field Work" (Rollout Execution) also covers legacy rows with no
         // source stamped at all — mirrors the display default used below
@@ -708,9 +754,9 @@ export default function WorkDone() {
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) filters.column_filters = colFilters;
       return filters;
-  }, [poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter,
+  }, [tab, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter,
       fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, submissionFilter,
-      columnFiltersDebounced]);
+      pipelineFilter, ageBandFilter, columnFiltersDebounced]);
 
   useEffect(() => {
     let cancelled = false;
@@ -757,7 +803,30 @@ export default function WorkDone() {
   // just clicked, which is exactly the confusing-looking mismatch this is
   // meant to avoid. So this clears every other filter before applying just
   // the one that corresponds to what was clicked.
+  // Every Summary tile routes through here: clear the board, apply the one
+  // thing the tile stands for, land on the tab that holds it. The filter it
+  // sets is the same predicate the tile counted with, server-side.
+  function goToSlice(nextTab, { issueFlag = [], submission = [], pipeline = [],
+                                ageBand = [] } = {}) {
+    // The toolbar filters (IM, project, DUID, team, dates, search) are the
+    // user's context and are LEFT ALONE — set an IM, click a card, and you
+    // get that IM's slice of that card. Only the four tile dimensions are
+    // reset, so two cards never silently stack into a filter nobody chose.
+    setIssueFlagFilter(issueFlag);
+    setSubmissionFilter(submission);
+    setPipelineFilter(pipeline);
+    setAgeBandFilter(ageBand);
+    setTab(nextTab);
+  }
+
+  // Lands on the OPERATIONAL tab, not All. These tiles count the
+  // operational half, so sending the click to All returned the commercial
+  // flagged lines too — "POD/PPT required 18" opened 33 rows.
   function goToWorkDoneList(issueFlagValues) {
+    return goToSlice("operational", { issueFlag: issueFlagValues || [] });
+  }
+
+  function _goToWorkDoneListLegacy(issueFlagValues) {
     setSearch("");
     setPoStatusFilter([]);
     setImFilter([]);
@@ -769,6 +838,7 @@ export default function WorkDone() {
     setToDate("");
     setWorkTypeFilter([]);
     setSubmissionFilter([]);
+    setPipelineFilter([]);
     setIssueFlagFilter(issueFlagValues || []);
     setTab("list");
   }
@@ -810,7 +880,19 @@ export default function WorkDone() {
     setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
   }
 
-  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate || pipelineFilter.length || ageBandFilter.length);
+
+  // What a Summary card put on the table. Shown as removable chips, because
+  // clicking a card used to filter the list with nothing on screen saying
+  // so and no way to undo it.
+  const sliceChips = [
+    ...pipelineFilter.map((v) => ({ v, label: v, clear: () => setPipelineFilter([]) })),
+    ...ageBandFilter.map((v) => ({ v, label: `In status ${v}`, clear: () => setAgeBandFilter([]) })),
+    ...submissionFilter.map((v) => ({ v, label: v === "__NONE__" ? "Not submitted yet" : v,
+                                      clear: () => setSubmissionFilter([]) })),
+    ...issueFlagFilter.map((v) => ({ v, label: v === "__NONE__" ? "Not flagged" : v,
+                                     clear: () => setIssueFlagFilter(issueFlagFilter.filter((x) => x !== v)) })),
+  ];
   // Distinct values across the full master tables — not row-limited.
   const [teams, setTeams] = useState([]);
   useEffect(() => {
@@ -842,16 +924,19 @@ export default function WorkDone() {
 
   useEffect(() => {
     if (tab !== "summary") return;
-    if (summary) return;
     let cancelled = false;
     setSummaryLoading(true);
-    pmApi.getWorkDoneSummary().then((res) => {
+    pmApi.getWorkDoneSummary(queryFilters).then((res) => {
       if (!cancelled) setSummary(res);
     }).catch(() => {
       if (!cancelled) setSummary({ operational: [], commercial: [], operational_order: [], commercial_order: [] });
     }).finally(() => { if (!cancelled) setSummaryLoading(false); });
     return () => { cancelled = true; };
-  }, [tab, summary]);
+    // queryFilters, NOT summary: the summary now follows the page's filters,
+    // so it refetches when they change. Leaving `summary` in the deps with
+    // the old `if (summary) return` guard removed would refetch on its own
+    // result, forever.
+  }, [tab, queryFilters]);
 
   return (
     <div>
@@ -872,7 +957,9 @@ export default function WorkDone() {
       {/* ── Tab bar ─────────────────────────────────────────── */}
       <div style={{ display: "flex", borderBottom: "2px solid #e2e8f0", marginBottom: 0 }}>
         {[
-          { id: "list", label: "Work Done" },
+          { id: "operational", label: "Operational Work Done" },
+          { id: "commercial", label: "Commercial Work Done" },
+          { id: "list", label: "All Work Done" },
           { id: "summary", label: "Work Done Summary" },
         ].map((t) => (
           <button
@@ -902,7 +989,9 @@ export default function WorkDone() {
           <span>{copyNotice.ok ? "✓" : "!"}</span> {copyNotice.message}
         </div>
       )}
-      {tab === "list" && (
+      {/* On every tab, Summary included. The Summary follows these filters
+          now, so hiding them there left it obeying a filter set nobody
+          could see or change. */}
       <div className="toolbar">
         <input
           type="search"
@@ -1023,11 +1112,25 @@ export default function WorkDone() {
             );
           })}
         </div>
+        {sliceChips.map((c) => (
+          <span key={`${c.label}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6,
+                         fontSize: "0.74rem", fontWeight: 700, color: "#1d4ed8",
+                         background: "#eff6ff", border: "1px solid #bfdbfe",
+                         borderRadius: 999, padding: "3px 6px 3px 11px",
+                         whiteSpace: "nowrap" }}>
+            {c.label}
+            <button type="button" onClick={c.clear} title="Remove this filter"
+                    style={{ border: "none", background: "transparent", cursor: "pointer",
+                             color: "#1d4ed8", fontSize: "0.85rem", lineHeight: 1,
+                             padding: "0 3px" }}>×</button>
+          </span>
+        ))}
         {hasFilters && (
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); setPipelineFilter([]); setAgeBandFilter([]); }}
           >
             Clear
           </button>
@@ -1067,7 +1170,6 @@ export default function WorkDone() {
           </button>
         </div>
       </div>
-      )}
 
       <div className="page-content">
         {error && (
@@ -1076,8 +1178,8 @@ export default function WorkDone() {
           </div>
         )}
 
-        <DataTableWrapper loading={loading && filteredRows.length > 0} scrollRef={tableScrollRef}>
-        {tab === "summary" ? (
+        <DataTableWrapper className={tab === "summary" ? "tablepro-inactive" : ""} loading={loading && filteredRows.length > 0} scrollRef={tableScrollRef}>
+        {tab === "summary" && (
           <div style={{ padding: "20px 20px 40px", background: "#f8fafc" }}>
             {summaryLoading ? (
               <div style={{ padding: "60px", textAlign: "center", color: "var(--text-muted)" }}>Loading summary…</div>
@@ -1119,15 +1221,15 @@ export default function WorkDone() {
                       onClick={s.onClick}
                       title={s.onClick ? `View ${s.label} in Work Done` : undefined}
                       style={{
-                        border: `1px solid ${s.bd}`, background: s.bg, borderRadius: 8, padding: "10px 18px", display: "flex", flexDirection: "column", gap: 2, minWidth: 140, flex: "1 1 140px", maxWidth: 240,
+                        border: `1px solid ${s.bd}`, background: s.bg, borderRadius: 8, padding: "8px 14px", display: "flex", flexDirection: "column", gap: 1, minWidth: 124, flex: "0 1 auto", maxWidth: 210,
                         cursor: s.onClick ? "pointer" : "default", transition: "box-shadow 0.15s, transform 0.15s",
                       }}
                       onMouseEnter={(e) => { if (s.onClick) { e.currentTarget.style.boxShadow = "0 4px 10px rgba(0,0,0,0.12)"; e.currentTarget.style.transform = "translateY(-1px)"; } }}
                       onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}
                     >
-                      <span style={{ fontSize: "0.64rem", fontWeight: 700, color: s.fg, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
-                      <span style={{ fontSize: "1.35rem", fontWeight: 800, color: s.fg, lineHeight: 1.1 }}>{fmt.format(s.lines)}</span>
-                      <span style={{ fontSize: "0.72rem", color: s.fg, opacity: 0.75, fontWeight: 500 }}>SAR {sar.format(s.revenue)}</span>
+                      <span style={{ fontSize: "0.63rem", fontWeight: 700, color: s.fg, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</span>
+                      <span style={{ fontSize: "1.2rem", fontWeight: 800, color: s.fg, lineHeight: 1.15 }}>{fmt.format(s.lines)}</span>
+                      <span style={{ fontSize: "0.69rem", color: s.fg, opacity: 0.75, fontWeight: 500, whiteSpace: "nowrap" }}>SAR {sar.format(s.revenue)}</span>
                     </div>
                   ))}
                 </div>
@@ -1189,6 +1291,24 @@ export default function WorkDone() {
               const activeOpKeys = opKeys.filter((k) => (opMap[k]?.count || 0) > 0);
               const zeroOpKeys   = opKeys.filter((k) => !(opMap[k]?.count || 0));
 
+              const ageTiles = (rowsForBand, tabId) => (rowsForBand || [])
+                .filter((r) => (r.count || 0) > 0)
+                .map((r) => ({
+                  label: r.key, lines: r.count, revenue: r.revenue || 0,
+                  ...(AGE_TONE[r.key] || { bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" }),
+                  onClick: () => goToSlice(tabId, { ageBand: [r.key] }),
+                }));
+
+              const subMap = Object.fromEntries(
+                (summary.operational_submission || []).map((r) => [r.key || "", r]));
+              const pipelineMap = Object.fromEntries(
+                (summary.commercial_pipeline || []).map((r) => [r.key || "", r]));
+              const comFlagged = (summary.commercial_flags || [])
+                .filter((r) => (r.key || "") !== "")
+                .reduce((a, r) => ({ count: a.count + (r.count || 0),
+                                     revenue: a.revenue + (r.revenue || 0) }),
+                        { count: 0, revenue: 0 });
+
               /* ─────────────── COMMERCIAL ─────────────── */
               const doneStatuses = new Set(summary.pic_done_statuses || ["Commercial Invoice Submitted", "Commercial Invoice Closed"]);
               const activeKeys   = (summary.pic_status_order || summary.commercial_order || []);
@@ -1207,8 +1327,13 @@ export default function WorkDone() {
               const comDoneRev    = stageMap["Closed"]?.revenue || 0;
               const comActiveLines = stageMap["Active"]?.count || 0;
               const comActiveRev   = stageMap["Active"]?.revenue || 0;
-              const comGrandTotal = comDoneLines + comActiveLines;
-              const comGrandRev   = comDoneRev + comActiveRev;
+              // Every stage, not just Closed + Active. The old pair matched
+              // PIC Tracker when this block counted all 22,873 PO Dispatch
+              // lines; now it counts exactly the Commercial Work Done tab,
+              // so dropping Pending/Cancelled would put the tile below the
+              // tab it is summarising.
+              const comGrandTotal = stageData.reduce((a, r) => a + (r.count || 0), 0);
+              const comGrandRev   = stageData.reduce((a, r) => a + (r.revenue || 0), 0);
               // MS2's rows arrive with lines that have no second milestone
               // already removed (get_work_done_summary), so both milestones
               // share one card order and neither grows a "NIL" card.
@@ -1221,11 +1346,36 @@ export default function WorkDone() {
                 <>
                   {/* ══ OPERATIONAL ══ */}
                   <div style={{ marginBottom: 0 }}>
-                    <SectionHeader accent="#047857" title="Operational Work Done Categories" sub="by Issue Flag" />
+                    <SectionHeader accent="#047857" title="Operational Work Done" sub="what each line is waiting on" />
+
                     <TotalsRow tiles={[
-                      { label: "Total Work Done", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([]) },
+                      { label: "Total Operational", lines: totalOpLines, revenue: totalOpRev,        bg: "#f0fdf4", fg: "#047857", bd: "#a7f3d0", onClick: () => goToWorkDoneList([]) },
                       { label: "Flagged Lines",   lines: flaggedLines,  revenue: flaggedRev,        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa", onClick: () => goToWorkDoneList(opKeys) },
                       { label: "Not Flagged",     lines: nonFlagged.count, revenue: nonFlagged.revenue || 0, bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0", onClick: () => goToWorkDoneList(["__NONE__"]) },
+                      // What each operational line is waiting on. "Submission
+                      // rejected" is PIC sending the work done back — a
+                      // different thing from "Invoice rejected" on the
+                      // commercial side, so the two are never both called
+                      // just "Rejected".
+                      ...(subMap["PIC Rejected"]?.count ? [{
+                        label: "Submission rejected", lines: subMap["PIC Rejected"].count,
+                        revenue: subMap["PIC Rejected"].revenue || 0,
+                        bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca",
+                        onClick: () => goToSlice("operational", { submission: ["PIC Rejected"] }),
+                      }] : []),
+                      ...(subMap["Ready for Confirmation"]?.count ? [{
+                        label: "Ready for Confirmation", lines: subMap["Ready for Confirmation"].count,
+                        revenue: subMap["Ready for Confirmation"].revenue || 0,
+                        bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe",
+                        onClick: () => goToSlice("operational", { submission: ["Ready for Confirmation"] }),
+                      }] : []),
+                      ...(subMap[""]?.count ? [{
+                        label: "Not submitted yet", lines: subMap[""].count,
+                        revenue: subMap[""].revenue || 0,
+                        bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0",
+                        onClick: () => goToSlice("operational", { submission: ["__NONE__"] }),
+                      }] : []),
+                      ...ageTiles(summary.operational_ageing, "operational"),
                     ]} />
                     <ProportionBar segments={[
                       { value: flaggedLines, color: "#f97316", label: `Flagged ${totalOpLines > 0 ? Math.round(flaggedLines/totalOpLines*100) : 0}%` },
@@ -1259,16 +1409,55 @@ export default function WorkDone() {
 
                   {/* ══ COMMERCIAL ══ */}
                   <div>
-                    <SectionHeader accent="#0369a1" title="Commercial Work Done Categories" sub="by PIC Status (MS1 & MS2)" />
+                    <SectionHeader accent="#0369a1" title="Commercial Work Done" sub="where PIC has taken each confirmed line" />
+
+                    {/* "Commercially Done / Still Active" said almost nothing:
+                        Done was keyed on dispatch_status='Closed', which none
+                        of these lines are, so it read 12 of 520 and the other
+                        508 were one undifferentiated lump. The pipeline below
+                        says which step each line is actually waiting on, and
+                        every tile clicks through to exactly the rows it
+                        counted. */}
                     <TotalsRow tiles={[
-                      { label: "Total Work Done Lines", lines: comGrandTotal,  revenue: comGrandRev,   bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe" },
-                      { label: "Commercially Done",     lines: comDoneLines,   revenue: comDoneRev,    bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0" },
-                      { label: "Still Active",          lines: comActiveLines, revenue: comActiveRev,  bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa" },
+                      { label: "Total Commercial", lines: comGrandTotal, revenue: comGrandRev,
+                        bg: "#eff6ff", fg: "#1d4ed8", bd: "#bfdbfe",
+                        onClick: () => goToSlice("commercial") },
+                      // Only the states that need someone to do something.
+                      // The in-flight ones (Under Process to Apply / ISDP /
+                      // I-BUY / Ready for Invoice) are the normal path and
+                      // are already listed milestone-by-milestone below —
+                      // repeating them up here just made the row long.
+                      ...(summary.pipeline_order || [])
+                        .filter((k) => !PIPELINE_IN_FLIGHT.has(k))
+                        .map((k) => [k, pipelineMap[k]])
+                        .filter(([, v]) => (v?.count || 0) > 0)
+                        .map(([k, v]) => ({
+                          label: k,
+                          lines: v.count,
+                          revenue: v.revenue || 0,
+                          ...(PIPELINE_TONE[k] || { bg: "#f8fafc", fg: "#475569", bd: "#e2e8f0" }),
+                          onClick: () => goToSlice("commercial", { pipeline: [k] }),
+                        })),
+                      ...ageTiles(summary.commercial_ageing, "commercial"),
+                      ...(comFlagged.count ? [{
+                        label: "Flagged", lines: comFlagged.count, revenue: comFlagged.revenue,
+                        bg: "#fff7ed", fg: "#c2410c", bd: "#fed7aa",
+                        onClick: () => goToSlice("commercial",
+                          { issueFlag: (summary.commercial_flags || [])
+                              .map((r) => r.key).filter(Boolean) }),
+                      }] : []),
+
                     ]} />
-                    <ProportionBar segments={[
-                      { value: comDoneLines,   color: "#10b981", label: `Done ${comGrandTotal > 0 ? Math.round(comDoneLines/comGrandTotal*100) : 0}%` },
-                      { value: comActiveLines, color: "#f59e0b", label: `Active ${comGrandTotal > 0 ? Math.round(comActiveLines/comGrandTotal*100) : 0}%` },
-                    ]} />
+                    {/* Same pipeline as the tiles above — a bar built from
+                        the old Done/Active pair would contradict them. */}
+                    <ProportionBar segments={(summary.pipeline_order || [])
+                      .map((k) => ({ k, v: pipelineMap[k] }))
+                      .filter(({ v }) => (v?.count || 0) > 0)
+                      .map(({ k, v }) => ({
+                        value: v.count,
+                        color: PIPELINE_BAR[k] || "#cbd5e1",
+                        label: `${k} ${comGrandTotal > 0 ? Math.round(v.count / comGrandTotal * 100) : 0}%`,
+                      }))} />
 
                     <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 20 }}>
                       {msList.map(({ ms, label, data, color, bd, bg, bar }) => {
@@ -1304,7 +1493,20 @@ export default function WorkDone() {
               );
             })()}
           </div>
-        ) : (
+        )}
+
+        {/* Hidden, never unmounted. Two rules meet here and only one shape
+            satisfies both:
+              * DataTablePro observes the table — unmounting it on Summary
+                lost its enhancement state, so coming back left the column
+                filters applied with no Reset button to clear them.
+              * The full-height CSS keys on `.page-content >
+                .data-table-wrapper`, a DIRECT child. Wrapping the wrapper in
+                this div broke that selector, and the whole page started
+                scrolling instead of the table, with the row-limit footer
+                pushed below the fold.
+            So the div goes INSIDE the wrapper, around the table only. */}
+        <div style={tab === "summary" ? { display: "none" } : undefined}>
           <>
             <table className="data-table" data-excel-filter-all="1" data-table-key="admin-workdone">
               <thead>
@@ -1354,6 +1556,7 @@ export default function WorkDone() {
                   <th>PIC Status (MS1)</th>
                   <th>PIC Status (MS2)</th>
                   <th>Submission Status</th>
+                  <th style={{ textAlign: "right" }} title="Days in the line's current state — since the submission status last moved, or once confirmed, since PIC last moved the milestone status">Days in Status</th>
                   <th>PIC Rejection Reason</th>
                   <th>Work Type</th>
                   <th title="Which milestones are closed for this Work Done">Milestone</th>
@@ -1446,6 +1649,19 @@ export default function WorkDone() {
                       <td><PicStatusBadge value={row.pic_status} /></td>
                       <td><PicMs2Badge value={row.pic_status_ms2} ms2Pct={row.ms2_pct} /></td>
                       <td><StatusPill value={row.submission_status} /></td>
+                      <td style={{ textAlign: "right" }}>
+                        {row.operational_days != null ? (
+                          <span title={row.operational_since
+                                  ? `Unchanged since ${row.operational_since}`
+                                  : undefined}
+                                style={{ fontSize: "0.72rem", fontWeight: 700,
+                                         color: "#92400e", background: "#fffbeb",
+                                         border: "1px solid #fde68a", borderRadius: 999,
+                                         padding: "1px 7px", whiteSpace: "nowrap" }}>
+                            {row.operational_days}
+                          </span>
+                        ) : "—"}
+                      </td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: row.pic_rejection_remark ? "#b91c1c" : "#94a3b8" }} title={row.pic_rejection_remark || ""}>{row.pic_rejection_remark || "—"}</td>
                       <td>
                         {row.source === "Direct Close" && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0369a1", border: "1px solid #93c5fd", whiteSpace: "nowrap" }} title={row.direct_close_by ? `Closed by: ${row.direct_close_by_full_name || row.direct_close_by}` : ""}>Direct Close</span>}
@@ -1510,9 +1726,10 @@ export default function WorkDone() {
                     <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green)", padding: "8px 16px" }}>
                       {sar.format(totals.revenue)}
                     </td>
-                    {/* PIC MS1 · PIC MS2 · Submission · Rejection · Work Type ·
-                        Milestone · Issue · General · Manager · Team Lead · Open */}
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    {/* PIC MS1 · PIC MS2 · Submission · Op. Days · Rejection ·
+                        Work Type · Milestone · Issue · General · Manager ·
+                        Team Lead · Open */}
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                   </tr>
                 </tfoot>
               )}
@@ -1533,9 +1750,9 @@ export default function WorkDone() {
               </div>
             ) : null}
           </>
-        )}
+        </div>
         </DataTableWrapper>
-        {tab === "list" && (
+        {tab !== "summary" && (
         <TableRowsLimitFooter
           placement="tableCard"
           loadedCount={displayedCount}

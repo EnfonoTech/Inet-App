@@ -1664,10 +1664,18 @@ def _apply_pic_rejection_to_work_done(po_dispatch_name, closed_flag):
         limit=1,
     )
     if existing:
+        prev = frappe.db.get_value(
+            "Work Done", existing[0].name, "submission_status") or ""
         frappe.db.set_value(
             "Work Done", existing[0].name, "submission_status", "PIC Rejected",
             update_modified=True,
         )
+        # submission_status is in TRACKED_FIELDS, but this path wrote it with a
+        # bare set_value and logged nothing -- so there was not one single
+        # "PIC Rejected" event in the log, and the only record of when a line
+        # fell back into operational work was `modified`, which any edit moves.
+        _log_submission_status(po_dispatch_name, prev, "PIC Rejected")
+        stamp_submission_status_dates(existing[0].name, "PIC Rejected")
         return existing[0].name
 
     # Genuinely no Work Done (legacy/archive line) — create one so the reject is
@@ -1681,7 +1689,56 @@ def _apply_pic_rejection_to_work_done(po_dispatch_name, closed_flag):
     new_wd.source = "Backend"
     new_wd.set(closed_flag, 1)
     new_wd.insert(ignore_permissions=True)
+    _log_submission_status(po_dispatch_name, "", "PIC Rejected")
+    stamp_submission_status_dates(new_wd.name, "PIC Rejected")
     return new_wd.name
+
+
+from inet_app.api.status_log import stamp_submission_status_dates
+
+
+def _refuse_unsubmit_confirmed(po_dispatch, new_status, ms_label, poid=None):
+    """Stop a confirmed line being parked back at "Work Not Done".
+
+    The IM marks a line Confirmation Done and the handover advances PIC to
+    "Under Process to Apply". Setting it back to "Work Not Done" undoes that
+    silently: the IM still sees the line as delivered, PIC's own column says
+    the work never happened, no rejection reason is recorded and no
+    notification goes out. The line then sits in PIC's Pending pile, which
+    is where you look for work that has NOT been done -- so nobody looks.
+    Twelve lines reached that state on the production copy, each one moved
+    there by hand after a correct handover, two of them from as far along as
+    Under ISDP.
+
+    Reject exists for this and does it properly: it demands a reason, writes
+    PIC Rejected, and puts the line on the IM's PIC Rejected tab.
+    """
+    if (new_status or "").strip() != "Work Not Done":
+        return
+    if not frappe.db.exists("Work Done", {"system_id": po_dispatch,
+                                          "submission_status": "Confirmation Done"}):
+        return
+    frappe.throw(
+        f"{poid or po_dispatch}: {ms_label} is already confirmed. Use Reject.",
+        title="Line already confirmed",
+    )
+
+
+def _log_submission_status(po_dispatch, old_value, new_value):
+    """One event per submission_status move, so "how long has this line been
+    sitting in operational work done" has a real answer.
+
+    Never raises: a missing audit row must not fail a PIC rejection.
+    """
+    if (old_value or "") == (new_value or ""):
+        return
+    try:
+        from inet_app.api.status_log import log_status_event
+        log_status_event(po_dispatch, "submission_status",
+                         old_value or "", new_value or "",
+                         entity="Work Done", remark="PIC rejection")
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "submission_status log failed")
 
 
 def _reflect_pic_rejection(po_dispatch_name, closed_flag):
@@ -1771,6 +1828,8 @@ def update_pic_row(po_dispatch, fields):
             _new_ms, _old_ms, fields.get(_rejection_remark_field(_ms)),
             _ms, label=(doc.poid or po_dispatch),
         )
+        _refuse_unsubmit_confirmed(po_dispatch, _new_ms, _ms,
+                                   poid=(doc.poid or po_dispatch))
     # Only recompute when this call actually touches a milestone status —
     # eff_ms1/eff_ms2 fall back to the stored value for whichever one this
     # call didn't touch, so a single-milestone update still sees the OTHER
@@ -2060,6 +2119,15 @@ def bulk_update_pic_status(po_dispatches, pic_status, milestone="MS1", remark=No
             continue
         if not frappe.db.exists("PO Dispatch", name):
             errors.append({"po_dispatch": name, "error": "Not found"})
+            continue
+        # Same guard update_pic_row applies. Reported per row rather than
+        # thrown, because one confirmed line must not abort a bulk of fifty.
+        try:
+            _refuse_unsubmit_confirmed(
+                name, pic_status, milestone,
+                poid=frappe.db.get_value("PO Dispatch", name, "poid"))
+        except frappe.ValidationError as exc:
+            errors.append({"po_dispatch": name, "error": str(exc)})
             continue
         if cint(frappe.db.get_value("PO Dispatch", name, "is_internal_work") or 0):
             errors.append({"po_dispatch": name, "error": "Internal work — no PIC flow"})

@@ -28,7 +28,13 @@
   "ms2_closed",
   "ms2_closed_at",
   "section_closures",
-  "closures"
+  "closures",
+  "section_dates",
+  "ready_for_confirmation_at",
+  "confirmed_at",
+  "pic_rejected_at",
+  "col_break_dates",
+  "submission_status_changed_at"
  ],
  "fields": [
   {
@@ -182,6 +188,40 @@
    "fieldtype": "Table",
    "label": "Closures",
    "options": "Work Done Closure"
+  },
+  {
+   "fieldname": "section_dates",
+   "fieldtype": "Section Break",
+   "label": "Submission Dates",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "ready_for_confirmation_at",
+   "fieldtype": "Datetime",
+   "label": "Ready for Confirmation On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "confirmed_at",
+   "fieldtype": "Datetime",
+   "label": "Confirmation Done On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pic_rejected_at",
+   "fieldtype": "Datetime",
+   "label": "PIC Rejected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "submission_status_changed_at",
+   "fieldtype": "Datetime",
+   "label": "Status Last Changed On",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
