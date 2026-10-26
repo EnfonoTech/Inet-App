@@ -181,7 +181,18 @@ get_website_user_home_page = "inet_app.home_page.get_landing_page"
 # ---------------
 # Hook on document methods and events
 
+# Master fields the reports read HISTORICALLY — a team's status and cost, a
+# subcontract's monthly target. Re-running September in December has to give
+# September's answer, so every ORM save of these is logged to PO Status Event
+# (see inet_app.api.status_log.TRACKED_MASTER_FIELDS). The portal endpoints
+# that write with frappe.db.set_value bypass the ORM and log themselves.
+_MASTER_HISTORY = {"on_update": "inet_app.api.status_log.log_master_changes"}
+
 doc_events = {
+	"INET Team": dict(_MASTER_HISTORY),
+	"Subcontract Master": dict(_MASTER_HISTORY),
+	"IM Master": dict(_MASTER_HISTORY),
+	"Inet Settings": dict(_MASTER_HISTORY),
 	"Employee": {
 		# Names a new Employee by Employee Number (== Iqama/National ID here)
 		# instead of the HR-EMP- series, matching production's convention.

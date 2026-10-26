@@ -13,6 +13,8 @@ import re
 
 import frappe
 from inet_app.api.status_log import (
+    TRACKED_MASTER_FIELDS,
+    log_master_set_value,
     log_status_event,
     log_status_events,
     set_dispatch_status,
@@ -15819,15 +15821,317 @@ def _perf_date_range(from_date, to_date):
     return fd, td
 
 
+
+# Bands for the composite score. NOT the old thresholds: those were tuned for
+# one uncapped ratio (revenue over target), where 100+ was reachable by
+# overshooting. Three of the four components cap at 100, so an average can
+# only clear 100 if every part is perfect — "Excellent" would have become
+# unreachable. Cut against September 2026 on the production copy.
+RATING_BANDS = ((90, "Excellent"), (75, "Good"), (60, "Need Improvement"),
+                (0, "Idle"))
+
+# Below this many lines (or due plans) a component is not rated at all.
+# Without it the metric is unstable at the bottom: Waqas had exactly two
+# plans due in September, both cancelled, and scored a perfect 100 for
+# Discipline off a sample of two. Dropping the component is the same rule
+# as having no data, which the score already handles by shrinking the
+# denominator rather than scoring zero.
+_MIN_RATED_SAMPLE = 5
+
+# Published with the report so anyone can reconstruct a score. Equal weights
+# are a choice, not a law — but an unexplainable one-number verdict is worse
+# than no verdict, so the weights travel with the number.
+RATING_COMPONENTS = {
+    "delivery": "lines completed (either route) / lines assigned",
+    "commercial": "revenue / target, capped at 100",
+    "quality": "1 - rework lines / lines assigned",
+    "discipline": "plans closed out / plans whose outcome was due",
+}
+
+
+# ─── Close-out, the one definition ──────────────────────────────────────────
+
+def plan_closed_out_sql(alias="rp"):
+    """Has this plan had its outcome stated? The ONLY place that asks.
+
+    Written for the IM scorecard's Discipline component and deliberately
+    general, because docs/PLAN_CLOSEOUT_SLA.md needs exactly this test and
+    §8 of EXECUTION_WORKFLOW.md records what happens when "done" gets defined
+    twice: the copies drift and two screens disagree about one line.
+
+    Three routes count, matching the three the client described — the work was
+    finished, the plan was closed off, or it was raised as an issue:
+
+      * the visit is finished (``_visit_closed_exists_sql`` — visit-scoped, QC
+        and CIAG settled, nothing outstanding, so a part-delivered line does
+        NOT count as closed out)
+      * the plan itself reached Completed or Cancelled
+      * an issue was raised on it
+
+    Extending is not a fourth route: a plan pushed to a future date is not yet
+    due, which ``plan_due_sql`` handles instead.
+    """
+    return (
+        "(" + _visit_closed_exists_sql(alias=alias) +
+        f" OR IFNULL({alias}.plan_status, '') IN ('Completed', 'Cancelled')"
+        f" OR IFNULL({alias}.issue_status, '') <> '')"
+    )
+
+
+def plan_due_sql(alias="rp", grace_days=1):
+    """A plan whose outcome is overdue — its end date plus the grace window
+    has passed. Dated from the plan's END, never its creation: a plan made
+    today for next week is not late today."""
+    return (f"COALESCE({alias}.plan_end_date, {alias}.plan_date) "
+            f"< DATE_SUB(CURDATE(), INTERVAL {cint(grace_days)} DAY)")
+
+
+def _im_cohort_sql(pd_alias="pd"):
+    """The lines a given IM had OPEN during [%s, %s] — the denominator every
+    per-IM count shares, so Flow, Delivery and the subcontract target split
+    cannot each mean something different by "the IM's lines".
+
+    Open means: not cancelled, it existed by the end of the period, and either
+    it is still unfinished or it saw Work Done activity inside the period.
+    A line finished before the period began is not this period's work.
+
+    Returns (sql, params) — params are (td, *LINE_DONE_STATUSES, fd, td).
+    """
+    ph = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
+    sql = (
+        f"IFNULL({pd_alias}.dispatch_status, '') <> 'Cancelled'"
+        f" AND IFNULL({pd_alias}.is_internal_work, 0) = 0"
+        f" AND IFNULL({pd_alias}.im, '') <> ''"
+        f" AND DATE({pd_alias}.creation) <= %s"
+        f" AND (IFNULL({pd_alias}.dispatch_status, '') NOT IN ({ph})"
+        f"      OR EXISTS (SELECT 1 FROM `tabWork Done` wdc"
+        f"                  LEFT JOIN `tabDaily Execution` dec2 ON dec2.name = wdc.execution"
+        f"                 WHERE wdc.system_id = {pd_alias}.name"
+        f"                   AND COALESCE(DATE(dec2.execution_date),"
+        f"                                DATE(wdc.ms1_closed_at),"
+        f"                                DATE(wdc.creation)) BETWEEN %s AND %s))"
+    )
+    return sql, tuple(LINE_DONE_STATUSES)
+
+
+# ─── IM cost attribution ────────────────────────────────────────────────────
+# Phase 2 of docs/IM_PERFORMANCE_REPORT.md. Replaces a model that charged each
+# team's WHOLE period salary to the IMs who planned it, split by plan count.
+# That over-charged in both directions: SAR 50,850 of real salary landed on no
+# IM, while SAR 114,594 of subcontractor payout was added into the same column.
+
+def team_field_timeline(field):
+    """team -> [(date, old, new)] sorted: every recorded change to one field.
+
+    ONE source — `PO Status Event`. It used to be three (approved Team
+    Allocation Requests, tabVersion, and nothing at all for the Admin Teams
+    page), and the third is how one team's custody silently fell out of the
+    replay. Desk saves now reach the log through an on_update hook, the three
+    db.set_value endpoints log explicitly, and
+    `backfill_master_history_events` moved the old Version rows and approved
+    transfers in.
+
+    Used for `im` (who held the team) and available for `status` and
+    `daily_cost` whenever those are wanted historically.
+    """
+    events = {}
+    for r in frappe.db.sql(
+        """SELECT entity_name, old_value, new_value, changed_at
+             FROM `tabPO Status Event`
+            WHERE entity = 'INET Team' AND field_changed = %s
+            ORDER BY changed_at""",
+        (field,), as_dict=True,
+    ):
+        events.setdefault(r.entity_name, []).append(
+            (getdate(r.changed_at), r.old_value or "", r.new_value or ""))
+    return events
+
+
+def _team_custody_timeline():
+    """team -> [(date, from_im, to_im)], for "who held this team then"."""
+    return team_field_timeline("im")
+
+
+def _custodian_on(events, team, day, current_im):
+    """Who held `team` on `day`. Walks back from today's value: every event
+    AFTER that day is undone, so what remains is the holder at the time.
+
+    Before a team's first recorded event the holder is that event's `from_im`;
+    with no events at all it is the team's current `im`, which for those teams
+    is also the one it was created with — none of them has ever moved.
+    """
+    cur = current_im or ""
+    for ts, frm, _to in reversed(events.get(team, [])):
+        if ts > day:
+            cur = frm
+    return cur
+
+
+def im_team_cost_attribution(fd, td):
+    """Split the INET salary bill for [fd, td] across IMs. Returns a dict of
+    ``used`` / ``idle`` maps, the ``pot`` they must sum to, and ``per_team``.
+
+    The pot is `SUM(daily_cost x _team_cost_days)` over INET, non-backend
+    teams — the SAME expression as get_command_dashboard's `inet_monthly_cost`,
+    so the two screens cannot disagree. A Backend team of type INET is excluded
+    there because the record is an IM, not a crew.
+
+    A team-day is USED when the team filed an execution covering it, and the
+    cost of that day goes to the IM(s) whose lines it worked. Every other day
+    the team existed is IDLE and goes to whoever HELD the team that day — not
+    to whoever holds it now. A team borrowed for five days and worked for two
+    leaves its borrower carrying the other three, which is the point.
+
+    The day rule is `_team_domain_utilization`'s, not a new one:
+      * Fridays are not working days (KSA week is Saturday to Thursday)
+      * days outside the team's start/end never count — it did not exist
+      * future days never count; a day that has not happened cannot be idle
+      * attendance is the Daily Execution span, execution_date ->
+        last_progress_date, so a multi-day job covers every day it ran
+
+    Day weights are normalised to the team's own `_team_cost_days` result
+    rather than being a raw day count, because that function charges a flat 30
+    units per month. Counting calendar days instead reported idle at 37% of
+    the bill when the real figure is 6.5%.
+    """
+    fd, td = getdate(fd), getdate(td)
+    today = getdate(nowdate())
+
+    teams = frappe.db.sql(
+        """SELECT name, COALESCE(daily_cost, 0) AS daily_cost,
+                  IFNULL(daily_cost_applies, 0) AS applies,
+                  im, start_date, end_date, status
+             FROM `tabINET Team`
+            WHERE team_type = 'INET'
+              AND IFNULL(team_category, '') <> 'Backend Team'""",
+        as_dict=True,
+    )
+    events = _team_custody_timeline()
+
+    # One row per execution, clamped to the period. de.team is the signal;
+    # verified set on every row and never shared between teams.
+    execs = frappe.db.sql(
+        """SELECT de.team AS team, DATE(de.execution_date) AS d1,
+                  DATE(COALESCE(de.last_progress_date, de.execution_date)) AS d2,
+                  pd.im AS im
+             FROM `tabDaily Execution` de
+             LEFT JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
+            WHERE de.execution_date IS NOT NULL
+              AND IFNULL(de.team, '') <> ''
+              AND de.execution_date <= %s
+              AND COALESCE(de.last_progress_date, de.execution_date) >= %s""",
+        (td, fd), as_dict=True,
+    )
+    worked = {}
+    for e in execs:
+        d, last = max(getdate(e.d1), fd), min(getdate(e.d2), td)
+        while d <= last:
+            if d.weekday() != 4:
+                slot = worked.setdefault((e.team, d), {})
+                key = e.im or ""
+                slot[key] = slot.get(key, 0) + 1
+            d = add_days(d, 1)
+
+    used, idle, per_team = {}, {}, []
+    # (im, team) -> SAR, so the report can say how many teams an IM carried
+    # and what fraction of each. A plain count cannot be added up — a shared
+    # team is 1 to each IM — but the fractions can, and they total the fleet.
+    by_im_team, team_pots = {}, {}
+    pot = 0.0
+    for t in teams:
+        daily = flt(t.daily_cost)
+        if not daily or not cint(t.applies):
+            continue
+        team_pot = daily * _team_cost_days(t.start_date, t.end_date, fd, td)
+        pot += team_pot
+        team_pots[t.name] = team_pot
+        days = []
+        d = fd
+        while d <= td:
+            if (d.weekday() != 4 and d <= today
+                    and not (t.start_date and getdate(t.start_date) > d)
+                    and not (t.end_date and getdate(t.end_date) < d)):
+                days.append(d)
+            d = add_days(d, 1)
+        if not days:
+            continue
+        weight = team_pot / len(days)
+        t_used = t_idle = 0.0
+        for d in days:
+            who = worked.get((t.name, d))
+            if who:
+                total = sum(who.values()) or 1
+                for im, n in who.items():
+                    share = weight * n / total
+                    used[im] = used.get(im, 0.0) + share
+                    by_im_team[(im, t.name)] = by_im_team.get((im, t.name), 0.0) + share
+                t_used += weight
+            else:
+                holder = _custodian_on(events, t.name, d, t.im)
+                idle[holder] = idle.get(holder, 0.0) + weight
+                by_im_team[(holder, t.name)] = by_im_team.get((holder, t.name), 0.0) + weight
+                t_idle += weight
+        per_team.append({
+            "team": t.name, "status": t.status, "salary": round(team_pot, 2),
+            "days": len(days),
+            "worked_days": sum(1 for d in days if worked.get((t.name, d))),
+            "used": round(t_used, 2), "idle": round(t_idle, 2),
+        })
+
+    # Two readings of "how many teams", because one number cannot do both.
+    #   teams       — how many a given IM carried. Honest per row, NOT
+    #                 summable: a shared team is one to each of them.
+    #   team_equiv  — each team weighted by the fraction of its salary this
+    #                 IM carried. Adds up to the cost-bearing fleet, so the
+    #                 column has a meaningful total.
+    teams_by_im, equiv_by_im = {}, {}
+    for (im, team), amt in by_im_team.items():
+        teams_by_im.setdefault(im, set()).add(team)
+        p = team_pots.get(team) or 0
+        if p:
+            equiv_by_im[im] = equiv_by_im.get(im, 0.0) + amt / p
+    return {"used": used, "idle": idle, "pot": pot, "per_team": per_team,
+            "teams": teams_by_im, "team_equiv": equiv_by_im}
+
 @frappe.whitelist()
 def get_im_performance_report(from_date=None, to_date=None, **kwargs):
-    """IM Performance Scorecard — revenue, cost, profit, completion %, rating per IM.
-    Target = SUM(pd.line_amount) for distinct POs that had plans in the period.
-    Rating thresholds (IM-level, stricter): >=100% Excellent, >=85% Good, >=70% NI, else Idle.
+    """IM Performance Scorecard — lines, revenue, cost and profit per IM.
+
+    Phase 1 of the rework in docs/IM_PERFORMANCE_REPORT.md: correctness only,
+    no new columns. Four things changed and each was a measured defect.
+
+      * Assigned/Completed count LINES, not plans. COUNT(DISTINCT rp.name)
+        made a re-visit two assignments — Ajmal read 327 against 210 real
+        lines, which put him above Majid (322) while carrying 81 fewer.
+      * "Completed" for the shortcut routes is LINE_DONE_STATUSES, not
+        dispatch_status = 'Completed' alone. Completed is a TRANSIENT stage:
+        PIC submitting the invoice moves the line past it, so the further a
+        line got the more it counted as unfinished. Waqas read 16 of 219.
+      * Revenue excludes internal work, as Target and Assigned already did.
+        Latent today (no internal line has a Work Done) and wrong anyway.
+      * A Direct Close is dated by the IM's STATED closing date, not by when
+        the row happened to be created — the same rule _direct_close_one
+        applies when it writes ms1/ms2_closed_at.
+
+    Achievement % and Rating are deliberately GONE in this pass. Both were
+    revenue over a target derived from that same revenue, so a pure
+    direct-closer scored exactly 100%. They return in Phase 3 as a composite
+    whose components are published. Tell the client before this ships: they
+    are the two columns most read.
     """
     fd, td = _perf_date_range(from_date, to_date)
+    ph_done = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
+    # A shortcut close carries the business date the work closed; `creation`
+    # is only the audit stamp of when someone got round to recording it.
+    # Work Done Closure.closed_on (partial / remainder closes) joins this
+    # COALESCE in Phase 3, with the rest of the partial-quantity work.
+    wd_close_date = ("COALESCE(DATE(wd.ms1_closed_at), DATE(wd.ms2_closed_at),"
+                     " DATE(wd.creation))")
 
-    # Plans: assigned/completed lines per IM. Team count is NOT derived here —
+    # Assigned/completed LINES per IM — distinct PO Dispatch, not distinct
+    # plan. A line needing a re-visit is still one line; counting plans made
+    # the busiest-looking IM the one with the most repeat visits. Team count
+    # is NOT derived here —
     # rp.team is only the plan's lead team; a multi-team split (Rollout Plan
     # Team child rows) puts the other teams nowhere this query can see them,
     # which silently undercounted "Teams" on this report. See teams_by_im below.
@@ -15835,8 +16139,9 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         """
         SELECT pd.im,
                COALESCE(imm.full_name, pd.im) AS im_name,
-               COUNT(DISTINCT rp.name)         AS assigned_lines,
-               SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS completed_lines
+               COUNT(DISTINCT pd.name)         AS assigned_lines,
+               COUNT(DISTINCT CASE WHEN rp.plan_status = 'Completed'
+                                   THEN pd.name END) AS completed_lines
         FROM `tabRollout Plan` rp
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
@@ -15856,7 +16161,7 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     # completed lines.
     team_split_rows = frappe.db.sql(
         """
-        SELECT pd.im, t.team
+        SELECT pd.im, t.team, it.team_type
         FROM `tabRollout Plan` rp
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         JOIN (
@@ -15864,52 +16169,41 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
             UNION
             SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
         ) t ON t.plan = rp.name
+        JOIN `tabINET Team` it ON it.name = t.team
         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
           AND IFNULL(pd.is_internal_work, 0) = 0
           AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
           AND t.team IS NOT NULL AND t.team != ''
-        GROUP BY pd.im, t.team
+        GROUP BY pd.im, t.team, it.team_type
         """,
         (fd, td), as_dict=True,
     )
-    teams_by_im = {}
+    # Only SUB teams come from here now. The salaried count is taken from the
+    # cost attribution instead, so "Teams" and "Team Cost" describe the same
+    # set — this plan-based query counted every team type, so an IM showing
+    # 12 teams beside a salary figure built from 9 of them was normal.
+    sub_teams_by_im = {}
     for r in team_split_rows:
-        teams_by_im.setdefault(r.im, set()).add(r.team)
+        if (r.get("team_type") or "") == "SUB":
+            sub_teams_by_im.setdefault(r.im, set()).add(r.team)
 
     # Target = SUM of line_amount on distinct PO Dispatches that either had
     # plans in the period, OR were closed directly (Direct Close / Backend —
     # no Rollout Plan at all, so the first branch alone never sees them; an
     # IM who only ever direct-closes would show Target=0 forever otherwise).
-    target_rows = frappe.db.sql(
-        """
-        SELECT pd.im, COALESCE(SUM(pd.line_amount), 0) AS target
-        FROM (
-            SELECT DISTINCT rp.po_dispatch AS po_dispatch
-            FROM `tabRollout Plan` rp
-            WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-              AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
-            UNION
-            SELECT DISTINCT wd.system_id AS po_dispatch
-            FROM `tabWork Done` wd
-            WHERE IFNULL(wd.execution, '') = ''
-              AND DATE(wd.creation) BETWEEN %s AND %s
-        ) plans
-        JOIN `tabPO Dispatch` pd ON pd.name = plans.po_dispatch
-        WHERE pd.im IS NOT NULL AND pd.im != ''
-          AND IFNULL(pd.is_internal_work, 0) = 0
-        GROUP BY pd.im
-        """,
-        (fd, td, fd, td), as_dict=True,
-    )
-    target_by_im = {r.im: flt(r.target) for r in target_rows}
+    # The old Target — SUM(line_amount) of whatever the IM planned or closed —
+    # is GONE, not merely unused: it was derived from the same closures the
+    # revenue came from, which is why a pure direct-closer scored exactly
+    # 100%. Target is now built from cost and from the contract commitments,
+    # further down.
 
     # Revenue per IM from Work Done. Two sources: normal rollout execution
     # (via Daily Execution -> Rollout Plan -> PO Dispatch, dated by when the
     # field work happened) and Direct Close / Backend (wd.execution is blank
     # for these — no Daily Execution ever exists — so wd.system_id -> pd
-    # directly, dated by when the WD record itself was created, i.e. when
-    # the IM did the direct close / marked the backend line done). Without
+    # directly, dated by the IM's STATED closing date, falling back to
+    # creation only when none was recorded). Without
     # the second query, an IM who only ever direct-closes showed 0 revenue
     # here no matter how much they'd actually closed.
     rev_rows = frappe.db.sql(
@@ -15921,6 +16215,7 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(pd.is_internal_work, 0) = 0
         GROUP BY pd.im
         """,
         (fd, td), as_dict=True,
@@ -15928,13 +16223,14 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     rev_by_im = {r.im: flt(r.revenue) for r in rev_rows}
 
     rev_rows_direct = frappe.db.sql(
-        """
+        f"""
         SELECT pd.im, COALESCE(SUM(wd.revenue_sar), 0) AS revenue
         FROM `tabWork Done` wd
         JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE IFNULL(wd.execution, '') = ''
-          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND {wd_close_date} BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(pd.is_internal_work, 0) = 0
         GROUP BY pd.im
         """,
         (fd, td), as_dict=True,
@@ -15950,22 +16246,26 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     # Same "no Rollout Plan at all" gap as target/revenue above (plan_rows
     # never sees these), counted as DISTINCT po_dispatch (not per WD row) so
     # a milestone-split line with 2 WD rows (MS1 + MS2) is still one line.
-    # "Completed" requires dispatch_status = 'Completed', which
-    # _direct_close_one only sets once BOTH milestones are closed — an
-    # MS1-only close counts as touched but not yet completed.
+    # "Completed" is LINE_DONE_STATUSES — Completed OR BEYOND. Completed is
+    # a transient stage: _compute_dispatch_status_from_pic moves the line to
+    # Submitted/Closed the moment PIC invoices it, so an equality test made
+    # the most finished lines count as unfinished (Waqas: 16 of 219, with
+    # 197 of the rest already at Submitted or past it).
     direct_source_rows = frappe.db.sql(
-        """
+        f"""
         SELECT pd.im, wd.source,
                COUNT(DISTINCT pd.name) AS assigned_lines,
-               COUNT(DISTINCT CASE WHEN pd.dispatch_status = 'Completed' THEN pd.name END) AS completed_lines
+               COUNT(DISTINCT CASE WHEN pd.dispatch_status IN ({ph_done})
+                                   THEN pd.name END) AS completed_lines
         FROM `tabWork Done` wd
         JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE IFNULL(wd.execution, '') = ''
-          AND DATE(wd.creation) BETWEEN %s AND %s
+          AND {wd_close_date} BETWEEN %s AND %s
           AND pd.im IS NOT NULL AND pd.im != ''
+          AND IFNULL(pd.is_internal_work, 0) = 0
         GROUP BY pd.im, wd.source
         """,
-        (fd, td), as_dict=True,
+        tuple(LINE_DONE_STATUSES) + (fd, td), as_dict=True,
     )
     direct_by_im = {}
     backend_by_im = {}
@@ -15974,84 +16274,195 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         if target_map is not None:
             target_map[r.im] = r
 
-    # Team costs per IM. Keyed on the SAME plan-based, multi-team-aware set
-    # the Teams column counts (teams_by_im above), not on Work Done: an INET
-    # team is monthly-salaried, so it costs its IM's P&L from the moment it
-    # is assigned plans, whether or not Work Done has been generated for
-    # them yet. Reading it off Work Done via Daily Execution — as this did —
-    # left every IM whose teams had plans but no generated Work Done showing
-    # revenue against SAR 0 cost, and skipped a split plan's non-executing
-    # teams entirely.
-    #
-    # A team assigned under more than one IM in the period has its period
-    # cost SPLIT between them in proportion to each IM's share of its plans,
-    # rather than charged in full to each: the same salary cannot be spent
-    # twice, and summing the column has to stay within real company cost.
-    im_team_plan_rows = frappe.db.sql(
-        """
-        SELECT pd.im, t.team, COUNT(DISTINCT rp.name) AS plans
-        FROM `tabRollout Plan` rp
-        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        JOIN (
-            SELECT rp2.name AS plan, rp2.team AS team FROM `tabRollout Plan` rp2
-            UNION
-            SELECT rpt.parent AS plan, rpt.team AS team FROM `tabRollout Plan Team` rpt
-        ) t ON t.plan = rp.name
-        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
-          AND pd.im IS NOT NULL AND pd.im != ''
-          AND t.team IS NOT NULL AND t.team != ''
-        GROUP BY pd.im, t.team
-        """,
-        (fd, td), as_dict=True,
-    )
-    # Payout owed per team on subcontracted work, for the SUB branch below —
-    # a SUB team has no daily cost, so what it costs INET is the payout, and
-    # that follows the revenue actually attributed to it rather than its
-    # assignment count.
-    sub_payout_rows = frappe.db.sql(
-        """
-        SELECT de.team,
-               COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS subcon_payout
-        FROM `tabWork Done` wd
-        JOIN `tabDaily Execution` de ON de.name = wd.execution
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
-        WHERE DATE(de.execution_date) BETWEEN %s AND %s
-          AND de.team IS NOT NULL AND de.team != ''
-        GROUP BY de.team
-        """,
-        (fd, td), as_dict=True,
-    )
-    payout_by_team = {r.team: flt(r.subcon_payout) for r in sub_payout_rows}
-    # Not status-filtered — pure cost-rate lookup; _team_cost_days handles a
-    # Disbanded team's end_date cutoff.
-    team_info_rows = frappe.db.sql(
-        """
-        SELECT name, COALESCE(daily_cost, 0) AS daily_cost, team_type, start_date, end_date
-        FROM `tabINET Team`
-        """,
-        as_dict=True,
-    )
-    team_info = {r.name: r for r in team_info_rows}
+    # ── Cost ───────────────────────────────────────────────────────────
+    # Salary by DAY and by custody (im_team_cost_attribution), not a whole
+    # month split by plan count. Used days go to the IM whose lines the team
+    # worked; idle days to whoever held the team that day. Σ = the real bill.
+    _cost = im_team_cost_attribution(fd, td)
+    used_by_im, idle_by_im = _cost["used"], _cost["idle"]
 
-    plans_by_team = {}
-    for _tp in im_team_plan_rows:
-        plans_by_team[_tp.team] = plans_by_team.get(_tp.team, 0) + cint(_tp.plans)
+    # The subcontractor payout is a SEPARATE column, never added to salary:
+    # one is time the company pays for, the other is cost of sale that
+    # follows revenue. Merging them produced a "Team Cost" of 581,060
+    # against a 517,316 salary bill. The percentage comes from the LINE's
+    # own contract, never the executing team's type — the commercial
+    # arrangement lives on the line (same rule as get_command_dashboard).
+    payout_by_im = {}
+    for _q, _p in (
+        ("""
+         SELECT pd.im, COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS payout
+           FROM `tabWork Done` wd
+           JOIN `tabDaily Execution` de ON de.name = wd.execution
+           JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+           LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+          WHERE DATE(de.execution_date) BETWEEN %s AND %s
+            AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+          GROUP BY pd.im""", (fd, td)),
+        (f"""
+         SELECT pd.im, COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS payout
+           FROM `tabWork Done` wd
+           JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+           LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+          WHERE IFNULL(wd.execution, '') = ''
+            AND {wd_close_date} BETWEEN %s AND %s
+            AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+          GROUP BY pd.im""", (fd, td)),
+    ):
+        for r in frappe.db.sql(_q, _p, as_dict=True):
+            payout_by_im[r.im] = payout_by_im.get(r.im, 0.0) + flt(r.payout)
 
-    cost_by_im = {}
-    for tc in im_team_plan_rows:
-        ti         = team_info.get(tc.team)
-        team_type  = ((ti.team_type if ti else None) or "INET").upper()
-        if team_type == "SUB":
-            full_cost = payout_by_team.get(tc.team, 0.0)
-        else:
-            daily_cost = flt(ti.daily_cost if ti else 0)
-            days       = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None, fd, td)
-            full_cost  = daily_cost * days
-        team_plans = plans_by_team.get(tc.team, 0)
-        share      = (cint(tc.plans) / team_plans) if team_plans > 0 else 1.0
-        cost_by_im[tc.im] = cost_by_im.get(tc.im, 0.0) + full_cost * share
+    # ── Target ─────────────────────────────────────────────────────────
+    # Same model as get_command_dashboard, so the two screens cannot disagree.
+    #   INET  : the IM's own salary cost x the margin factor
+    #   SUB   : a share of each contract's typed monthly commitment
+    # The old target — line_amount of whatever the IM happened to close —
+    # was derived from the revenue it was then compared against, which is why
+    # a pure direct-closer scored exactly 100%.
+    margin_pct = flt(frappe.db.get_single_value(
+        "Inet Settings", "inet_target_margin_pct") or 0) or 125.0
+    inet_target_by_im = {
+        im: (flt(used_by_im.get(im, 0)) + flt(idle_by_im.get(im, 0))) * margin_pct / 100.0
+        for im in set(used_by_im) | set(idle_by_im)
+    }
+
+    # A subcontract's monthly_target is one company-wide number; the report is
+    # per IM. Split it by each IM's share of the contract's lines that were
+    # OPEN to them in the period — what the PM gave them, not what they
+    # closed, so it cannot go circular and doing nothing is not free.
+    # Work Done days were tried and dropped: counting days rewards
+    # batch-closing (17 lines on one day scored the same as 4 on one day).
+    sub_months = _month_fraction(fd, td)
+    sub_target_by_im = {}
+    _ph_done_t = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
+    for row in frappe.db.sql(
+        f"""
+        SELECT pd.contract AS contract, pd.im AS im,
+               COALESCE(SUM(pd.line_amount), 0) AS val,
+               MAX(sm.monthly_target) AS monthly_target
+          FROM `tabPO Dispatch` pd
+          JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+         WHERE IFNULL(sm.sub_payout_pct, 0) > 0
+           AND IFNULL(sm.monthly_target, 0) > 0
+           AND IFNULL(sm.status, '') = 'Active'
+           AND IFNULL(pd.im, '') <> ''
+           AND IFNULL(pd.is_internal_work, 0) = 0
+           AND IFNULL(pd.dispatch_status, '') <> 'Cancelled'
+           AND DATE(pd.creation) <= %s
+           AND (IFNULL(pd.dispatch_status, '') NOT IN ({_ph_done_t})
+                OR EXISTS (SELECT 1 FROM `tabWork Done` wd2
+                            LEFT JOIN `tabDaily Execution` de2 ON de2.name = wd2.execution
+                           WHERE wd2.system_id = pd.name
+                             AND COALESCE(DATE(de2.execution_date),
+                                          DATE(wd2.ms1_closed_at),
+                                          DATE(wd2.creation)) BETWEEN %s AND %s))
+         GROUP BY pd.contract, pd.im
+        """,
+        (td,) + tuple(LINE_DONE_STATUSES) + (fd, td), as_dict=True,
+    ):
+        sub_target_by_im.setdefault(row.contract, []).append(row)
+    _sub_by_im = {}
+    for _contract, rows_ in sub_target_by_im.items():
+        total_val = sum(flt(x.val) for x in rows_) or 1.0
+        commitment = flt(rows_[0].monthly_target) * sub_months
+        for x in rows_:
+            _sub_by_im[x.im] = _sub_by_im.get(x.im, 0.0) + commitment * flt(x.val) / total_val
+    sub_target_by_im = _sub_by_im
+
+    # A hand-typed target beats anything derived — per component, so half of
+    # it can be corrected without the other half becoming ambiguous.
+    manual_targets = {}
+    if frappe.db.exists("DocType", "IM Monthly Target"):
+        for m in frappe.get_all(
+            "IM Monthly Target",
+            filters={"month": ("between", [str(getdate(fd).replace(day=1)), str(td)])},
+            fields=["im", "inet_target", "sub_target", "total_target"],
+            limit_page_length=0,
+        ):
+            manual_targets[m.im] = m
+
+    # ── Flow, Quality and Discipline (Phase 3) ─────────────────────────
+    _cohort_sql, _cohort_done = _im_cohort_sql("pd")
+
+    # The shared denominator: lines the IM had open during the period.
+    received_by_im = {r.im: cint(r.n) for r in frappe.db.sql(
+        f"SELECT pd.im, COUNT(*) AS n FROM `tabPO Dispatch` pd WHERE {_cohort_sql} GROUP BY pd.im",
+        (td,) + _cohort_done + (fd, td), as_dict=True)}
+
+    # Executed = the field work actually landed, judged on the execution's own
+    # status rather than the plan's (plan_status is derived from the TL flag
+    # and the IM confirmation together — see EXECUTION_WORKFLOW.md §4).
+    executed_by_im = {r.im: cint(r.n) for r in frappe.db.sql(
+        """
+        SELECT pd.im, COUNT(DISTINCT pd.name) AS n
+          FROM `tabDaily Execution` de
+          JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
+         WHERE DATE(de.execution_date) BETWEEN %s AND %s
+           AND IFNULL(de.execution_status, '') = 'Completed'
+           AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+         GROUP BY pd.im""", (fd, td), as_dict=True)}
+
+    # Handed to PIC. submission_status is the IM's field, not PIC's:
+    # Confirmation Done means the IM finished and passed the line on.
+    handed_by_im = {r.im: cint(r.n) for r in frappe.db.sql(
+        f"""
+        SELECT pd.im, COUNT(DISTINCT pd.name) AS n
+          FROM `tabWork Done` wd
+          JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+          LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+         WHERE IFNULL(wd.submission_status, '') = 'Confirmation Done'
+           AND COALESCE(DATE(de.execution_date), {wd_close_date}) BETWEEN %s AND %s
+           AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+         GROUP BY pd.im""", (fd, td), as_dict=True)}
+
+    # Rework: work that had to be done twice. The two rejections are
+    # different events and both belong here — PIC returning the work done,
+    # and a QC failure in the field.
+    rework_by_im = {}
+    for _q, _p in (
+        (f"""SELECT pd.im, COUNT(DISTINCT pd.name) AS n
+               FROM `tabWork Done` wd
+               JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+               LEFT JOIN `tabDaily Execution` de ON de.name = wd.execution
+              WHERE IFNULL(wd.submission_status, '') = 'PIC Rejected'
+                AND COALESCE(DATE(de.execution_date), {wd_close_date}) BETWEEN %s AND %s
+                AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+              GROUP BY pd.im""", (fd, td)),
+        ("""SELECT pd.im, COUNT(DISTINCT pd.name) AS n
+              FROM `tabDaily Execution` de
+              JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
+             WHERE IFNULL(de.qc_status, '') = 'Fail'
+               AND DATE(de.execution_date) BETWEEN %s AND %s
+               AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+             GROUP BY pd.im""", (fd, td)),
+    ):
+        for r in frappe.db.sql(_q, _p, as_dict=True):
+            rework_by_im[r.im] = rework_by_im.get(r.im, 0) + cint(r.n)
+
+    revisit_by_im = {r.im: cint(r.n) for r in frappe.db.sql(
+        """
+        SELECT pd.im, COUNT(*) AS n
+          FROM `tabRollout Plan` rp JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+           AND IFNULL(rp.visit_type, '') IN ('Re-Visit', 'Extra Visit')
+           AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+           AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+         GROUP BY pd.im""", (fd, td), as_dict=True)}
+
+    # Discipline: of the plans whose outcome was due in the period, how many
+    # had one stated. plan_closed_out_sql is shared with the close-out SLA
+    # work so the two can never disagree about the same plan.
+    closeout_by_im = {}
+    for r in frappe.db.sql(
+        f"""
+        SELECT pd.im,
+               COUNT(*) AS due,
+               SUM(CASE WHEN {plan_closed_out_sql("rp")} THEN 1 ELSE 0 END) AS closed
+          FROM `tabRollout Plan` rp JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+         WHERE DATE(rp.plan_date) BETWEEN %s AND %s
+           AND {plan_due_sql("rp")}
+           AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+         GROUP BY pd.im""", (fd, td), as_dict=True):
+        closeout_by_im[r.im] = (cint(r.due), cint(r.closed))
 
     # All IMs from master — so IMs with 0 activity still appear
     all_ims = frappe.db.sql(
@@ -16078,25 +16489,66 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         bk_assigned, bk_completed = cint(bk.assigned_lines), cint(bk.completed_lines)
         overall_assigned  = assigned + dc_assigned + bk_assigned
         overall_completed = completed + dc_completed + bk_completed
-        target    = target_by_im.get(im_id, 0.0)
+        cost_used = flt(used_by_im.get(im_id, 0.0))
+        cost_idle = flt(idle_by_im.get(im_id, 0.0))
+        team_cost = round(cost_used + cost_idle, 0)
+        sub_payout = round(flt(payout_by_im.get(im_id, 0.0)), 0)
         revenue   = rev_by_im.get(im_id, 0.0)
-        team_cost = round(cost_by_im.get(im_id, 0.0), 0)
-        profit    = round(revenue - team_cost, 0)
+        # Margin, not gross: the payout is money that leaves the company.
+        profit    = round(revenue - team_cost - sub_payout, 0)
+        t_inet = flt(inet_target_by_im.get(im_id, 0.0))
+        t_sub  = flt(sub_target_by_im.get(im_id, 0.0))
+        _man = manual_targets.get(im_id)
+        if _man:
+            if flt(_man.total_target):
+                t_inet, t_sub = flt(_man.total_target), 0.0
+            else:
+                if flt(_man.inet_target):
+                    t_inet = flt(_man.inet_target)
+                if flt(_man.sub_target):
+                    t_sub = flt(_man.sub_target)
+        target = t_inet + t_sub
+
+        # ── the four rated components ──────────────────────────────────
+        # Each caps at 100 and each may be absent. A component with nothing
+        # to measure is DROPPED from the average, never scored zero: an IM
+        # with no plans is not bad at delivery, they have no delivery to rate.
+        received = cint(received_by_im.get(im_id, 0))
+        executed = cint(executed_by_im.get(im_id, 0))
+        handed   = cint(handed_by_im.get(im_id, 0))
+        rework   = cint(rework_by_im.get(im_id, 0))
+        revisits = cint(revisit_by_im.get(im_id, 0))
+        due, closed_out = closeout_by_im.get(im_id, (0, 0))
+
+        comps = {}
+        if overall_assigned >= _MIN_RATED_SAMPLE:
+            # Delivery is complete FOR THE IM — their own confirmation and
+            # Work Done — not "every milestone closed". MS2 waits on the
+            # customer, and no component may punish an IM for that.
+            comps["delivery"] = min(overall_completed / overall_assigned * 100.0, 100.0)
+            comps["quality"] = max(0.0, min(
+                100.0, (1 - rework / overall_assigned) * 100.0))
+        if target > 0:
+            # Capped: an overshoot cannot carry three capped components up.
+            comps["commercial"] = min(revenue / target * 100.0, 100.0)
+        if due >= _MIN_RATED_SAMPLE:
+            comps["discipline"] = min(closed_out / due * 100.0, 100.0)
+        score = round(sum(comps.values()) / len(comps), 1) if comps else None
+        rating = ("Not rated" if score is None
+                  else next(lbl for cut, lbl in RATING_BANDS if score >= cut))
         compl_pct = round(completed / assigned * 100, 1) if assigned > 0 else 0.0
         overall_compl_pct = round(overall_completed / overall_assigned * 100, 1) if overall_assigned > 0 else 0.0
-        ach_pct   = round(revenue / target * 100, 1) if target > 0 else 0.0
         total_assigned += assigned
         total_completed += completed
         total_overall_assigned += overall_assigned
         total_overall_completed += overall_completed
         total_target += target
         total_revenue += revenue
-        rating    = ("Excellent"        if ach_pct >= 100 else
-                     "Good"             if ach_pct >= 85  else
-                     "Need Improvement" if ach_pct >= 70  else "Idle")
         data.append({
             "im":                  im_rec.im_name,
-            "teams":               len(teams_by_im.get(im_id, ())),
+            "teams":               len(_cost["teams"].get(im_id, ())),
+            "team_equiv":          round(flt(_cost["team_equiv"].get(im_id, 0)), 2),
+            "sub_teams":           len(sub_teams_by_im.get(im_id, ())),
             "assigned_lines":      assigned,
             "completed_lines":     completed,
             "completion_pct":      compl_pct,
@@ -16105,31 +16557,79 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
                 if (dc_assigned + bk_assigned) else "—"
             ),
             "overall_completion_pct": overall_compl_pct,
+            "lines_received":      received,
+            "lines_executed":      executed,
+            "lines_handed_to_pic": handed,
+            "rework_lines":        rework,
+            "revisits":            revisits,
+            "closeout_pct":        round(comps.get("discipline"), 1) if "discipline" in comps else None,
             "target":              round(target, 0),
             "revenue":             round(revenue, 0),
-            "achievement_pct":     ach_pct,
+            "cost_used":           round(cost_used, 0),
+            "cost_idle":           round(cost_idle, 0),
             "team_cost":           team_cost,
+            "sub_payout":          sub_payout,
             "profit":              profit,
+            "target_source":       "Manual" if _man else "Derived",
+            "score":               score,
             "rating":              rating,
+            "rated_on":            ", ".join(sorted(comps)) or "—",
         })
     data.sort(key=lambda x: x["revenue"], reverse=True)
 
+    # THIRTEEN columns open by default — what a PM reads without scrolling.
+    # Everything else is a Manage Table click away. They are not noise — each answers "why is this number what
+    # it is" — but a 24-column wall is unreadable, and a report nobody can
+    # scan gets ignored whatever is in it. `default_hidden` only decides the
+    # FIRST view: once the user saves a choice in Manage Table, theirs wins.
     columns = [
         {"fieldname": "im",              "label": "IM",              "fieldtype": "Data"},
-        {"fieldname": "teams",           "label": "Teams",           "fieldtype": "Int"},
+        # A shared team is one to each IM, so the column cannot be added up.
+        # Team Equivalent is the one that can — it weights each team by the
+        # share of its salary the IM carried and totals the fleet.
+        {"fieldname": "teams",           "label": "INET Teams",      "fieldtype": "Int",
+         "default_hidden": True, "no_total": True},
+        {"fieldname": "team_equiv",      "label": "Team Equivalent",  "fieldtype": "Float",
+         "default_hidden": True},
+        {"fieldname": "sub_teams",       "label": "SUB Teams",        "fieldtype": "Int",
+         "default_hidden": True, "no_total": True},
         {"fieldname": "assigned_lines",  "label": "Assigned",        "fieldtype": "Int"},
         {"fieldname": "completed_lines", "label": "Completed",       "fieldtype": "Int"},
         {"fieldname": "completion_pct",  "label": "Completion %",    "fieldtype": "Percent"},
         {"fieldname": "direct_backend_closed", "label": "Direct/Backend Closed", "fieldtype": "Data"},
         {"fieldname": "overall_completion_pct", "label": "Overall Completion %", "fieldtype": "Percent"},
+        # Flow — the line's journey. Detail behind the headline.
+        {"fieldname": "lines_received",  "label": "Lines Open",      "fieldtype": "Int",
+         "default_hidden": True},
+        {"fieldname": "lines_executed",  "label": "Executed",        "fieldtype": "Int",
+         "default_hidden": True},
+        {"fieldname": "lines_handed_to_pic", "label": "Handed to PIC", "fieldtype": "Int",
+         "default_hidden": True},
+        # Quality and discipline — the inputs to two of the four rated parts.
+        {"fieldname": "rework_lines",    "label": "Rework",          "fieldtype": "Int",
+         "default_hidden": True},
+        {"fieldname": "revisits",        "label": "Re-visits",       "fieldtype": "Int",
+         "default_hidden": True},
+        {"fieldname": "closeout_pct",    "label": "Closed Out %",    "fieldtype": "Percent"},
         {"fieldname": "target",          "label": "Target (SAR)",    "fieldtype": "Currency"},
         {"fieldname": "revenue",         "label": "Revenue (SAR)",   "fieldtype": "Currency"},
-        {"fieldname": "achievement_pct", "label": "Achievement %",   "fieldtype": "Percent"},
+        # Cost breakdown — Team Cost is the headline, these are its halves.
+        {"fieldname": "cost_used",       "label": "Team Cost — Used", "fieldtype": "Currency",
+         "default_hidden": True},
+        {"fieldname": "cost_idle",       "label": "Team Cost — Idle", "fieldtype": "Currency",
+         "default_hidden": True},
         {"fieldname": "team_cost",       "label": "Team Cost (SAR)", "fieldtype": "Currency"},
-        {"fieldname": "profit",          "label": "Profit / Loss",   "fieldtype": "Currency"},
+        {"fieldname": "sub_payout",      "label": "Subcon Payout",   "fieldtype": "Currency",
+         "default_hidden": True},
+        {"fieldname": "profit",          "label": "Margin",          "fieldtype": "Currency"},
+        # Provenance — how the two verdict columns were arrived at.
+        {"fieldname": "target_source",   "label": "Target Source",   "fieldtype": "Data",
+         "default_hidden": True},
+        {"fieldname": "score",           "label": "Score",           "fieldtype": "Percent"},
         {"fieldname": "rating",          "label": "Rating",          "fieldtype": "Data"},
-    ]
-    # Overall % columns = ratio of totals, never an average of the per-IM
+        {"fieldname": "rated_on",        "label": "Rated On",        "fieldtype": "Data",
+         "default_hidden": True},
+    ]    # Overall % columns = ratio of totals, never an average of the per-IM
     # percentages — IMs have very different assigned-line/target sizes, so
     # averaging would weight a 1-line IM the same as one with hundreds.
     totals = {
@@ -16138,9 +16638,26 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
             round(total_overall_completed / total_overall_assigned * 100, 1)
             if total_overall_assigned > 0 else None
         ),
-        "achievement_pct": round(total_revenue / total_target * 100, 1) if total_target > 0 else None,
     }
-    return {"columns": columns, "data": data, "totals": totals}
+    # Printed so the cost column can be checked against the real salary bill
+    # instead of trusted. charged + unattributed must equal the pot; if they
+    # ever do not, the report says so rather than being quietly wrong.
+    _charged = sum(flt(v) for v in used_by_im.values()) + sum(
+        flt(v) for v in idle_by_im.values())
+    _named = sum(flt(r.get("team_cost") or 0) for r in data)
+    reconciliation = {
+        "salary_bill": round(_cost["pot"], 2),
+        "charged_to_ims": round(_named, 2),
+        # Salary that fell outside the IM Master roster — a team worked for a
+        # line with no IM on it, or held by someone no longer an IM.
+        "unattributed": round(_charged - _named, 2),
+        "difference": round(_cost["pot"] - _charged, 2),
+        "per_team": _cost["per_team"],
+    }
+    return {"columns": columns, "data": data, "totals": totals,
+            "reconciliation": reconciliation,
+            "rating_components": RATING_COMPONENTS,
+            "rating_bands": [{"from": c, "label": l} for c, l in RATING_BANDS]}
 
 
 
@@ -23898,8 +24415,17 @@ def update_im_team(name, payload=None):
             val = val.strip()
         updates[fname] = val
 
+    # Read before the write; this path can change `status`, which decides
+    # whether the team counts as available on a given day.
+    _prev = (frappe.db.get_value(
+        "INET Team", name,
+        [f for f in _TEAM_TRACKED_FIELDS if f in updates], as_dict=True)
+        if any(f in updates for f in _TEAM_TRACKED_FIELDS) else {}) or {}
+
     if updates:
         frappe.db.set_value("INET Team", name, updates, update_modified=True)
+    log_master_set_value("INET Team", name, _prev, updates,
+                         remark="Changed by the IM on My Teams")
 
     if members_changed:
         seen_emp = set()
@@ -27074,6 +27600,12 @@ def pm_decide_team_allocation(request, action, remark=None):
     frappe.db.set_value(
         "INET Team", req.team, "im", req.to_im, update_modified=True,
     )
+    # The request records that a transfer was ASKED FOR and approved; this
+    # records that the team actually moved. The custody replay reads the
+    # second, so an approval that never flipped the team cannot shift cost.
+    log_master_set_value("INET Team", req.team, {"im": current_im},
+                         {"im": req.to_im},
+                         remark=f"Team Allocation Request {request}")
     frappe.db.set_value(
         "Team Allocation Request", request,
         {
@@ -30633,6 +31165,55 @@ def admin_get_team_detail(name):
     }
 
 
+# Which INET Team fields to read BEFORE a db.set_value write, so the change
+# can be logged. The authoritative list lives in one place —
+# status_log.TRACKED_MASTER_FIELDS — and this mirrors it for the pre-read.
+_TEAM_TRACKED_FIELDS = TRACKED_MASTER_FIELDS["INET Team"]
+
+
+def _log_team_im_handover(team, from_im, to_im, reason="Changed on Admin Teams"):
+    """Record a team handover made outside the Team Allocation Request flow.
+
+    Who held a team on a given day is replayed from approved
+    ``Team Allocation Request`` rows — it is what charges a team's idle cost
+    to the IM who actually had it rather than to whoever holds it today. This
+    page writes ``im`` with ``frappe.db.set_value``, which produces neither a
+    request nor a ``tabVersion`` row, so a reassignment made here used to
+    leave no trace anywhere and the timeline silently skipped it. Measured on
+    the production copy: 22 of 23 teams reconciled, one did not.
+
+    Written as a request that is ALREADY approved, deliberately: the timeline
+    then has one source instead of three. The ``INET Team.im`` flip on
+    approval lives in the API layer, not the doctype, so inserting an
+    approved row here cannot loop back into another update.
+
+    Never raises. An audit row that fails must not fail the edit it
+    describes.
+    """
+    from_im = (cstr(from_im or "")).strip() or None
+    to_im = (cstr(to_im or "")).strip() or None
+    if from_im == to_im:
+        return
+    try:
+        now = now_datetime()
+        doc = frappe.new_doc("Team Allocation Request")
+        doc.team = team
+        doc.from_im = from_im
+        doc.to_im = to_im
+        doc.request_status = "Approved"
+        doc.requested_by = frappe.session.user
+        doc.responded_by = frappe.session.user
+        doc.responded_at = now
+        doc.approved_by = frappe.session.user
+        doc.approved_at = now
+        doc.reason = reason
+        doc.insert(ignore_permissions=True)
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"team im handover log failed: {team} {from_im} -> {to_im}")
+
+
 @frappe.whitelist()
 def admin_update_team(name, payload=None):
     """Update any INET Team field (admin-only, no ownership restriction)."""
@@ -30667,8 +31248,21 @@ def admin_update_team(name, payload=None):
             val = val.strip()
         updates[fname] = val
 
+    # Read BEFORE the write — afterwards there is nothing to compare against.
+    _want = [f for f in _TEAM_TRACKED_FIELDS if f in updates]
+    prev_tracked = (frappe.db.get_value("INET Team", name, _want, as_dict=True)
+                    if _want else {}) or {}
+    prev_im = frappe.db.get_value("INET Team", name, "im") if "im" in updates else None
+
     if updates:
         frappe.db.set_value("INET Team", name, updates, update_modified=True)
+
+    # db.set_value bypasses the ORM, so the on_update hook never fires here —
+    # these two calls are what keep this page's edits in the history.
+    if "im" in updates:
+        _log_team_im_handover(name, prev_im, updates.get("im"))
+    log_master_set_value("INET Team", name, prev_tracked, updates,
+                         remark="Changed on Admin Teams")
 
     if members_changed:
         seen_emp = set()

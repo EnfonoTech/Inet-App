@@ -144,6 +144,17 @@
    "fieldname": "enable_dsa_mapping",
    "fieldtype": "Check",
    "label": "DSA Mapping (temporary)"
+  },
+  {
+   "fieldname": "im_target_section",
+   "fieldtype": "Section Break",
+   "label": "IM Performance"
+  },
+  {
+   "fieldname": "inet_target_margin_pct",
+   "fieldtype": "Percent",
+   "default": "125",
+   "label": "INET Target as % of Team Cost"
   }
  ],
  "index_web_pages_for_search": 1,

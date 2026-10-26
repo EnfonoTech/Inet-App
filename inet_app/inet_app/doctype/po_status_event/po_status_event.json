@@ -30,7 +30,7 @@
    "in_standard_filter": 1,
    "label": "PO Dispatch",
    "options": "PO Dispatch",
-   "reqd": 1,
+   "reqd": 0,
    "search_index": 1
   },
   {
@@ -38,13 +38,14 @@
    "fieldname": "entity",
    "fieldtype": "Select",
    "label": "Entity",
-   "options": "PO Dispatch\nWork Done\nRollout Plan\nDaily Execution",
+   "options": "PO Dispatch\nWork Done\nRollout Plan\nDaily Execution\nPO Intake\nPO Intake Line\nINET Team\nSubcontract Master\nIM Master\nInet Settings",
    "reqd": 1
   },
   {
    "fieldname": "entity_name",
    "fieldtype": "Data",
-   "label": "Entity Name"
+   "label": "Entity Name",
+   "search_index": 1
   },
   {
    "fieldname": "field_changed",

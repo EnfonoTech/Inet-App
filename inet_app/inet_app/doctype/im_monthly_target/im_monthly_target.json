@@ -1,0 +1,93 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:IMT-{im}-{month}",
+ "creation": "2026-10-26 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "im",
+  "month",
+  "column_break_main",
+  "inet_target",
+  "sub_target",
+  "total_target",
+  "section_note",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "im",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "IM",
+   "options": "IM Master",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "month",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Month",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "inet_target",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "INET Target"
+  },
+  {
+   "fieldname": "sub_target",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Subcontract Target"
+  },
+  {
+   "fieldname": "total_target",
+   "fieldtype": "Currency",
+   "label": "Total Target"
+  },
+  {
+   "fieldname": "section_note",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-26 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "IM Monthly Target",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

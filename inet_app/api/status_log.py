@@ -250,3 +250,118 @@ def set_dispatch_status(po_dispatch, new_status, *, remark=None, batch_id=None,
         remark=remark, batch_id=batch_id, row_count=row_count,
     )
     return True
+
+
+# ─── Master-data history ────────────────────────────────────────────────────
+# Reports read master fields HISTORICALLY: re-running September in December
+# must give September's answer. A team's status decides whether it was
+# available, its daily_cost what it cost, a subcontract's monthly_target what
+# the IM was measured against. All of those are editable, and until now only
+# the ones living on a PO line were ever logged.
+#
+# The rule is simply: track what the reporting depends on. These are the
+# fields the IM Performance report reads (docs/IM_PERFORMANCE_REPORT.md);
+# anything a future report starts reading historically belongs here too.
+#
+# This is why `PO Dispatch` is no longer required on PO Status Event — the
+# doctype already carried `entity` / `entity_name`, so it only ever needed
+# that one field relaxed to become the general log it reads like.
+TRACKED_MASTER_FIELDS = {
+    "INET Team": ("im", "status", "daily_cost", "daily_cost_applies",
+                  "team_type", "team_category", "start_date", "end_date"),
+    "Subcontract Master": ("monthly_target", "sub_payout_pct", "inet_margin_pct",
+                           "status", "contract_model"),
+    "IM Master": ("status", "full_name"),
+    "Inet Settings": ("inet_target_margin_pct",),
+}
+
+
+def log_entity_change(entity, entity_name, field_changed, old_value, new_value,
+                      *, remark=None, changed_at=None, user=None):
+    """One field change on a record that is NOT a PO line.
+
+    Same table and same shape as a PO event, so a reader does not have to know
+    which kind it is — only `entity` differs, and `po_dispatch` is empty.
+    `days_in_previous` is measured against this entity's own previous event.
+
+    Never raises: history that fails to write must not fail the edit.
+    """
+    try:
+        entity = cstr(entity or "").strip()
+        entity_name = cstr(entity_name or "").strip()
+        field_changed = cstr(field_changed or "").strip()
+        if not entity or not entity_name or not field_changed:
+            return None
+        old_s, new_s = cstr(old_value or "").strip(), cstr(new_value or "").strip()
+        if old_s == new_s:
+            return None
+
+        changed_at = changed_at or now_datetime()
+        user = user or frappe.session.user
+        days = 0.0
+        prev = frappe.db.sql(
+            """SELECT changed_at FROM `tabPO Status Event`
+                WHERE entity = %s AND entity_name = %s AND field_changed = %s
+                ORDER BY changed_at DESC LIMIT 1""",
+            (entity, entity_name, field_changed), as_dict=True,
+        )
+        if prev and prev[0].get("changed_at"):
+            secs = time_diff_in_seconds(changed_at, prev[0]["changed_at"])
+            days = max(round(flt(secs) / _SECONDS_PER_DAY, 4), 0.0)
+
+        doc = frappe.get_doc({
+            "doctype": "PO Status Event",
+            "entity": entity,
+            "entity_name": entity_name,
+            "field_changed": field_changed,
+            "old_value": old_s[:140],
+            "new_value": new_s[:140],
+            "changed_by": user,
+            "changed_by_full_name": (
+                frappe.db.get_value("User", user, "full_name") if user else None
+            ) or user or "Guest",
+            "changed_at": changed_at,
+            "days_in_previous": days,
+            "remark": (cstr(remark)[:1000] if remark else None),
+        })
+        doc.flags.ignore_permissions = True
+        doc.insert(ignore_permissions=True)
+        return doc.name
+    except Exception:
+        frappe.log_error(frappe.get_traceback(),
+                         f"entity event write failed: {entity} {entity_name}")
+        return None
+
+
+def log_master_changes(doc, method=None):
+    """`on_update` hook — catches every ORM save, in Desk or in code.
+
+    It does NOT catch `frappe.db.set_value`, which bypasses the document
+    entirely. The portal endpoints that use it call `log_master_set_value`
+    themselves; this covers everything else without each path remembering to.
+    """
+    fields = TRACKED_MASTER_FIELDS.get(doc.doctype)
+    if not fields:
+        return
+    before = doc.get_doc_before_save()
+    if not before:
+        return
+    name = doc.name if doc.doctype != "Inet Settings" else "Inet Settings"
+    for f in fields:
+        log_entity_change(doc.doctype, name, f,
+                          before.get(f), doc.get(f))
+
+
+def log_master_set_value(doctype, name, before, updates, *, remark=None):
+    """The `frappe.db.set_value` counterpart of the hook above.
+
+    `before` is whatever the row held before the write — read it BEFORE
+    writing, or there is nothing to compare against.
+    """
+    fields = TRACKED_MASTER_FIELDS.get(doctype)
+    if not fields or not updates:
+        return
+    for f in fields:
+        if f in updates:
+            log_entity_change(doctype, name, f, (before or {}).get(f),
+                              updates.get(f), remark=remark)

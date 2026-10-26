@@ -291,6 +291,15 @@ export default function DataTablePro() {
           return { key, label: String(th.textContent || "").trim() || `Column ${i + 1}` };
         });
         const baseColumnKeys = columns.map((c) => c.key);
+        // The table's OWN defaults, kept for two jobs below: applying them to
+        // columns the user has never seen, and giving Reset something to
+        // reset TO.
+        const baseDefaultHidden = new Set(
+          Array.from(table.querySelectorAll("thead tr:first-child > th"))
+            .filter((th) => th.getAttribute("data-tablepro-default-hidden") === "true")
+            .map((th) => th.dataset.colKey)
+            .filter(Boolean)
+        );
 
         // Excel-style filter opt-in, at table level or per column:
         //   <table data-excel-filter-all="1">  every column, except any
@@ -388,6 +397,19 @@ export default function DataTablePro() {
         const filteredHidden = Array.isArray(saved.hidden)
           ? saved.hidden.filter((k) => validKeys.has(k))
           : Array.from(defaultHiddenKeys);
+        // A default-hidden column the user has NEVER SEEN starts hidden even
+        // when saved prefs exist. Without this, saved.hidden replaced the
+        // defaults wholesale, so anybody who had opened the table once never
+        // got a new default — a report that grew from 13 columns to 26
+        // showed all 26 to every existing user and only ever hid them for
+        // someone opening it for the first time. Columns the user HAS seen
+        // keep whatever they chose; this only speaks for ones they have not.
+        if (Array.isArray(saved.order)) {
+          const seen = new Set(saved.order);
+          defaultHiddenKeys.forEach((k) => {
+            if (!seen.has(k) && !filteredHidden.includes(k)) filteredHidden.push(k);
+          });
+        }
         // Defensive: if every visible column ends up hidden (stale prefs from
         // an older release), wipe the set so the table doesn't look broken.
         const visibleCount = restoredOrder.length - filteredHidden.length;
@@ -1836,7 +1858,11 @@ export default function DataTablePro() {
         toolbar.querySelector(".tablepro-btn-reset")?.addEventListener("click", async () => {
           columns = columns.filter((c) => baseColumnKeys.includes(c.key));
           state.order = [...baseColumnKeys];
-          state.hidden = new Set();
+          // Reset means "back to how this table ships", which for a table
+          // that hides columns by default is NOT an empty hidden set — that
+          // is "show me all 26 columns", the opposite of what the button is
+          // reached for on a wide table.
+          state.hidden = new Set(baseDefaultHidden);
           state.frozen = new Set();
           state.widths = {};
           // Restore data-default-width values for any column that specifies one

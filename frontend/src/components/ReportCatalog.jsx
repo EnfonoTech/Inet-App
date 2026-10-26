@@ -649,8 +649,18 @@ export default function ReportCatalog({
           <table key={activeKey} className="data-table" data-excel-filter-all="1" data-table-key={`${tableKeyPrefix}-${activeKey}`}>
             <thead>
               <tr>
+                {/* A report may mark a column `default_hidden` — it still
+                    exists, still exports, still filters, but the table opens
+                    without it. For wide scorecards (IM Performance ships 24
+                    columns) showing everything at once is unreadable, and
+                    dropping the detail loses the answer to "why". DataTablePro
+                    honours the attribute only until the user saves their own
+                    choice in Manage Table, after which theirs wins. */}
                 {columns.map((col) => (
-                  <th key={col.fieldname || col.label}>{col.label}</th>
+                  <th key={col.fieldname || col.label}
+                      data-tablepro-default-hidden={col.default_hidden ? "true" : undefined}>
+                    {col.label}
+                  </th>
                 ))}
               </tr>
             </thead>
