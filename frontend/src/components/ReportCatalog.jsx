@@ -664,9 +664,14 @@ export default function ReportCatalog({
                          than a popover on purpose — DataTablePro owns the
                          header (resize, reorder, filter menus), and anything
                          mounted inside a <th> has to survive all three. */
-                      title={col.hint || undefined}
-                      className={col.hint ? "has-hint" : undefined}>
-                    {col.label}
+                      title={col.hint || undefined}>
+                    {/* The label is wrapped so the hint's underline and
+                        help-cursor land on the TEXT only. DataTablePro
+                        appends its resize handle into this same <th>, and a
+                        `th > :first-child` rule hit the handle instead —
+                        which outranked .tablepro-resize-handle's own
+                        cursor: col-resize and killed resizing. */}
+                    {col.hint ? <span className="th-hint">{col.label}</span> : col.label}
                   </th>
                 ))}
               </tr>

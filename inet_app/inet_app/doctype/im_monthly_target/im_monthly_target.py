@@ -17,7 +17,17 @@ from frappe.utils import getdate
 
 
 class IMMonthlyTarget(Document):
+    def before_naming(self):
+        # Normalised HERE, not in validate: autoname runs first, so a target
+        # entered as 15 Sep was named IMT-...-2026-09-15 while its month
+        # field read 09-01. Cosmetic, but a name that disagrees with the
+        # record is the kind of thing someone later trusts.
+        self._normalise_month()
+
     def validate(self):
+        self._normalise_month()
+
+    def _normalise_month(self):
         # Stored as the first of the month so a lookup never has to guess
         # which day someone happened to pick.
         if self.month:

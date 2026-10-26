@@ -870,8 +870,9 @@ salary bill 496,496 | charged to IMs 496,391 | unattributed 105 | difference 0
 **The idle figure was wrong in the first draft of this document, by a lot.**
 It said SAR 156,156, a third of the bill. That came from counting *planned*
 days over a *calendar* month. On the real rule — executed days, Fridays
-excluded — idle is **SAR 32,329, 6.5%**. The teams are far better used than
-this document originally claimed. This is exactly what building the table
+excluded — idle is **SAR 32,329, 6.5%** — later 49,654 once cancelled visits stopped
+counting as worked days (review fix 4 below). The teams are far better used
+than this document originally claimed. This is exactly what building the table
 before the rebuild was for.
 
 Two things the per-team detail surfaced, both worth acting on outside this
@@ -1241,6 +1242,65 @@ historical truth is what makes as-of reading dangerous here.
 Capturing the history was always the prerequisite, and it is done; nothing is
 lost by waiting, because the events are being recorded from now on whether or
 not the report reads them.
+
+## Review fixes (26 Oct 2026)
+
+A second review of the built code found one real bug and four smaller ones.
+All verified against the data before changing anything, and all fixed.
+
+**1. A whole-month range charged a whole month's salary to the days so far.**
+The pot used `_team_cost_days(fd, td)` over the full range while the days it
+was spread across stopped at today, so every elapsed day carried more than a
+day's pay. Asking for "October" on the 26th:
+
+| range | pot | Ajmal cost | Ajmal target | Ajmal margin |
+|---|---|---|---|---|
+| 1–26 Oct | 428,170 | 200,576 | 294,090 | −78,094 |
+| 1–31 Oct | **510,510** | **239,148** | **350,646** | **−116,666** |
+
+SAR 38,572 of phantom cost on one IM, a target raised with it because the
+INET target is cost × margin, and **the reconciliation line still balanced**,
+so nothing on the page gave it away. Both halves now cap at today, as does
+the SUB commitment (`_month_fraction` had the same flaw); a wholly future
+range returns a pot of zero. All three ranges now return the same figures.
+
+**2. Manual targets were wrong for any range that was not exactly one
+month.** They were collected into a dict keyed by IM, so a three-month range
+kept whichever row came back last and compared one month's target against
+three months of revenue; and a part-month range used a whole month's figure
+while the derived target beside it was prorated. Now summed per IM and
+prorated by overlap. Verified: Sept-only 200,000; Aug–Oct 551,613
+(= 100k + 200k + 300k × 26/31); 1–15 Sept 100,000.
+
+**3. The pot matched the Command Dashboard only by coincidence.** The IM
+report honoured `daily_cost_applies`; the dashboard did not. They agreed only
+because the one team with a cost and the box unticked happens to be a SUB
+team, which that query never sees. The first INET team with it unticked would
+have split them — while this document claimed they could not disagree. The
+flag is now applied in both. The dashboard's team ROSTER is deliberately left
+unfiltered, because `active_inet_teams` is a headcount.
+
+**4. A cancelled visit counted as a day worked.** Any Daily Execution marked
+the day attended, including Cancelled, Postponed and Not Attended — so a team
+that never turned up had its day charged as *used* to the line's IM instead
+of *idle* to whoever held the team. September: used 464,167 / idle 32,329
+became **used 446,842 / idle 49,654**. `_team_domain_utilization`'s idle grid
+has the same rule and is **deliberately not changed** — it is a delivered
+client report and its behaviour is a separate decision. The two now differ
+here, which is why `_NON_WORKING_EXECUTION_STATUSES` says so in its comment.
+
+**5. Two loose ends.** `_log_team_im_handover` is gone: once the replay moved
+to `PO Status Event` it was not merely redundant but harmful — it invented an
+approved transfer nobody had requested, and the backfill patch turns approved
+transfers into events, so a re-run could have doubled the same handover.
+And `IM Monthly Target` normalises its month in `before_naming` as well as
+`validate`, because autoname runs first and a target entered as 15 Sep was
+named `...-2026-09-15` while its month field read 09-01.
+
+One self-inflicted wound worth recording: the first attempt at fix 4
+`%`-formatted the status list into the SQL, which ate the `%s` parameter
+placeholders in the same string — the exact trap CLAUDE.md warns about. The
+list is bound as parameters now.
 
 ## Parked, deliberately — nothing blocks the build
 

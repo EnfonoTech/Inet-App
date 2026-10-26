@@ -2964,10 +2964,13 @@
 
 /* A report column that carries a `hint` explains itself on hover. The dotted
    underline is the only signal there is something to hover — without it the
-   explanation exists and nobody finds it. Kept off the resize handle and the
-   filter caret, which share the same header cell. */
-.data-table thead th.has-hint > :first-child,
-.data-table thead th.has-hint {
+   explanation exists and nobody finds it.
+
+   Scoped to the label SPAN, never the <th>: DataTablePro appends its resize
+   handle and filter caret into the same cell, and styling the cell (or its
+   first child) overrode .tablepro-resize-handle's cursor: col-resize, so the
+   column could no longer be resized. */
+.data-table thead th > span.th-hint {
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-decoration-thickness: 1px;

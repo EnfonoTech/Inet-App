@@ -14997,7 +14997,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # silently start counting Inactive/On Vacation/Disbanded teams too.
     inet_teams = frappe.db.sql(
         """
-        SELECT name, team_id, daily_cost, im, start_date, end_date, status
+        SELECT name, team_id, daily_cost, im, start_date, end_date, status,
+               IFNULL(daily_cost_applies, 0) AS daily_cost_applies
         FROM `tabINET Team`
         WHERE team_type = 'INET'
         AND IFNULL(team_category, '') != 'Backend Team'
@@ -15012,8 +15013,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         t.name: _team_cost_days(t.start_date, t.end_date, first_day, last_day)
         for t in inet_teams
     }
+    # daily_cost_applies is honoured here as well as in the IM report, or the
+    # two disagree the first time an INET team has it unticked. They match
+    # today only because the one team with cost and the box unticked is a SUB
+    # team, which never reaches this query — a coincidence, not a guarantee.
+    # The roster above is NOT filtered by the flag: active_inet_teams is a
+    # headcount and must keep counting everyone.
     inet_monthly_cost = sum(
-        flt(t.daily_cost) * _inet_cost_days.get(t.name, 0) for t in inet_teams
+        flt(t.daily_cost) * _inet_cost_days.get(t.name, 0)
+        for t in inet_teams if cint(t.daily_cost_applies)
     )
     # How many teams that cost is actually built from — every team that
     # existed during the range, whatever its status. A team on vacation or
@@ -15022,12 +15030,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # NOT active_inet_teams: that is a status headcount and read 15 against a
     # payroll of 17, which made the cost beneath it look like it came from a
     # different set of teams than it did.
-    inet_cost_teams = sum(1 for t in inet_teams if _inet_cost_days.get(t.name, 0) > 0)
+    inet_cost_teams = sum(1 for t in inet_teams
+                          if _inet_cost_days.get(t.name, 0) > 0
+                          and cint(t.daily_cost_applies))
     # Of those, the ones being paid while not available to work — worth
     # naming on the tile, because that is the gap between the two counts.
     inet_paid_not_active = sum(
         1 for t in inet_teams
-        if _inet_cost_days.get(t.name, 0) > 0 and (t.status or "Active") != "Active"
+        if _inet_cost_days.get(t.name, 0) > 0 and cint(t.daily_cost_applies)
+        and (t.status or "Active") != "Active"
     )
 
     # Monthly target = cost × 1.25 (25% margin), consistent with Command Dashboard frontend
@@ -16091,6 +16102,13 @@ def team_field_timeline(field):
     return events
 
 
+# A visit recorded in one of these states did not happen, so the day is not a
+# worked day. _team_domain_utilization's idle grid does NOT yet apply this —
+# it counts any execution as attendance — so the two differ here deliberately
+# until that report's own behaviour is agreed.
+_NON_WORKING_EXECUTION_STATUSES = ("Cancelled", "Not Attended", "Postponed")
+
+
 def _team_custody_timeline():
     """team -> [(date, from_im, to_im)], for "who held this team then"."""
     return team_field_timeline("im")
@@ -16140,6 +16158,17 @@ def im_team_cost_attribution(fd, td):
     """
     fd, td = getdate(fd), getdate(td)
     today = getdate(nowdate())
+    # Cap the period at today for BOTH halves of the division. Taking the
+    # whole month's salary and spreading it over the days elapsed so far
+    # charged each day more than a day: asking for "October" on the 26th
+    # loaded 510,510 onto 26 days' work instead of 428,170, which put SAR
+    # 38,572 of phantom cost on one IM and — because the INET target is cost
+    # x margin — raised their target with it. The reconciliation line still
+    # balanced, so nothing on the page gave it away.
+    eff_td = min(td, today)
+    if eff_td < fd:
+        return {"used": {}, "idle": {}, "pot": 0.0, "per_team": [],
+                "teams": {}, "team_equiv": {}}
 
     teams = frappe.db.sql(
         """SELECT name, COALESCE(daily_cost, 0) AS daily_cost,
@@ -16154,21 +16183,29 @@ def im_team_cost_attribution(fd, td):
 
     # One row per execution, clamped to the period. de.team is the signal;
     # verified set on every row and never shared between teams.
+    # Bound as parameters, not interpolated: %-formatting this string would
+    # eat the %s placeholders below with it (CLAUDE.md, and it did).
+    _ph_skip = ", ".join(["%s"] * len(_NON_WORKING_EXECUTION_STATUSES))
     execs = frappe.db.sql(
-        """SELECT de.team AS team, DATE(de.execution_date) AS d1,
-                  DATE(COALESCE(de.last_progress_date, de.execution_date)) AS d2,
-                  pd.im AS im
-             FROM `tabDaily Execution` de
-             LEFT JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
-            WHERE de.execution_date IS NOT NULL
-              AND IFNULL(de.team, '') <> ''
-              AND de.execution_date <= %s
-              AND COALESCE(de.last_progress_date, de.execution_date) >= %s""",
-        (td, fd), as_dict=True,
+        f"""SELECT de.team AS team, DATE(de.execution_date) AS d1,
+                   DATE(COALESCE(de.last_progress_date, de.execution_date)) AS d2,
+                   pd.im AS im
+              FROM `tabDaily Execution` de
+              LEFT JOIN `tabPO Dispatch` pd ON pd.name = de.system_id
+             WHERE de.execution_date IS NOT NULL
+               AND IFNULL(de.team, '') <> ''
+               AND de.execution_date <= %s
+               AND COALESCE(de.last_progress_date, de.execution_date) >= %s
+               -- A visit that was cancelled, postponed or never attended is
+               -- not a day the team worked. Counting it as used charged the
+               -- day to the line's IM instead of leaving it idle against
+               -- whoever held the team: 8 team-days in September.
+               AND IFNULL(de.execution_status, '') NOT IN ({_ph_skip})""",
+        (eff_td, fd) + tuple(_NON_WORKING_EXECUTION_STATUSES), as_dict=True,
     )
     worked = {}
     for e in execs:
-        d, last = max(getdate(e.d1), fd), min(getdate(e.d2), td)
+        d, last = max(getdate(e.d1), fd), min(getdate(e.d2), eff_td)
         while d <= last:
             if d.weekday() != 4:
                 slot = worked.setdefault((e.team, d), {})
@@ -16186,13 +16223,13 @@ def im_team_cost_attribution(fd, td):
         daily = flt(t.daily_cost)
         if not daily or not cint(t.applies):
             continue
-        team_pot = daily * _team_cost_days(t.start_date, t.end_date, fd, td)
+        team_pot = daily * _team_cost_days(t.start_date, t.end_date, fd, eff_td)
         pot += team_pot
         team_pots[t.name] = team_pot
         days = []
         d = fd
-        while d <= td:
-            if (d.weekday() != 4 and d <= today
+        while d <= eff_td:
+            if (d.weekday() != 4
                     and not (t.start_date and getdate(t.start_date) > d)
                     and not (t.end_date and getdate(t.end_date) < d)):
                 days.append(d)
@@ -16475,7 +16512,10 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     # closed, so it cannot go circular and doing nothing is not free.
     # Work Done days were tried and dropped: counting days rewards
     # batch-closing (17 lines on one day scored the same as 4 on one day).
-    sub_months = _month_fraction(fd, td)
+    # Same cap as the cost pot: a commitment is earned as the month passes,
+    # so asking for "October" on the 26th must not hand out all of it.
+    _eff_td = min(getdate(td), getdate(nowdate()))
+    sub_months = _month_fraction(fd, _eff_td) if _eff_td >= getdate(fd) else 0.0
     sub_target_by_im = {}
     _ph_done_t = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
     for row in frappe.db.sql(
@@ -16514,15 +16554,35 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
 
     # A hand-typed target beats anything derived — per component, so half of
     # it can be corrected without the other half becoming ambiguous.
+    # SUMMED per IM and prorated, not a dict keyed by IM. Keyed, a
+    # three-month range kept whichever month's row came back last and
+    # compared one month's target against three months of revenue; and a
+    # part-month range used a whole month's figure while the derived SUB
+    # target beside it was prorated.
     manual_targets = {}
     if frappe.db.exists("DocType", "IM Monthly Target"):
+        import calendar as _cal
+        _fd_d, _td_d = getdate(fd), _eff_td
         for m in frappe.get_all(
             "IM Monthly Target",
-            filters={"month": ("between", [str(getdate(fd).replace(day=1)), str(td)])},
-            fields=["im", "inet_target", "sub_target", "total_target"],
+            filters={"month": ("between", [str(_fd_d.replace(day=1)), str(td)])},
+            fields=["im", "month", "inet_target", "sub_target", "total_target"],
             limit_page_length=0,
         ):
-            manual_targets[m.im] = m
+            m_start = getdate(m.month).replace(day=1)
+            m_end = m_start.replace(
+                day=_cal.monthrange(m_start.year, m_start.month)[1])
+            lo, hi = max(m_start, _fd_d), min(m_end, _td_d)
+            if hi < lo:
+                continue
+            frac = ((hi - lo).days + 1) / float((m_end - m_start).days + 1)
+            acc = manual_targets.setdefault(
+                m.im, {"inet_target": 0.0, "sub_target": 0.0,
+                       "total_target": 0.0, "has": set()})
+            for f in ("inet_target", "sub_target", "total_target"):
+                if flt(m.get(f)):
+                    acc[f] += flt(m.get(f)) * frac
+                    acc["has"].add(f)
 
     # ── Flow, Quality and Discipline (Phase 3) ─────────────────────────
     _cohort_sql, _cohort_done = _im_cohort_sql("pd")
@@ -16644,13 +16704,13 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
         t_sub  = flt(sub_target_by_im.get(im_id, 0.0))
         _man = manual_targets.get(im_id)
         if _man:
-            if flt(_man.total_target):
-                t_inet, t_sub = flt(_man.total_target), 0.0
+            if "total_target" in _man["has"]:
+                t_inet, t_sub = _man["total_target"], 0.0
             else:
-                if flt(_man.inet_target):
-                    t_inet = flt(_man.inet_target)
-                if flt(_man.sub_target):
-                    t_sub = flt(_man.sub_target)
+                if "inet_target" in _man["has"]:
+                    t_inet = _man["inet_target"]
+                if "sub_target" in _man["has"]:
+                    t_sub = _man["sub_target"]
         target = t_inet + t_sub
 
         # ── the four rated components ──────────────────────────────────
@@ -31349,49 +31409,6 @@ def admin_get_team_detail(name):
 _TEAM_TRACKED_FIELDS = TRACKED_MASTER_FIELDS["INET Team"]
 
 
-def _log_team_im_handover(team, from_im, to_im, reason="Changed on Admin Teams"):
-    """Record a team handover made outside the Team Allocation Request flow.
-
-    Who held a team on a given day is replayed from approved
-    ``Team Allocation Request`` rows — it is what charges a team's idle cost
-    to the IM who actually had it rather than to whoever holds it today. This
-    page writes ``im`` with ``frappe.db.set_value``, which produces neither a
-    request nor a ``tabVersion`` row, so a reassignment made here used to
-    leave no trace anywhere and the timeline silently skipped it. Measured on
-    the production copy: 22 of 23 teams reconciled, one did not.
-
-    Written as a request that is ALREADY approved, deliberately: the timeline
-    then has one source instead of three. The ``INET Team.im`` flip on
-    approval lives in the API layer, not the doctype, so inserting an
-    approved row here cannot loop back into another update.
-
-    Never raises. An audit row that fails must not fail the edit it
-    describes.
-    """
-    from_im = (cstr(from_im or "")).strip() or None
-    to_im = (cstr(to_im or "")).strip() or None
-    if from_im == to_im:
-        return
-    try:
-        now = now_datetime()
-        doc = frappe.new_doc("Team Allocation Request")
-        doc.team = team
-        doc.from_im = from_im
-        doc.to_im = to_im
-        doc.request_status = "Approved"
-        doc.requested_by = frappe.session.user
-        doc.responded_by = frappe.session.user
-        doc.responded_at = now
-        doc.approved_by = frappe.session.user
-        doc.approved_at = now
-        doc.reason = reason
-        doc.insert(ignore_permissions=True)
-    except Exception:
-        frappe.log_error(
-            frappe.get_traceback(),
-            f"team im handover log failed: {team} {from_im} -> {to_im}")
-
-
 @frappe.whitelist()
 def admin_update_team(name, payload=None):
     """Update any INET Team field (admin-only, no ownership restriction)."""
@@ -31430,15 +31447,18 @@ def admin_update_team(name, payload=None):
     _want = [f for f in _TEAM_TRACKED_FIELDS if f in updates]
     prev_tracked = (frappe.db.get_value("INET Team", name, _want, as_dict=True)
                     if _want else {}) or {}
-    prev_im = frappe.db.get_value("INET Team", name, "im") if "im" in updates else None
 
     if updates:
         frappe.db.set_value("INET Team", name, updates, update_modified=True)
 
     # db.set_value bypasses the ORM, so the on_update hook never fires here —
-    # these two calls are what keep this page's edits in the history.
-    if "im" in updates:
-        _log_team_im_handover(name, prev_im, updates.get("im"))
+    # this call is what keeps the page's edits in the history, `im` included.
+    #
+    # It used to ALSO write an auto-approved Team Allocation Request, from
+    # when the custody replay read that table. The replay reads PO Status
+    # Event now, so the request was not merely redundant: it invented a
+    # transfer nobody had requested, and the backfill patch turns approved
+    # requests into events, so a re-run could have doubled the same handover.
     log_master_set_value("INET Team", name, prev_tracked, updates,
                          remark="Changed on Admin Teams")
 
