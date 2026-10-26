@@ -658,7 +658,14 @@ export default function ReportCatalog({
                     choice in Manage Table, after which theirs wins. */}
                 {columns.map((col) => (
                   <th key={col.fieldname || col.label}
-                      data-tablepro-default-hidden={col.default_hidden ? "true" : undefined}>
+                      data-tablepro-default-hidden={col.default_hidden ? "true" : undefined}
+                      /* A report may explain a column in one plain sentence
+                         via `hint`; it shows on hover. Native title rather
+                         than a popover on purpose — DataTablePro owns the
+                         header (resize, reorder, filter menus), and anything
+                         mounted inside a <th> has to survive all three. */
+                      title={col.hint || undefined}
+                      className={col.hint ? "has-hint" : undefined}>
                     {col.label}
                   </th>
                 ))}

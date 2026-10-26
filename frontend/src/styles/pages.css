@@ -2961,3 +2961,17 @@
   color: var(--text-muted);
   font-size: 0.85rem;
 }
+
+/* A report column that carries a `hint` explains itself on hover. The dotted
+   underline is the only signal there is something to hover — without it the
+   explanation exists and nobody finds it. Kept off the resize handle and the
+   filter caret, which share the same header cell. */
+.data-table thead th.has-hint > :first-child,
+.data-table thead th.has-hint {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-color, #cbd5e1);
+  cursor: help;
+}

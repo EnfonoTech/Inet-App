@@ -1050,14 +1050,123 @@ Inactive on 4 Oct, which is exactly why it shows two worked days that month.
 There is no HR source — Leave Application, Attendance and Holiday List all
 hold zero rows — so Version is the only one.
 
-**Phase 4 — Speed**, once the stamps have run long enough to mean something.
+**Phase 4 — DONE (26 Oct 2026): Speed.** Built ahead of its data on purpose —
+the code can ship now, the numbers fill in as the stamps run. What makes that
+safe is that **every median carries the sample it rests on**, in a
+`Speed sample` column, so a thin figure looks thin instead of authoritative:
 
-**Phase 5 — the sweep, and the partial-quantity audit.** The same ideas are
-computed independently in the Command Dashboard, CEO / Ops / Financial
-dashboards, the IM Dashboard's action counts, `get_top_teams_report`,
-`team_utilization_*`, `monthly_team_details` and `team_idle_domain`. Each keeps
-meaning the old thing until it is edited. Say which were updated and which were
-deliberately left.
+```
+September        plan→exec  exec→WD  WD→PIC  QC wait  CIAG wait   sample
+Ajmal Muhammed         0.0      1.0       —      0.0        0.0   373 / 199 / 0 / 7 / 5
+Majid Ali              0.0      1.0       —      0.4        0.4   372 / 258 / 0 / 6 / 6
+Manukrishnan PV        0.0      1.0       —      0.0        0.0   167 / 83 / 0 / 5 / 5
+
+October 1-26
+Manukrishnan PV        0.0      0.5     0.0      3.2        5.1   86 / 24 / 15 / 11 / 10
+Waqas Ahmed              —        —     5.4        —          —   0 / 0 / 2 / 0 / 0
+```
+
+Read the samples, not the medians: `WD→PIC` rests on 0 lines in September and
+2–15 in October, so it means nothing yet. `plan→exec` and `exec→WD` rest on
+hundreds and are usable today.
+
+**Median, not average** — one line left open three months wrecks a mean, and
+the question is what a typical line takes.
+
+**Coverage per stage, and why it differs:**
+
+| stage | source | available |
+|---|---|---|
+| plan → execute | `plan_date` vs `execution_date` | full history |
+| execute → Work Done | `execution_date` vs WD creation | full history |
+| Work Done → PIC | the `b29ce8c` stamps, falling back to the submission_status event log | stamps are 0 until production runs them; the log starts 29 Sep 2026 |
+| QC wait / CIAG wait | the event log | 29 Sep 2026 |
+
+**QC and CIAG are labelled "not IM"** and kept out of every rated component.
+QC is the team lead's and CIAG is the customer's; the plan's rule is that a
+stage the IM cannot finish must never count against them.
+
+### …and then taken straight back out of the scorecard
+
+Reviewed on screen and removed the same day — **not hidden, removed**. This
+report is an overview, one row per IM. Six more columns of stage timings,
+most of them reading `—` until the stamps have run, made it harder to read
+without answering the question it exists to answer. Hiding them by default
+was not enough: a column nobody should open does not belong in the column
+list at all.
+
+`im_cycle_times()` is **kept and is correct**, with a docstring saying no
+report uses it. "Where does the time go" is a real question and the figures
+are tested; it belongs in a drill-down of its own, not in a summary row.
+
+The lesson is cheap to state and was not cheap to learn: the sample column
+did its job — `0 / 0 / 2 / 0 / 0` on screen is what made the decision obvious
+in seconds rather than after a month of people quietly mistrusting a median
+of 5.4.
+
+## Every column explains itself on hover
+
+A scorecard that cannot be interrogated gets argued with instead of used. A
+report may now give any column a `hint` — one plain sentence, written for the
+person reading the report, not for whoever reads the code: no field names, no
+SQL, no jargon the client has not already been given. `ReportCatalog` renders
+it as the header's `title`, with a dotted underline as the only signal there
+is something to hover.
+
+Native `title` rather than a popover, deliberately: `DataTablePro` owns the
+header — resize handles, reorder, filter menus — and anything mounted inside
+a `<th>` has to survive all three.
+
+Generic, like `default_hidden` and `no_total` before it, so every wide report
+in the catalogue can use it. All 26 columns here carry one.
+
+One bug the sample column caught immediately: `WD→PIC` came out at **−5.0
+days** for Ajmal. Pairing the FIRST "Ready for Confirmation" with the LAST
+"Confirmation Done" measures every rejection cycle as one span, and on a line
+whose only logged Confirmation Done predates its only logged Ready — because
+the log starts mid-cycle — it goes negative. Now pairs the last of each, and
+refuses a negative outright.
+
+**Phase 5 — DONE (26 Oct 2026): the sweep and the partial-quantity audit.**
+
+Two bug classes were hunted across every report.
+
+**`dispatch_status = 'Completed'` by equality — only two other sites, both
+correct.** `completed_no_evidence` in the data-integrity report is deliberately
+hunting lines stuck AT Completed, and the other is a return payload, not a
+query. So that class existed only where Phase 1 fixed it.
+
+**`line_amount` used as the value of work DONE — six sites, all fixed.**
+`billable_amount_sql()` already existed and already handles a short
+confirmation (and the case where the leftover was added to the confirmation,
+so the customer pays for it anyway). It was simply not being used:
+
+| fixed | figure |
+|---|---|
+| `project_management._project_value_revenue` | project `revenue` |
+| `project_management.get_project_kpis` | `total_revenue` |
+| `get_project_profitability_report` | `achieved` |
+| `_project_performance_report` | `achieved` |
+| `get_command_dashboard` | backend completed value |
+| `get_command_dashboard` | `inet_achieved` |
+
+Measured before changing: **SAR 156 across 16,915 done lines**, three lines,
+all confirmed short (one delivered 1 of 4). Trivial today — and that is the
+point of doing it now, because the partial-close feature is new and the gap
+only grows. `get_project_kpis` moved from 14,657,958 to 14,657,802, which is
+the whole difference.
+
+**Deliberately NOT changed — order-book figures must stay on `line_amount`.**
+`billable_amount_sql`'s own docstring says so: PO Value, Known Target,
+`total_value`, planned, forecast and the dispatch-status report are what
+Huawei ORDERED, and reducing them too would make the shortfall vanish from
+both sides of every ratio built to show it. A short-confirmed line should
+read as Completion % below 100, not as 100% of a smaller order.
+
+**Partial milestone is a separate thing and is already handled** where it
+matters: `_visit_closed_exists_sql` refuses to call a part-delivered line
+finished, and the Work Done page keys its hide rule on per-milestone PIC
+status. No report counts an MS1-only close as fully earned.
 
 ## One history log, not three (26 Oct 2026)
 

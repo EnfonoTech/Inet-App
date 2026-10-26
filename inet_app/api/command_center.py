@@ -15053,9 +15053,13 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # join turns it into one row per supplier, each weighted by its quantity,
     # and the payout test then drops the subcontracted legs. A line with no
     # allocations yields share 1 against pd.contract — exactly as before.
+    #
+    # Billable rather than ordered, so a line confirmed short contributes what
+    # was delivered. The TARGET above is cost x margin and the order book is a
+    # separate figure, so nothing here is double-reduced.
     inet_achieved_rows = frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM(pd.line_amount * ({ALLOC_SHARE_SQL})), 0) AS total
+        SELECT COALESCE(SUM(({billable_amount_sql('pd')}) * ({ALLOC_SHARE_SQL})), 0) AS total
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` exe ON exe.name = wd.execution
         JOIN `tabINET Team` it ON it.name = exe.team
@@ -15188,7 +15192,8 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         # invoicing pipeline in the same month shouldn't retroactively drop
         # it out of "backend completed this month" — see
         # inet_app.api.pic._compute_dispatch_status_from_pic.
-        "SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status IN ('Completed', 'Partially Submitted', 'Submitted', 'Partially Closed', 'Closed') AND subcon_completed_on BETWEEN %s AND %s AND IFNULL(is_internal_work, 0) = 0",
+        f"SELECT COUNT(*) AS cnt, COALESCE(SUM({billable_amount_sql('`tabPO Dispatch`')}), 0) AS val"
+        " FROM `tabPO Dispatch` WHERE subcon_status = 'Completed' AND dispatch_status IN ('Completed', 'Partially Submitted', 'Submitted', 'Partially Closed', 'Closed') AND subcon_completed_on BETWEEN %s AND %s AND IFNULL(is_internal_work, 0) = 0",
         (first_day, last_day),
         as_dict=True,
     )
@@ -15847,6 +15852,145 @@ RATING_COMPONENTS = {
     "quality": "1 - rework lines / lines assigned",
     "discipline": "plans closed out / plans whose outcome was due",
 }
+
+
+def _median(values):
+    if not values:
+        return None
+    vs = sorted(values)
+    n = len(vs)
+    mid = n // 2
+    return round(vs[mid] if n % 2 else (vs[mid - 1] + vs[mid]) / 2.0, 1)
+
+
+def im_cycle_times(fd, td):
+    """Median days per stage per IM.
+
+    NOT used by the IM Performance scorecard. It was built into it and taken
+    straight back out: that report is an overview, and six more columns of
+    stage timings — most of them empty until the Work Done stamps have run —
+    made it unreadable without answering the question it exists to answer.
+    Kept because the figures are correct and tested, and because "where does
+    the time go" is a real question; it belongs in a drill-down of its own,
+    not in a summary row per IM.
+
+    MEDIAN, not average: one line left open for three months drags a mean
+    badly, and the question is what a typical line takes.
+
+    Each stage also returns the number of lines its median rests on, because
+    the three stages have very different coverage and a thin number must look
+    thin rather than authoritative:
+
+      plan -> execute     full history (plan_date and execution_date always set)
+      execute -> Work Done  full history
+      Work Done -> PIC    the four Work Done stamps added in b29ce8c, which
+                          write going FORWARD only and cannot be backfilled;
+                          falls back to the submission_status event log, which
+                          itself starts 29 Sep 2026
+      QC / CIAG wait      the event log, same start date
+
+    The last two are deliberately separated out and labelled: QC is the team
+    lead's and CIAG is the customer's, so neither is the IM's to finish and
+    neither may be read as their delay.
+    """
+    out = {}
+
+    def add(im, key, days):
+        if im and days is not None:
+            out.setdefault(im, {}).setdefault(key, []).append(flt(days))
+
+    # Planned -> actually executed. Negative means it ran early; kept, because
+    # clamping at zero would quietly turn "two days early" into "on time".
+    for r in frappe.db.sql(
+        """SELECT pd.im AS im, DATEDIFF(de.execution_date, rp.plan_date) AS d
+             FROM `tabDaily Execution` de
+             JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+             JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+            WHERE DATE(de.execution_date) BETWEEN %s AND %s
+              AND rp.plan_date IS NOT NULL
+              AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0""",
+        (fd, td), as_dict=True,
+    ):
+        add(r.im, "plan_to_exec", r.d)
+
+    for r in frappe.db.sql(
+        """SELECT pd.im AS im, DATEDIFF(DATE(wd.creation), de.execution_date) AS d
+             FROM `tabWork Done` wd
+             JOIN `tabDaily Execution` de ON de.name = wd.execution
+             JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+            WHERE DATE(de.execution_date) BETWEEN %s AND %s
+              AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0""",
+        (fd, td), as_dict=True,
+    ):
+        add(r.im, "exec_to_wd", r.d)
+
+    # Ready for the IM's confirmation -> handed to PIC. The stamp is the
+    # source of truth once it exists; until then the event log stands in.
+    for r in frappe.db.sql(
+        """SELECT pd.im AS im,
+                  TIMESTAMPDIFF(HOUR,
+                      COALESCE(wd.ready_for_confirmation_at, ev.ready_at),
+                      COALESCE(wd.confirmed_at, ev.done_at)) / 24.0 AS d
+             FROM `tabWork Done` wd
+             JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+             LEFT JOIN (
+                 -- MAX on both sides, not MIN..MAX: a line rejected by PIC
+                 -- and re-confirmed has several of each, and pairing the
+                 -- FIRST ready with the LAST done measures every cycle as one
+                 -- span. The last pair is the handover actually being timed.
+                 SELECT po_dispatch,
+                        MAX(CASE WHEN new_value = 'Ready for Confirmation'
+                                 THEN changed_at END) AS ready_at,
+                        MAX(CASE WHEN new_value = 'Confirmation Done'
+                                 THEN changed_at END) AS done_at
+                   FROM `tabPO Status Event`
+                  WHERE field_changed = 'submission_status'
+                  GROUP BY po_dispatch
+             ) ev ON ev.po_dispatch = pd.name
+            WHERE IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
+              AND DATE(COALESCE(wd.confirmed_at, ev.done_at)) BETWEEN %s AND %s
+              AND COALESCE(wd.ready_for_confirmation_at, ev.ready_at) IS NOT NULL
+              -- A handover cannot take negative time. It came out at -5 days
+              -- on real data: the line's only logged "Confirmation Done"
+              -- predates its only logged "Ready for Confirmation", because
+              -- the event log starts mid-cycle (29 Sep 2026).
+              AND COALESCE(wd.confirmed_at, ev.done_at)
+                  >= COALESCE(wd.ready_for_confirmation_at, ev.ready_at)""",
+        (fd, td), as_dict=True,
+    ):
+        add(r.im, "wd_to_pic", r.d)
+
+    # Waits that are NOT the IM's — the team lead's QC and the customer's
+    # CIAG. Measured per line from the event log: first time it entered the
+    # open state to the last time it settled.
+    for key, field, opened, settled in (
+        ("qc_wait", "qc_status", ("Pending",), ("Pass", "Fail")),
+        ("ciag_wait", "ciag_status", ("Open",), ("Approved",)),
+    ):
+        ph_o = ", ".join(["%s"] * len(opened))
+        ph_s = ", ".join(["%s"] * len(settled))
+        for r in frappe.db.sql(
+            f"""SELECT pd.im AS im,
+                       TIMESTAMPDIFF(HOUR, ev.opened_at, ev.settled_at) / 24.0 AS d
+                  FROM (
+                      SELECT po_dispatch,
+                             MIN(CASE WHEN new_value IN ({ph_o}) THEN changed_at END) AS opened_at,
+                             MAX(CASE WHEN new_value IN ({ph_s}) THEN changed_at END) AS settled_at
+                        FROM `tabPO Status Event`
+                       WHERE field_changed = %s
+                       GROUP BY po_dispatch
+                  ) ev
+                  JOIN `tabPO Dispatch` pd ON pd.name = ev.po_dispatch
+                 WHERE ev.opened_at IS NOT NULL AND ev.settled_at IS NOT NULL
+                   AND ev.settled_at >= ev.opened_at
+                   AND DATE(ev.settled_at) BETWEEN %s AND %s
+                   AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0""",
+            tuple(opened) + tuple(settled) + (field, fd, td), as_dict=True,
+        ):
+            add(r.im, key, r.d)
+
+    return {im: {k: (_median(v), len(v)) for k, v in stages.items()}
+            for im, stages in out.items()}
 
 
 # ─── Close-out, the one definition ──────────────────────────────────────────
@@ -16582,54 +16726,78 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     # it is" — but a 24-column wall is unreadable, and a report nobody can
     # scan gets ignored whatever is in it. `default_hidden` only decides the
     # FIRST view: once the user saves a choice in Manage Table, theirs wins.
+    # `hint` is what the column means, in one plain sentence, shown on hover.
+    # Written for someone reading the report, not for someone reading this
+    # file: no field names, no SQL, no jargon the client has not already been
+    # given. A scorecard nobody can interrogate gets argued with instead of
+    # used.
     columns = [
-        {"fieldname": "im",              "label": "IM",              "fieldtype": "Data"},
-        # A shared team is one to each IM, so the column cannot be added up.
-        # Team Equivalent is the one that can — it weights each team by the
-        # share of its salary the IM carried and totals the fleet.
-        {"fieldname": "teams",           "label": "INET Teams",      "fieldtype": "Int",
-         "default_hidden": True, "no_total": True},
-        {"fieldname": "team_equiv",      "label": "Team Equivalent",  "fieldtype": "Float",
-         "default_hidden": True},
-        {"fieldname": "sub_teams",       "label": "SUB Teams",        "fieldtype": "Int",
-         "default_hidden": True, "no_total": True},
-        {"fieldname": "assigned_lines",  "label": "Assigned",        "fieldtype": "Int"},
-        {"fieldname": "completed_lines", "label": "Completed",       "fieldtype": "Int"},
-        {"fieldname": "completion_pct",  "label": "Completion %",    "fieldtype": "Percent"},
-        {"fieldname": "direct_backend_closed", "label": "Direct/Backend Closed", "fieldtype": "Data"},
-        {"fieldname": "overall_completion_pct", "label": "Overall Completion %", "fieldtype": "Percent"},
-        # Flow — the line's journey. Detail behind the headline.
-        {"fieldname": "lines_received",  "label": "Lines Open",      "fieldtype": "Int",
-         "default_hidden": True},
-        {"fieldname": "lines_executed",  "label": "Executed",        "fieldtype": "Int",
-         "default_hidden": True},
+        {"fieldname": "im", "label": "IM", "fieldtype": "Data",
+         "hint": "The implementation manager. Every figure on the row is scoped to the lines stamped with their name."},
+        {"fieldname": "teams", "label": "INET Teams", "fieldtype": "Int",
+         "default_hidden": True, "no_total": True,
+         "hint": "Our own salaried teams this IM carried cost for. Not addable across IMs — a team shared by two counts once for each."},
+        {"fieldname": "team_equiv", "label": "Team Equivalent", "fieldtype": "Float",
+         "default_hidden": True,
+         "hint": "The same teams counted as fractions — half a month on a team is 0.5. This one does add up, to the size of the fleet."},
+        {"fieldname": "sub_teams", "label": "SUB Teams", "fieldtype": "Int",
+         "default_hidden": True, "no_total": True,
+         "hint": "Subcontractor teams worked with. They cost a payout per job, not a salary, so they are counted separately."},
+        {"fieldname": "assigned_lines", "label": "Assigned", "fieldtype": "Int",
+         "hint": "PO lines this IM planned in the period. Counted as lines — a line needing two visits is still one line."},
+        {"fieldname": "completed_lines", "label": "Completed", "fieldtype": "Int",
+         "hint": "Of those planned lines, the ones whose plan finished."},
+        {"fieldname": "completion_pct", "label": "Completion %", "fieldtype": "Percent",
+         "hint": "Completed ÷ Assigned. Field work only — lines closed directly are in the next column."},
+        {"fieldname": "direct_backend_closed", "label": "Direct/Backend Closed", "fieldtype": "Data",
+         "hint": "Closed ÷ handled, for lines finished without a site visit. Shown apart so the two ways of working stay visible."},
+        {"fieldname": "overall_completion_pct", "label": "Overall Completion %", "fieldtype": "Percent",
+         "hint": "Both routes together — everything finished ÷ everything handled. A line already invoiced counts as finished."},
+        {"fieldname": "lines_received", "label": "Lines Open", "fieldtype": "Int",
+         "default_hidden": True,
+         "hint": "Everything on this IM's plate in the period, including the backlog. Larger than Assigned, which is only what they planned."},
+        {"fieldname": "lines_executed", "label": "Executed", "fieldtype": "Int",
+         "default_hidden": True,
+         "hint": "Lines a team actually went out and completed in the period."},
         {"fieldname": "lines_handed_to_pic", "label": "Handed to PIC", "fieldtype": "Int",
-         "default_hidden": True},
-        # Quality and discipline — the inputs to two of the four rated parts.
-        {"fieldname": "rework_lines",    "label": "Rework",          "fieldtype": "Int",
-         "default_hidden": True},
-        {"fieldname": "revisits",        "label": "Re-visits",       "fieldtype": "Int",
-         "default_hidden": True},
-        {"fieldname": "closeout_pct",    "label": "Closed Out %",    "fieldtype": "Percent"},
-        {"fieldname": "target",          "label": "Target (SAR)",    "fieldtype": "Currency"},
-        {"fieldname": "revenue",         "label": "Revenue (SAR)",   "fieldtype": "Currency"},
-        # Cost breakdown — Team Cost is the headline, these are its halves.
-        {"fieldname": "cost_used",       "label": "Team Cost — Used", "fieldtype": "Currency",
-         "default_hidden": True},
-        {"fieldname": "cost_idle",       "label": "Team Cost — Idle", "fieldtype": "Currency",
-         "default_hidden": True},
-        {"fieldname": "team_cost",       "label": "Team Cost (SAR)", "fieldtype": "Currency"},
-        {"fieldname": "sub_payout",      "label": "Subcon Payout",   "fieldtype": "Currency",
-         "default_hidden": True},
-        {"fieldname": "profit",          "label": "Margin",          "fieldtype": "Currency"},
-        # Provenance — how the two verdict columns were arrived at.
-        {"fieldname": "target_source",   "label": "Target Source",   "fieldtype": "Data",
-         "default_hidden": True},
-        {"fieldname": "score",           "label": "Score",           "fieldtype": "Percent"},
-        {"fieldname": "rating",          "label": "Rating",          "fieldtype": "Data"},
-        {"fieldname": "rated_on",        "label": "Rated On",        "fieldtype": "Data",
-         "default_hidden": True},
-    ]    # Overall % columns = ratio of totals, never an average of the per-IM
+         "default_hidden": True,
+         "hint": "Lines the IM finished and passed to PIC for invoicing."},
+        {"fieldname": "rework_lines", "label": "Rework", "fieldtype": "Int",
+         "default_hidden": True,
+         "hint": "Lines that had to be done again — returned by PIC, or failed QC in the field."},
+        {"fieldname": "revisits", "label": "Re-visits", "fieldtype": "Int",
+         "default_hidden": True,
+         "hint": "Second and extra visits planned. A site the team had to return to."},
+        {"fieldname": "closeout_pct", "label": "Closed Out %", "fieldtype": "Percent",
+         "hint": "Of the plans whose outcome was due, the share where one was given — finished, cancelled, or raised as an issue."},
+        {"fieldname": "target", "label": "Target (SAR)", "fieldtype": "Currency",
+         "hint": "What this IM was expected to deliver: their team cost plus the agreed margin, plus their share of each subcontractor's monthly commitment."},
+        {"fieldname": "revenue", "label": "Revenue (SAR)", "fieldtype": "Currency",
+         "hint": "Value of the work actually completed. A line delivered short counts only what was delivered."},
+        {"fieldname": "cost_used", "label": "Team Cost — Used", "fieldtype": "Currency",
+         "default_hidden": True,
+         "hint": "The part of the salary bill covering days the team was out working."},
+        {"fieldname": "cost_idle", "label": "Team Cost — Idle", "fieldtype": "Currency",
+         "default_hidden": True,
+         "hint": "The part covering days the team had no work. Charged to whoever held the team that day, not to whoever holds it now."},
+        {"fieldname": "team_cost", "label": "Team Cost (SAR)", "fieldtype": "Currency",
+         "hint": "Salary of our own teams for the days this IM held them, working or idle. Every day of the real bill lands on exactly one IM."},
+        {"fieldname": "sub_payout", "label": "Subcon Payout", "fieldtype": "Currency",
+         "default_hidden": True,
+         "hint": "Owed to subcontractors on this IM's work. A cost of sale, kept out of the salary figure."},
+        {"fieldname": "profit", "label": "Margin", "fieldtype": "Currency",
+         "hint": "Revenue less team cost and less subcontractor payout — what the work left behind."},
+        {"fieldname": "target_source", "label": "Target Source", "fieldtype": "Data",
+         "default_hidden": True,
+         "hint": "Whether the target was worked out from cost and commitments, or typed in by hand for this month."},
+        {"fieldname": "score", "label": "Score", "fieldtype": "Percent",
+         "hint": "Average of four: delivery, commercial, quality and discipline. A part with too little to measure is left out rather than scored zero."},
+        {"fieldname": "rating", "label": "Rating", "fieldtype": "Data",
+         "hint": "The score in words — 90+ Excellent, 75+ Good, 60+ Need Improvement, below that Idle."},
+        {"fieldname": "rated_on", "label": "Rated On", "fieldtype": "Data",
+         "default_hidden": True,
+         "hint": "Which of the four parts the score could actually be measured on this period."},
+    ]   # Overall % columns = ratio of totals, never an average of the per-IM
     # percentages — IMs have very different assigned-line/target sizes, so
     # averaging would weight a 1-line IM the same as one with hundreds.
     totals = {
@@ -16739,8 +16907,13 @@ def get_project_profitability_report(from_date=None, to_date=None, **kwargs):
     current-state report.
     """
 
+    # Billable, not ordered: a line confirmed short earned only what was
+    # delivered. The PO-value figure beside it stays on line_amount — see
+    # billable_amount_sql — so the shortfall shows as a gap rather than
+    # vanishing from both sides at once.
+    _billable = billable_amount_sql("pd")
     line_rows = frappe.db.sql(
-        """
+        f"""
         SELECT pd.project_code AS project_code,
                COALESCE(SUM(pd.line_amount), 0) AS po_value,
                COUNT(*) AS assigned_lines,
@@ -16751,7 +16924,7 @@ def get_project_profitability_report(from_date=None, to_date=None, **kwargs):
                COALESCE(SUM(CASE WHEN pd.dispatch_status IN
                         ('Completed', 'Partially Submitted', 'Submitted',
                          'Partially Closed', 'Closed')
-                        THEN pd.line_amount ELSE 0 END), 0) AS achieved
+                        THEN {_billable} ELSE 0 END), 0) AS achieved
         FROM `tabPO Dispatch` pd
         WHERE IFNULL(pd.project_code, '') != ''
           AND IFNULL(pd.is_internal_work, 0) != 1
@@ -16866,6 +17039,11 @@ def _project_performance_report(im_ids=None):
     own PO lines (PO Dispatch.im). Unscoped when im_ids is empty."""
     DONE_STATUSES = LINE_DONE_STATUSES
     _ph_done = ", ".join(["%s"] * len(DONE_STATUSES))
+    # Billable, not ordered: a line confirmed short earned only what was
+    # delivered. The PO-value figure beside it stays on line_amount — see
+    # billable_amount_sql — so the shortfall shows as a gap rather than
+    # vanishing from both sides at once.
+    _billable = billable_amount_sql("pd")
     _sc, _sp = _im_scope_cond("pd.im", im_ids)
 
     # One row per project, straight off PO Dispatch. No Rollout Plan join at
@@ -16878,7 +17056,7 @@ def _project_performance_report(im_ids=None):
         SELECT pd.project_code AS project_code,
                COALESCE(SUM(pd.line_amount), 0) AS known_target,
                COALESCE(SUM(CASE WHEN pd.dispatch_status IN ({_ph_done})
-                                 THEN pd.line_amount ELSE 0 END), 0) AS achieved,
+                                 THEN {_billable} ELSE 0 END), 0) AS achieved,
                COUNT(*) AS total_lines,
                SUM(CASE WHEN pd.dispatch_status IN ({_ph_done})
                         THEN 1 ELSE 0 END) AS completed_lines

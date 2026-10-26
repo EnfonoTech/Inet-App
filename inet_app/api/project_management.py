@@ -3,6 +3,7 @@ import frappe
 from inet_app.roles import PM_LEVEL_ROLES, is_pm_only
 from inet_app.api.command_center import (
     LINE_DONE_STATUSES,
+    billable_amount_sql,
     excel_orm_filter,
     excel_options_from_orm,
 )
@@ -69,9 +70,14 @@ def _project_value_revenue(project_codes):
     # project's revenue could include lines its own total value leaves out,
     # and Completion % could exceed 100 on nothing but that mismatch.
     ph_done = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
+    # Billable, not ordered: a line confirmed short earned only what was
+    # delivered. `total_value` above deliberately stays on line_amount — it is
+    # the order book — so the shortfall shows up as Completion % below 100
+    # rather than disappearing from both sides at once.
     revenue_rows = frappe.db.sql(
         f"""
-        SELECT project_code, COALESCE(SUM(line_amount), 0) AS revenue
+        SELECT project_code,
+               COALESCE(SUM({billable_amount_sql('`tabPO Dispatch`')}), 0) AS revenue
         FROM `tabPO Dispatch`
         WHERE project_code IN ({ph})
           AND IFNULL(is_internal_work, 0) = 0
@@ -268,8 +274,10 @@ def get_project_kpis():
     total_value = flt(frappe.db.sql(
         f"SELECT COALESCE(SUM(line_amount), 0) FROM `tabPO Dispatch` {_scope}"
     )[0][0])
+    # Billable, not ordered — same rule as _project_value_revenue.
     total_revenue = flt(frappe.db.sql(
-        f"SELECT COALESCE(SUM(line_amount), 0) FROM `tabPO Dispatch` {_scope} "
+        f"SELECT COALESCE(SUM({billable_amount_sql('`tabPO Dispatch`')}), 0) "
+        f"FROM `tabPO Dispatch` {_scope} "
         f"AND dispatch_status IN ({ph_done})",
         tuple(LINE_DONE_STATUSES),
     )[0][0])
