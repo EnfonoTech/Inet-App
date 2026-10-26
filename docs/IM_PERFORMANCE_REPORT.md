@@ -1284,10 +1284,14 @@ unfiltered, because `active_inet_teams` is a headcount.
 the day attended, including Cancelled, Postponed and Not Attended — so a team
 that never turned up had its day charged as *used* to the line's IM instead
 of *idle* to whoever held the team. September: used 464,167 / idle 32,329
-became **used 446,842 / idle 49,654**. `_team_domain_utilization`'s idle grid
-has the same rule and is **deliberately not changed** — it is a delivered
-client report and its behaviour is a separate decision. The two now differ
-here, which is why `_NON_WORKING_EXECUTION_STATUSES` says so in its comment.
+became **used 446,842 / idle 49,654**. `_team_domain_utilization`'s idle grid had the
+same rule and **was fixed too, on the user's instruction** — the two share
+`_NON_WORKING_EXECUTION_STATUSES` and agree again. It was the more important
+of the two: that grid exists to show idle time, so counting a cancelled visit
+as attendance hid exactly the thing it is for. September: attended team-days
+555 → 537, with 18 moving to idle (Team-10 alone contributed 8 — it went
+Inactive on 4 October and its September visits were being cancelled before
+that).
 
 **5. Two loose ends.** `_log_team_im_handover` is gone: once the replay moved
 to `PO Status Event` it was not merely redundant but harmful — it invented an

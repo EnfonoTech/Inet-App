@@ -14160,7 +14160,11 @@ def get_team_domain_utilization(month=None, domains=None, include_fridays=0, eta
 
     Attendance is the inclusive span ``execution_date`` ->
     ``last_progress_date`` on Daily Execution; with no last-progress date the
-    execution counts as that single day. ``Daily Execution.team`` is the
+    execution counts as that single day. An execution recorded as Cancelled,
+    Postponed or Not Attended is NOT attendance — the visit did not happen,
+    so the day is idle (``_NON_WORKING_EXECUTION_STATUSES``). Counting those
+    as worked hid 8 team-days in September alone, and hid them in the one
+    report whose whole purpose is to show idle time. ``Daily Execution.team`` is the
     signal — verified to be set on every row and never shared between teams.
     If production ever shares one execution across teams, extend via
     ``Rollout Plan Team.execution_name``.
@@ -14273,8 +14277,9 @@ def _team_domain_utilization(month=None, domains=None, include_fridays=0, etag=N
     # and only falling back to the project's default domain when the line
     # was never overridden. Span is clamped to the month, so one row can
     # contribute at most ~31 days no matter how stale its last_progress_date is.
+    _ph_skip = ", ".join(["%s"] * len(_NON_WORKING_EXECUTION_STATUSES))
     execs = frappe.db.sql(
-        """
+        f"""
         SELECT de.team AS team,
                de.execution_date AS d1,
                COALESCE(de.last_progress_date, de.execution_date) AS d2,
@@ -14286,8 +14291,9 @@ def _team_domain_utilization(month=None, domains=None, include_fridays=0, etag=N
           AND IFNULL(de.team, '') != ''
           AND de.execution_date <= %s
           AND COALESCE(de.last_progress_date, de.execution_date) >= %s
+          AND IFNULL(de.execution_status, '') NOT IN ({_ph_skip})
         """,
-        (last, first),
+        (last, first) + tuple(_NON_WORKING_EXECUTION_STATUSES),
         as_dict=True,
     )
 
@@ -16103,9 +16109,10 @@ def team_field_timeline(field):
 
 
 # A visit recorded in one of these states did not happen, so the day is not a
-# worked day. _team_domain_utilization's idle grid does NOT yet apply this —
-# it counts any execution as attendance — so the two differ here deliberately
-# until that report's own behaviour is agreed.
+# worked day. Shared by the IM cost attribution and by
+# _team_domain_utilization's idle grid, which must agree about what a worked
+# day is — the grid exists to show idle time, and counting a cancelled visit
+# as attendance hid exactly the thing it is for.
 _NON_WORKING_EXECUTION_STATUSES = ("Cancelled", "Not Attended", "Postponed")
 
 
