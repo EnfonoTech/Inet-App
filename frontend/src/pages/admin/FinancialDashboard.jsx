@@ -51,6 +51,8 @@ export default function FinancialDashboard() {
   const costBD = [
     { n: "INET teams", v: inet.inet_monthly_cost || 0, c: C.blue },
     { n: "Sub-Con", v: subcon.sub_expense || 0, c: C.amber },
+    // Payout deductions Paid Out to third parties — part of total_cost_today.
+    ...(company.deduction_paid_out ? [{ n: "Third parties", v: company.deduction_paid_out, c: C.red || "#dc2626" }] : []),
   ];
 
   const agingData = [

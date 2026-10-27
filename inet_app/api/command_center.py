@@ -43,6 +43,9 @@ from inet_app.api.subcontractor_sync import (
     ALLOC_SHARE_SQL,
     LAST_VISIT_SUBCONTRACTOR_SQL,
     SUBCON_LOCKED,
+    net_payout_sql,
+    paid_out_sql,
+    payout_reduction_sql,
     assert_subcontractor_change_allowed,
     dispatch_subcontractor_locks,
     resync_dispatch_allocations,
@@ -14550,6 +14553,18 @@ def get_commercial_dashboard(etag=None):
                   "plan_contract.subcontractor, sc_team.subcontractor)")
     _alloc_payout = "COALESCE(sm_alloc.sub_payout_pct, sm.sub_payout_pct, 0)"
     _alloc_margin = "COALESCE(sm_alloc.inet_margin_pct, sm.inet_margin_pct, 100)"
+    # Payout deductions on this leg, each milestone scaled by how much of it
+    # is invoiced: the payout falls by what the subcontractor is no longer
+    # paid, and the margin gains that and loses what is Paid Out.
+    _sub_red = " + ".join(
+        payout_reduction_sql(_alloc_payout, n,
+                             f"({_v}) / NULLIF(IFNULL(pd.ms{n}_amount, 0), 0)",
+                             sm_name=_alloc_sub)
+        for n, _v in ((1, _MS1_INVOICED_VALUE), (2, _MS2_INVOICED_VALUE)))
+    _sub_paid = " + ".join(
+        paid_out_sql(n, f"({_v}) / NULLIF(IFNULL(pd.ms{n}_amount, 0), 0)",
+                     sm_name=_alloc_sub)
+        for n, _v in ((1, _MS1_INVOICED_VALUE), (2, _MS2_INVOICED_VALUE)))
     per_subcontract = frappe.db.sql(
         f"""
         SELECT
@@ -14563,9 +14578,9 @@ def get_commercial_dashboard(etag=None):
           COALESCE(SUM({_INVOICED_VALUE_SQL} * ({ALLOC_SHARE_SQL})), 0) AS invoiced,
           COALESCE(SUM({_BACKLOG_VALUE_SQL} * ({ALLOC_SHARE_SQL})), 0) AS backlog,
           COALESCE(SUM({_INVOICED_VALUE_SQL} * ({ALLOC_SHARE_SQL})
-                       * {_alloc_payout} / 100), 0) AS payout,
+                       * {_alloc_payout} / 100 - ({_sub_red})), 0) AS payout,
           COALESCE(SUM({_INVOICED_VALUE_SQL} * ({ALLOC_SHARE_SQL})
-                       * {_alloc_margin} / 100), 0) AS inet_margin
+                       * {_alloc_margin} / 100 + ({_sub_red}) - ({_sub_paid})), 0) AS inet_margin
         FROM `tabPO Dispatch` pd
         LEFT JOIN (
 {LAST_VISIT_SUBCONTRACTOR_SQL}        ) plan_contract ON plan_contract.po_dispatch = pd.name
@@ -15143,6 +15158,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         SELECT COALESCE(SUM(ev.revenue), 0) AS revenue,
                COALESCE(SUM(ev.payout), 0) AS expense,
                COALESCE(SUM(ev.inet_margin), 0) AS margin,
+               COALESCE(SUM(ev.paid_out), 0) AS paid_out,
                COUNT(DISTINCT ev.subcontract) AS contracts
         FROM ({subcon_payout_events_sql()}) ev
         WHERE ev.event_date BETWEEN %s AND %s
@@ -15153,6 +15169,36 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     sub_revenue = flt(_sr.get("revenue"))
     sub_expense = flt(_sr.get("expense"))
     inet_margin_sub = flt(_sr.get("margin"))
+    # Payout deductions Paid Out to a third party (report preparation done
+    # outside, say) on subcontracted work: real expense, dated with the payout
+    # it came off. inet_margin_sub is already net of it; the expense side
+    # must carry it too or Profit/Loss is overstated by exactly this.
+    sub_paid_out = flt(_sr.get("paid_out"))
+
+    # The same on INET-crew work, where nothing is paid to a subcontractor and
+    # the deduction is purely a third party's cost. Dated like INET's own
+    # revenue — the day the work was done — and only on INET legs, so a line
+    # split with a subcontractor is not counted twice.
+    _inet_paid_rows = frappe.db.sql(
+        f"""
+        SELECT COALESCE(SUM({paid_out_sql(None, "1", sm_name="sm_l.name")}), 0) AS paid
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        LEFT JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+        {ALLOC_JOIN_SQL}
+        LEFT JOIN `tabSubcontract Master` sm_l
+               ON sm_l.name = COALESCE(NULLIF(alloc.subcontractor, ''), NULLIF(pd.contract, ''))
+        WHERE IFNULL(sm_l.sub_payout_pct, 0) = 0
+          AND IFNULL(pd.is_internal_work, 0) = 0
+          AND EXISTS (SELECT 1 FROM `tabPO Payout Deduction` d0
+                       WHERE d0.parent = pd.name AND d0.settlement = 'Paid Out')
+          AND COALESCE(DATE(exe.execution_date), DATE(wd.ms1_closed_at),
+                       DATE(wd.ms2_closed_at), DATE(wd.creation)) BETWEEN %s AND %s
+        """,
+        (first_day, last_day), as_dict=True,
+    )
+    inet_paid_out = flt(_inet_paid_rows[0].paid if _inet_paid_rows else 0)
+    deduction_paid_out = round(sub_paid_out + inet_paid_out, 2)
     sub_contracts_active = cint(_sr.get("contracts"))
 
     # Target = the monthly commitment agreed per subcontract, the way the
@@ -15246,7 +15292,7 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # team is being paid for it — so charging its daily_cost would invent an
     # expense the company does not have. Do not "fix" this by folding it in
     # without checking what the record actually represents.
-    inet_profit_loss_today = round(inet_achieved - inet_cost_today, 2)
+    inet_profit_loss_today = round(inet_achieved - inet_cost_today - inet_paid_out, 2)
 
     # Sub-Con target pro-rated the same way, at its own FULL gross value —
     # the Company Financial Summary is read as the whole value passing
@@ -15433,8 +15479,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
         inet_achieved + inet_margin_sub
         + direct_close["inet_revenue"] + backend_close_inet_only
     )
-    # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not pro-rated)
-    total_cost_today = round(inet_cost_today + sub_expense, 2)
+    # Total Cost Today = pro-rated INET cost + sub-con expense (actual, not
+    # pro-rated) + payout deductions Paid Out to third parties.
+    total_cost_today = round(inet_cost_today + sub_expense + deduction_paid_out, 2)
     company_gap = round(company_target - total_revenue_gross, 2)
     # Profit/Loss = Total Revenue (gross) − Total Expense (INET cost + the
     # subcontractor payout) — both comprehensive figures on the same gross
@@ -15697,6 +15744,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "total_achieved": total_achieved,
             "company_gap": company_gap,
             "total_cost_today": total_cost_today,
+            # Third parties paid through payout deductions — part of the cost
+            # above, shown on its own so the breakdown still adds up.
+            "deduction_paid_out": deduction_paid_out,
             "profit_loss": profit_loss,
             "coverage_pct": coverage_pct,
         },
@@ -16475,10 +16525,19 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
     # against a 517,316 salary bill. The percentage comes from the LINE's
     # own contract, never the executing team's type — the commercial
     # arrangement lives on the line (same rule as get_command_dashboard).
+    # Payout deductions, scaled by the part of the line this Work Done
+    # carries: the subcontractor is paid less, and a deduction Paid Out to a
+    # third party is money leaving for the same work, so it lands in this
+    # column too. Zero on a line with no deductions.
+    _wd_frac = "wd.revenue_sar / NULLIF(IFNULL(pd.line_amount, 0), 0)"
+    _wd_red = payout_reduction_sql("IFNULL(sm.sub_payout_pct, 0)", None, _wd_frac,
+                                   sm_name=None, share_sql="1")
+    _wd_paid = paid_out_sql(None, _wd_frac, sm_name=None, share_sql="1")
     payout_by_im = {}
     for _q, _p in (
-        ("""
-         SELECT pd.im, COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS payout
+        (f"""
+         SELECT pd.im, COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0
+                                    - {_wd_red} + {_wd_paid}), 0) AS payout
            FROM `tabWork Done` wd
            JOIN `tabDaily Execution` de ON de.name = wd.execution
            JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
@@ -16487,7 +16546,8 @@ def get_im_performance_report(from_date=None, to_date=None, **kwargs):
             AND IFNULL(pd.im, '') <> '' AND IFNULL(pd.is_internal_work, 0) = 0
           GROUP BY pd.im""", (fd, td)),
         (f"""
-         SELECT pd.im, COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0), 0) AS payout
+         SELECT pd.im, COALESCE(SUM(wd.revenue_sar * IFNULL(sm.sub_payout_pct, 0) / 100.0
+                                    - {_wd_red} + {_wd_paid}), 0) AS payout
            FROM `tabWork Done` wd
            JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
            LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
@@ -17573,6 +17633,9 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
         SELECT rp.name AS plan, rp.plan_status,
                COALESCE(pd.line_amount, 0) AS line_amount,
                IFNULL(sm.sub_payout_pct, 0) AS payout_pct,
+               {payout_reduction_sql("IFNULL(sm.sub_payout_pct, 0)", None, "1",
+                                     sm_name=None, share_sql="1")} AS ded_reduction,
+               {paid_out_sql(None, "1", sm_name=None, share_sql="1")} AS ded_paid,
                (SELECT COALESCE(SUM(wd.revenue_sar), 0)
                   FROM `tabWork Done` wd
                   JOIN `tabDaily Execution` de ON de.name = wd.execution
@@ -17631,6 +17694,11 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
         if not _realized:
             continue
         _rate = flt(_pv.payout_pct) / 100.0
+        # Payout deductions on the line, per unit of its value: the
+        # subcontractor is paid less, and what is Paid Out to a third party
+        # is money leaving for the same work. Zero on a line with none.
+        if flt(_pv.line_amount) and (flt(_pv.ded_reduction) or flt(_pv.ded_paid)):
+            _rate -= (flt(_pv.ded_reduction) - flt(_pv.ded_paid)) / flt(_pv.line_amount)
         _members = splits_by_plan.get(_pv.plan) or []
         if _members:
             _total_share = sum(flt(m.assigned_amount) for m in _members)
@@ -18404,18 +18472,28 @@ def get_revenue_tracking_report(from_date=None, to_date=None, **kwargs):
     """
     fd, td = _perf_date_range(from_date, to_date)
 
+    # Payout deductions, scaled by the part of the line each Work Done
+    # carries, at the same payout % this report charges: the subcontractor is
+    # paid less, and a deduction Paid Out to a third party is still expense.
+    _rt_pct = "(100 - COALESCE(NULLIF(wd.inet_margin_pct, 0), 100))"
+    _rt_frac = "wd.revenue_sar / NULLIF(IFNULL(pd.line_amount, 0), 0)"
+    _rt_red = payout_reduction_sql(_rt_pct, None, _rt_frac, sm_name=None, share_sql="1")
+    _rt_paid = paid_out_sql(None, _rt_frac, sm_name=None, share_sql="1")
+
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             DATE_FORMAT(de.execution_date, '%%Y-%%m')            AS month,
             COALESCE(it.team_type, 'INET')                        AS team_type,
             COALESCE(SUM(wd.revenue_sar), 0)                      AS revenue,
             COALESCE(SUM(
                 wd.revenue_sar * (100 - COALESCE(NULLIF(wd.inet_margin_pct, 0), 100)) / 100
+                - {_rt_red} + {_rt_paid}
             ), 0)                                                  AS subcon_expense
         FROM `tabWork Done` wd
         JOIN `tabDaily Execution` de ON de.name = wd.execution
         LEFT JOIN `tabINET Team` it ON it.name = de.team
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE DATE(de.execution_date) BETWEEN %s AND %s
         GROUP BY DATE_FORMAT(de.execution_date, '%%Y-%%m'), COALESCE(it.team_type, 'INET')
         ORDER BY month
@@ -18430,15 +18508,17 @@ def get_revenue_tracking_report(from_date=None, to_date=None, **kwargs):
     # done as type "SUB") stands in for the same INET/SUB split, reusing the
     # identical subcon_expense formula.
     direct_rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             DATE_FORMAT(wd.creation, '%%Y-%%m') AS month,
             (CASE WHEN IFNULL(wd.subcontract_cost_sar, 0) > 0 THEN 'SUB' ELSE 'INET' END) AS team_type,
             COALESCE(SUM(wd.revenue_sar), 0) AS revenue,
             COALESCE(SUM(
                 wd.revenue_sar * (100 - COALESCE(NULLIF(wd.inet_margin_pct, 0), 100)) / 100
+                - {_rt_red} + {_rt_paid}
             ), 0) AS subcon_expense
         FROM `tabWork Done` wd
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
         WHERE IFNULL(wd.execution, '') = ''
           AND DATE(wd.creation) BETWEEN %s AND %s
         GROUP BY DATE_FORMAT(wd.creation, '%%Y-%%m'),
@@ -21311,8 +21391,8 @@ def _duid_overview_subcon(dispatch_names):
                sm.name AS subcontract, sm.subcontractor_name, sm.supplier,
                sm.contract_model, IFNULL(sm.sub_payout_pct, 0) AS payout_pct,
                {col("ms1_amount", "0")} AS ms1_amount, {col("ms2_amount", "0")} AS ms2_amount,
-               ROUND(IFNULL({col("ms1_amount", "0")}, 0) * IFNULL(sm.sub_payout_pct, 0) / 100, 2) AS ms1_payout,
-               ROUND(IFNULL({col("ms2_amount", "0")}, 0) * IFNULL(sm.sub_payout_pct, 0) / 100, 2) AS ms2_payout,
+               ROUND({net_payout_sql(f'IFNULL({col("ms1_amount", "0")}, 0)', "IFNULL(sm.sub_payout_pct, 0)", 1, share_sql="1")}, 2) AS ms1_payout,
+               ROUND({net_payout_sql(f'IFNULL({col("ms2_amount", "0")}, 0)', "IFNULL(sm.sub_payout_pct, 0)", 2, share_sql="1")}, 2) AS ms2_payout,
                {col("sub_po_status_ms1")} AS sub_po_status_ms1,
                {col("sub_po_status_ms2")} AS sub_po_status_ms2
         FROM `tabPO Dispatch` pd
@@ -21358,10 +21438,15 @@ def _duid_overview_subcon(dispatch_names):
                 leg["payout_pct"] = pct
                 leg["alloc_qty"] = flt(a.get("qty"))
                 leg["alloc_count"] = len(mine)
+                from inet_app.api.payout_deduction import leg_deductions
                 for n in (1, 2):
                     ms_amt = round(flt(r.get(f"ms{n}_amount")) * share, 2)
                     leg[f"ms{n}_amount"] = ms_amt
-                    leg[f"ms{n}_payout"] = round(ms_amt * pct / 100, 2)
+                    # Net of this leg's payout deductions, the same
+                    # arithmetic as net_payout_sql.
+                    _d = leg_deductions(r["po_dispatch"], a["subcontractor"], n)
+                    leg[f"ms{n}_payout"] = round(max(
+                        0.0, (ms_amt - _d["line"]) * pct / 100 - _d["payout"]), 2)
                     leg[f"sub_po_status_ms{n}"] = a.get(f"sub_po_status_ms{n}")
                 fanned.append(leg)
         rows = fanned

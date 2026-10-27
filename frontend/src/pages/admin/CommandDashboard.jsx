@@ -304,7 +304,9 @@ export default function CommandDashboard() {
             hint="How far the company is short of its target for the period."
             color={(company.company_gap ?? 0) > 0 ? "text-red" : "text-green"} />
           <Stat label="Cost (as of today)"     value={sar(company.total_cost_today)}
-            hint={`Field-team salary for the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far, plus what is owed to subcontractors on the work invoiced in it. Click to see the teams.`}
+            hint={`Field-team salary for the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far, plus what is owed to subcontractors on the work invoiced in it`
+              + (company.deduction_paid_out ? `, plus ${sar(company.deduction_paid_out)} paid to third parties through payout deductions` : "")
+              + ". Click to see the teams."}
             onClick={() => goTeams({})} />
           <Stat label="Profit / Loss"      value={sar(company.profit_loss)}
             hint="What is left after the costs beside it — the company's margin for the period."

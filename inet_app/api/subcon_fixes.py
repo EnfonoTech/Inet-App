@@ -163,11 +163,14 @@ def _fix_order(po_name, pct, dry_run, skip_posted_check=False, only_poids=None):
     # stamp margin_type="Amount" with the 5% difference onto every row - the
     # rate-ballooning pattern _po_item_pricing already guards against at
     # creation time.
+    # On a line with a payout deduction the list rate is the agreed rate and
+    # the deduction stays on as the discount, as _po_item_pricing creates it.
     for pair in targets:
+        _list = _target_list_rate(pair[0], pct, doc)
         frappe.db.set_value("Purchase Order Item", pair[0].name, {
-            "price_list_rate": pair[1],
+            "price_list_rate": _list,
             "discount_percentage": 0,
-            "discount_amount": 0,
+            "discount_amount": flt(_list - pair[1], pair[0].precision("rate") or 2),
             "margin_type": "",
             "margin_rate_or_amount": 0,
             "payout_pct": pct,
@@ -194,17 +197,44 @@ def _fix_order(po_name, pct, dry_run, skip_posted_check=False, only_poids=None):
     return {"state": "ok", "why": "RE-RATED: " + why}
 
 
-def _target_rate(item, pct, doc):
-    """The supplier's unit rate at ``pct`` of the customer's rate.
-
-    Read from the PO Dispatch line rather than scaled off the existing rate,
-    so a row that was wrong for some other reason comes out right too.
-    """
+def _target_list_rate(item, pct, doc):
+    """The supplier's agreed unit rate at ``pct`` of the customer's rate,
+    before any payout deduction."""
     pd_rate = frappe.db.get_value("PO Dispatch", item.poid, "rate")
     if pd_rate is None:
         return None
     precision = item.precision("rate") or 2
     return flt(flt(pd_rate) * pct / 100.0, precision)
+
+
+def _target_rate(item, pct, doc):
+    """The supplier's unit rate at ``pct`` of the customer's rate, less the
+    line's payout deduction per unit (zero on almost every line).
+
+    Read from the PO Dispatch line rather than scaled off the existing rate,
+    so a row that was wrong for some other reason comes out right too — and
+    so a re-rate keeps a deduction instead of quietly paying it back.
+    """
+    gross = _target_list_rate(item, pct, doc)
+    if gross is None:
+        return None
+    from inet_app.api.payout_deduction import deduction_per_unit
+    sub = (item.get("subcontract") or "").strip()
+    ms = (item.get("milestone") or "").strip().upper()
+    if not sub or ms not in ("MS1", "MS2"):
+        return gross
+    line = frappe.db.get_value("PO Dispatch", item.poid, ["qty", "ms1_pct", "ms2_pct"],
+                               as_dict=True) or {}
+    alloc_qty = frappe.db.get_value(
+        "PO Subcontract Allocation",
+        {"parent": item.poid, "parenttype": "PO Dispatch",
+         "parentfield": "subcontract_allocations", "subcontractor": sub}, "qty")
+    per_unit = deduction_per_unit(item.poid, sub, ms, pct,
+                                  flt(alloc_qty) or flt(line.get("qty")),
+                                  line.get(f"ms{ms[-1]}_pct"))
+    if not per_unit:
+        return gross
+    return max(0.0, flt(gross - per_unit, item.precision("rate") or 2))
 
 
 def _posted_blocker(items):
@@ -220,7 +250,8 @@ def _posted_blocker(items):
     submitted = frappe.db.sql(
         f"""SELECT DISTINCT pi.name FROM `tabPurchase Invoice Item` pii
              JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent AND pi.docstatus = 1
-            WHERE pii.poid IN ({ph})""", tuple(poids))
+            WHERE pii.poid IN ({ph}) AND IFNULL(pii.payout_deduction, '') = ''""",
+        tuple(poids))
     if submitted:
         return ("a SUBMITTED Purchase Invoice exists (%s) - Accounts must cancel it "
                 "first" % submitted[0][0])
@@ -237,7 +268,8 @@ def _posted_blocker(items):
             WHERE per.reference_doctype = 'Purchase Invoice'
               AND per.reference_name IN (
                   SELECT DISTINCT pii.parent FROM `tabPurchase Invoice Item` pii
-                   WHERE pii.poid IN ({ph}))""", tuple(poids))
+                   WHERE pii.poid IN ({ph}) AND IFNULL(pii.payout_deduction, '') = '')""",
+        tuple(poids))
     if payments:
         return "a payment exists (%s)" % payments[0][0]
     return None
@@ -276,11 +308,13 @@ def _fix_draft_invoice(pi_name, pct, dry_run):
 
     for pair in pending:
         pair[0].rate = pair[1]
-        # Same reason as on the order: equal, never blank, so no margin or
-        # discount is back-derived from the customer's rate.
-        pair[0].price_list_rate = pair[1]
+        # Same reason as on the order: never blank, so no margin or discount
+        # is back-derived from the customer's rate. Equal to the rate unless
+        # the line carries a payout deduction, which stays as the discount.
+        _list = _target_list_rate(pair[0], pct, pi)
+        pair[0].price_list_rate = _list
         pair[0].discount_percentage = 0
-        pair[0].discount_amount = 0
+        pair[0].discount_amount = flt(_list - pair[1], pair[0].precision("rate") or 2)
         pair[0].margin_type = ""
         pair[0].margin_rate_or_amount = 0
     pi.save(ignore_permissions=True)
@@ -616,7 +650,7 @@ def report_subcon_fix_readiness():
         for r in rows(
             """SELECT pi.name, pi.docstatus FROM `tabPurchase Invoice Item` pii
                  JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
-                WHERE pii.poid = %s""", (name,)):
+                WHERE pii.poid = %s AND IFNULL(pii.payout_deduction, '') = ''""", (name,)):
             print("    bill        %-12s docstatus=%s" % (r.name, r.docstatus))
 
     print()
@@ -1265,6 +1299,10 @@ def restamp_subcontract_dimension(dry_run=1, poids=None):
             continue
         where = ["IFNULL(c.subcontract,'') <> IFNULL(pd.contract,'')",
                  "IFNULL(pd.contract,'') <> ''", "p.docstatus < 2"]
+        # A payout deduction's third-party bill carries the poid but belongs
+        # to no subcontractor — never stamp one onto it.
+        if frappe.db.has_column(dt, "payout_deduction"):
+            where.append("IFNULL(c.payout_deduction,'') = ''")
         params = {}
         if poids:
             where.append("pd.poid IN %(poids)s")

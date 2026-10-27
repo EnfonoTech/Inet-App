@@ -24,6 +24,14 @@ fixtures = [
 		"filters": [["name", "in", ["Huawei Outbound Analytics", "Bill Wise Material Status", "DUID Wise Material Status"]]],
 	},
 	{
+		# The one payout deduction every site needs. Its expense Item is NOT a
+		# fixture: Frappe deletes and re-inserts fixture records on every
+		# migrate, which an ERPNext Item behind real invoices must not go
+		# through — setup._ensure_report_preparation_item creates it instead.
+		"dt": "Deduction Type",
+		"filters": [["name", "in", ["Report Preparation"]]],
+	},
+	{
 		"dt": "Notification",
 		"filters": [["name", "like", "INET Certificate%"]],
 	},
@@ -225,7 +233,11 @@ doc_events = {
 		# A draft invoice is deleted, not cancelled, so on_cancel never fires —
 		# without this the line stays at "Invoice Received" for a bill that no
 		# longer exists.
-		"on_trash": "inet_app.api.subcon_po.on_purchase_invoice_trash",
+		"on_trash": [
+			"inet_app.api.subcon_po.on_purchase_invoice_trash",
+			# A deleted draft Paid Out bill unlinks from its payout deduction.
+			"inet_app.api.payout_deduction.on_purchase_invoice_trash",
+		],
 	},
 	# One Payment Entry can settle either side, so both handlers run: the pic
 	# one walks Sales Invoice references (customer receipts), the subcon_po one

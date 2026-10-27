@@ -1,156 +1,284 @@
-# Payout deduction — parked, waiting on the client
+# Payout deduction
 
-**Status:** not built. Q1 answered 22 Oct 2026, Q2 and Q3 still open, and the
-answer raised a new one (bottom of this file). Raised 20 Oct 2026 from a
-report on two POIDs; the findings below are measured on `inet_backup`, a
-production copy.
+**Status:** built 27 Oct 2026, all five phases. Tested on `inet` (feature
+site) and against production figures on `inet_backup`. Client questions
+settled 26 Oct 2026.
 
-## What the client asked for
+## The need
 
-On some survey pay items, SAR 100 is taken off the line before the
-subcontractor's payout is worked out:
-
-```
-line 880 → payout (880 − 100) × 80% = 624      what they pay
-PMS       → payout  880        × 80% = 704      what PMS shows
-```
-
-Reported on `1011HG3692387-264-1-1` and `-265-1-1` — both *Site survey for TX
-Equipment, per site*, 880 at 80% under Saleh Abdul Aziz Al Dosari. The 160
-difference they saw (39,644 against 39,484) is exactly 2 × 80.
-
-They had been correcting it by editing the payout amount on the purchase
-order by hand.
-
-## Why editing the PO by hand does not hold
-
-1. **Any later rate correction wipes it.** `_fix_order` (`subcon_fixes.py`)
-   computes `rate = PO Dispatch.rate × pct / 100`, so a hand-set 624 becomes
-   704 again. That code ran on the Imdad and Jereesh orders on 19–20 Oct; it
-   would have reverted these edits without saying so.
-2. **It cannot be applied before a PO exists.** The To Order figure comes
-   from `_expected_payout_sql` = `line × pct`. There is nothing to edit yet.
-3. **It makes the document contradict itself** — amount 624 carrying
-   `payout_pct` 80 on an 880 line. Every report that recomputes disagrees
-   with the order.
-
-`_payout_shown_sql` shows the stamped PO amount when it is non-zero and falls
-back to `line × pct`, so a hand-set amount only ever holds on an already
-ordered milestone, and only until something re-rates it.
-
-## Scope — it is not two lines
-
-Re-measured 23 Oct 2026 through the Subcon page's own master resolution
-(`_SUBCON_FROM_JOIN`, allocation → contract → last live plan's team →
-backend team), over all 767 survey lines:
-
-| resolved contract | lines | line value |
-|---|---|---|
-| **SUB — a subcontractor is paid** | **78** | **SAR 65,658** |
-| INET — own crew, no payout, deduction irrelevant | 614 | SAR 475,454 |
-| not assigned yet — could become either | 76 | SAR 57,678 |
-| **total** | **767** | **SAR 597,990** |
-
-So **78 lines are affected today**, with SAR 7,800 riding on the answer,
-and up to 154 if every unassigned line goes to a subcontractor. There is
-**no deduction field in PMS**.
-
-An earlier pass in this file said 133 lines / SAR 111,134. That figure
-could not be reproduced by any variant of the count and is withdrawn —
-use the table above.
-
-Five distinct survey item codes are involved, so the rule has to key on item
-code, not on the word "survey" in a description:
+Some lines pay out less than the line value because part of the work is done
+by someone other than the subcontractor. The first case is survey report
+preparation:
 
 ```
-8812363035  Site survey for TX Equipment, per site
-8812363036  Site survey for TX expansion, per site
-8812420869  Site survey for TX Equipment (11-20 nodes)
-8812363006  Site Survey for indoor/outdoor MDU Site
-8812363005  Site Survey for access product indoor/outdoor
-8812397292  Site Survey Only
+line 880, payout 80%
+PMS before             880 × 80%            = 704
+what the client pays   (880 − 100) × 80%    = 624
 ```
 
-## What the client answered — and what it costs
+The client confirmed two cases (26 Oct 2026):
 
-> *"Its allocated for report preparation."*  — 22 Oct 2026
+1. **Report preparation is outsourced.** SAR 100 is paid to another party.
+2. **INET prepares the report itself.** The SAR 100 does not go out.
 
-So **not INET revenue.** That rules out the cheap branch, where the 100
-simply stays with INET and margin rises. It is money earmarked against a
-cost, and a cost has to land somewhere.
+In both cases the subcontractor is paid on 780. The only difference is whether
+the 100 leaves the company:
 
-This matters more than it looks, because the naive implementation moves
-the margin the **wrong way**:
+| | subcontractor | the 100 | INET margin |
+|---|---|---|---|
+| outsourced — **Paid Out** | 624 | paid to the preparer | 880 − 624 − 100 = **156** |
+| INET prepares — **Retained** | 624 | stays with INET | 880 − 624 = **256** |
+
+Until now they corrected this by editing the payout on the PO by hand. That
+does not hold: a later rate correction (`_fix_order`) puts it back, it cannot
+be done before a PO exists, and the PO then contradicts its own payout %.
+
+## Principles
+
+- **General, not survey-specific.** "Report Preparation" is the first
+  *deduction type*. A penalty, a material recovery, a tool charge — each is a
+  new row in a master, not new code. Nothing keys off item codes or the word
+  "survey".
+- **Any milestone.** A deduction follows the line's MS1/MS2 split unless it is
+  pinned to one milestone.
+- **Any quantity.** A deduction is spread over the line's quantity the same
+  way the line amount is, so a PO for part of the quantity takes its part.
+- **Per line or per report — both.** Entered per line; a report covering
+  several lines is entered once across the selected lines and split.
+- **Small.** It is a rare case. PIC enters it. No approval, no PO, no backfill.
+- **Every report reads one definition.**
+
+## Why a child table on the line, not its own document
+
+Every report already starts from the line. With the deductions on the line,
+every report reads them through the same helper, and there is no document
+status to filter. A separate document (draft / cancelled / approved) would
+need each report to filter its status correctly — one more place for the
+figures to drift apart, for a case that does not need a lifecycle.
+
+## The rule that keeps every report consistent
+
+**A deduction can be added, edited or removed only while the milestones it
+falls on are unordered** (`sub_po_status_ms{n}` blank or Ready to Order).
+
+A supplier PO raised afterwards carries the deduction, so the PO, its stamped
+amount, the payout column and the margin all say the same thing. Once a
+milestone is ordered, its deductions are locked, and the form and popup say
+why. The two POIDs from the original report (`1011HG3692387-264-1-1`, `-265`)
+are already Closed, so they are locked — they were settled by hand.
+
+## Data
+
+### `Deduction Type` — master
+
+| field | |
+|---|---|
+| `deduction_type` | name, e.g. *Report Preparation* |
+| `deduct_from` | **Line Value** — comes off the line value, then the % applies: (880 − 100) × 80%. **Payout** — comes off the payout itself: a SAR 500 penalty is 500. |
+| `default_amount` | optional; pre-fills the entry form |
+| `default_settlement` | optional; pre-fills the entry form |
+| `expense_item` | Link, Item, optional — used on the Paid Out purchase invoice. If it is blank, Raise Invoice says so instead of failing. |
+| `enabled` | |
+
+Only `deduction_type` and `deduct_from` are mandatory. On the **Masters** page
+(it opens Desk to create and edit, like every other master there).
+
+**Shipped, so every site has it after `migrate`** — the fixture is meant for
+the first production update only and is to be removed from `hooks.py` after
+it (decided 27 Oct 2026), so later edits on the site stick:
+
+| record | how |
+|---|---|
+| **Deduction Type** `Report Preparation` — Line Value, 100, Retained, expense item → `Report Preparation` | fixture, `fixtures/deduction_type.json` (hooks.py, filtered by name) |
+| **Item** `Report Preparation` — non-stock, purchase item, `Services`, `Nos` | `setup._ensure_report_preparation_item`, run from `after_migrate`: created when missing, never touched after |
+
+The Item is deliberately not a fixture. Frappe loads a fixture by deleting
+the record and inserting it again on every `migrate`; an ERPNext Item behind
+real purchase invoices must not go through that, and its accounts and
+defaults set on the site would be lost each time.
+
+The fixture side of that applies to the Deduction Type: **an edit to Report
+Preparation on a site (say 100 → 120) is reverted at the next migrate.**
+Change it in `fixtures/deduction_type.json` instead. Other deduction types
+created on a site are not fixtures and are never touched.
+
+### `PO Payout Deduction` — child table `payout_deductions` on PO Dispatch
+
+| field | |
+|---|---|
+| `deduction_type` | Link, Deduction Type |
+| `deduct_from` | copied from the type when the row is written, so editing the type later does not rewrite history |
+| `amount` | Currency |
+| `settlement` | **Retained** / **Paid Out** — the client's two cases |
+| `payee` | Link, Supplier — required when Paid Out |
+| `subcontractor` | Link, Subcontract Master — optional. Blank = shared across the line's subcontractors by allocation share |
+| `milestone` | blank (spread by the MS1/MS2 amounts) / MS1 / MS2 |
+| `purchase_invoice` | Link, Purchase Invoice — set by Raise Invoice |
+| `remark` | Small Text |
+| `added_by`, `added_on` | stored, because Frappe stamps child rows with the parent's `creation` |
+
+Rows are written through `api/payout_deduction.py`, never by saving the whole
+PO Dispatch, so the line's own save hooks do not run. Each write bumps the
+line's `modified`, because the dashboards cache on an etag built from
+`MAX(modified)` (`_dashboard_etag`) and a child row alone would leave them
+serving the old figures.
+
+Limits enforced on entry: the amount must be above zero and no more than the
+line value; a **Payout**-basis amount no more than the line's payout. The
+second is what lets reports that slice a line by invoiced amount subtract
+deductions linearly and still agree with the Subcon PO page to the cent.
+
+## One definition
+
+`subcontractor_sync.py`, beside `ALLOC_SHARE_SQL`:
+
+| helper | used for |
+|---|---|
+| `deduction_sql(n, kind, …)` | milestone *n*'s deduction of a kind — `line`, `payout`, `paid`, `all` — for one supplier leg |
+| `net_payout_sql(...)` | `(amount − line-value deductions) × % − payout deductions`, never below zero |
+| `payout_reduction_sql(pct, n, fraction, …)` | how much less the subcontractor is paid, over a slice of a line (an invoiced amount, a Work Done's revenue) |
+| `paid_out_sql(n, fraction, …)` | money Paid Out to third parties over the same slice |
+
+A correlated lookup on `parent` (indexed on every child table), so it drops
+into any existing FROM. With no deduction rows each is an empty index probe
+and every figure is exactly what it was. Measured on `inet_backup` with no
+rows: Subcon PO *All* 1.45 s → 1.64 s, payout summary 2.08 s → 2.34 s.
 
 ```
-today in PMS     880 − (880 × 80%)             = 176   margin shown
-deduction only   880 − ((880 − 100) × 80%)     = 256   margin APPEARS to rise
-with the cost    880 − 624 − 100              = 156   margin actually falls
+payout = (allocated amount − line-value deductions) × payout % − payout deductions
+margin = amount × margin % + (gross payout − payout) − Paid Out deductions
 ```
 
-Deducting the 100 from the payout without booking it as a cost would
-overstate INET's margin by **100 per line** — ~SAR 13,300 across the 133
-lines — and the figure would look *better* than today's, which is the
-opposite of the truth. A deduction field alone is therefore not a correct
-build; the allocation has to be recorded as well.
+### Readers — updated
 
-## The shape to build
+| where | how |
+|---|---|
+| `_expected_payout_sql`, `_inet_amount_sql` (`subcon_po.py`) | net payout; margin gains the reduction and loses Paid Out. `_payout_shown_sql`, `_vat_sql`, `subcon_payout_events_sql`, `subcon_payout_summary` and the PIC Overview payout table follow from these |
+| Subcon PO list | new `gross_payout_ms{n}`, `deduction_amount`, `payout_deductions`; Deduction column filter |
+| `_po_item_pricing` | PO keeps the agreed rate as `price_list_rate`; the per-unit deduction is the item's discount; description gains "Less: <type>" |
+| `_target_rate` / `_fix_order` / `_fix_draft_invoice` (`subcon_fixes.py`) | a re-rate keeps the discount instead of paying it back |
+| `pic_invoicing_summary`, PIC dashboard INET/Subcon split (`pic.py`) — also feeds the Commercial dashboard's split | scaled by the invoiced part of each milestone. These divide **invoiced value** between kept and outgoing, so Paid Out moves to the outgoing side and the two still sum to what was invoiced |
+| Commercial dashboard per-subcontractor table | payout and margin, as on the Subcon PO page |
+| Command dashboard Sub-Con expense / margin | via `subcon_payout_events_sql` |
+| IM Performance payout, Top Teams subcon payout, Revenue Tracking sub-con expense | scaled by Work Done revenue ÷ line value; Paid Out counts as money out for the work |
+| Command dashboard **Cost / Profit** | new `deduction_paid_out` in `total_cost_today`: Paid Out on subcontracted work (via `subcon_payout_events_sql.paid_out`, dated with its payout) + on INET-crew work (dated by the Work Done, like INET revenue). Without it Profit/Loss was overstated by every Paid Out amount. Financial dashboard shows it as its own cost slice |
+| Search / overview → Subcon | net payout per supplier leg |
 
-A `payout_deduction` currency field on **PO Dispatch**, **typed in per
-line** — *not* defaulted from the Item. Decided 23 Oct 2026: a figure
-somebody enters needs no list of which item codes qualify, no rule for
-whether it scales with quantity, and no migration when the client adds a
-seventh survey item. The amount entered *is* the amount deducted.
+### Readers — deliberately left
 
-One change of base everywhere the payout is derived:
+- `_write_allocations` (`subcon_reconcile.py`): the allocation `amount` is the
+  leg's share of the line value, not a payout. Deductions apply downstream.
+- `pic.py` line-level payout % display: a percentage, not money.
+- Command dashboard `total_achieved`: INET's retained REVENUE, not profit —
+  a third party's cost on an INET-crew line belongs in cost, where it is.
 
-```
-payout = (line_amount − payout_deduction) × pct
-```
+## The third-party invoice carries the POID — but is marked
 
-Survives re-rates, works before a PO exists, and keeps the order consistent
-with its own percentage.
+The Paid Out bill's items carry the line's **`poid`**. It is the POID
+accounting dimension, so the expense reaches the General Ledger against the
+line (verified: each item's Cost of Goods Sold entry carries its POID).
 
-**The sweep that must go with it** — a feature is not finished when the
-feature works (see CLAUDE.md). Each of these derives the payout and will keep
-meaning the old thing until it is edited:
+Every subcontractor flow reads Purchase Invoice Items by `poid`, though, and
+would take the third party's bill for the subcontractor's. So the items are
+also marked with **`payout_deduction`** (the row), and every such reader
+excludes the mark — `not_deduction_bill_sql` in `subcon_po.py`:
 
-- `_expected_payout_sql`, `_payout_shown_sql`, `_vat_sql` — `subcon_po.py`
-- the PO creation rate — `_po_item_pricing`
-- `_target_rate` — `subcon_fixes.py`, or a correction re-introduces the error
-- the allocation amount — `_write_allocations` in `subcon_reconcile.py`
-- `subcon_payout_summary` and the PIC Overview payout table
-- Commercial / PIC / Command dashboards, wherever INET-vs-Subcon is split
+| reader | without the guard |
+|---|---|
+| Subcon PO bill column + its filter, popup Purchase Invoices | the third party's bill listed as the subcontractor's |
+| `_posted_blocker` (`subcon_fixes.py`) | re-rating the subcontractor's PO refused because of it |
+| `restamp_subcontract_dimension` | the subcontractor stamped onto the third party's line |
+| `_purchase_doc_lines`, payment-entry handling | (already safe — they need MS1/MS2, which these items never carry; checked anyway) |
 
-Then a backfill for the 133 existing lines.
+Verified on `inet`: submitting the bill left the subcontractor's status at Not
+Ordered. Readers keyed on `purchase_order` never see it — the bill has none.
 
-## Questions out with the client
+The first build used a separate `deduction_poid` field instead; it existed
+only on the two test sites and `setup._retire_deduction_poid_field` moved its
+values into `poid` and dropped it.
 
-1. ~~**Is the SAR 100 INET's revenue, or allocated for report
-   preparation?**~~ **Answered 22 Oct 2026: report preparation.** Not
-   revenue. See above.
-2. **Who actually receives it?** The answer settles what the 100 is *for*,
-   not who is paid, and the two live readings build differently:
-   - *INET prepares the report* → the 100 stays with INET but against an
-     internal cost, so margin must not show the full 256
-   - *another party prepares the report* → it leaves the company and needs
-     its own payout line, a second supplier on the same POID
-   **This is now the blocker.** Book the two the same way and the profit
-   figure is wrong by 100 on every one of the 133 lines.
+A deleted draft unlinks from its row (`on_trash` hook); a cancelled one can
+be raised again.
 
-   A third reading — *withheld from the subcontractor until they hand the
-   report in*, i.e. a retention rather than a deduction — was **ruled out
-   by the user from knowledge of the business, not by the client**. Worth
-   re-testing if the client's answer to (2) reads oddly, since it is an
-   assumption and not a confirmation.
-3. **Per line, or per report?** If one survey report covers several sites,
-   taking 100 off every line over-deducts. Still open.
-4. ~~**Off the line total, or per unit?**~~ **Dropped** — the field is
-   typed in per line, so the person entering it decides the amount. (It
-   was moot anyway: of 767 survey lines, not one has qty > 1.)
-5. ~~**Which pay items?**~~ **Dropped** for the same reason: nothing keys
-   off the item code, so the six-code list above is background, not
-   configuration.
+## UI
 
-**Recount settled 23 Oct 2026** — 78 SUB lines, not 133. See the scope
-table above; the old figure is withdrawn.
+### Subcon PO toolbar: **Add Deduction (N)**
+
+On every tab, enabled when lines are selected. The form:
+
+- **Type** pre-fills amount and settlement, so the common case is select
+  lines → Add Deduction → Add.
+- **Settlement** Retained / Paid Out, each with a one-line explanation;
+  Paid Out asks for the supplier (search).
+- **Amount** — the same on each line, or **split a total** equally across
+  the lines that can take it (a 300 report fee over three sites, one already
+  ordered, is 150 on each of the other two). Each share is editable in the
+  preview.
+- **More options**: milestone (Auto / MS1 / MS2), remark.
+- **Preview**, live: per line, deduction and payout before → after, margin
+  after; overall deduction, payout change, margin change. Computed by writing
+  the rows inside a savepoint, reading them through the report helpers and
+  rolling back — so it cannot disagree with any report. Lines that cannot
+  take it are listed with the reason and skipped.
+
+### View popup: **Payout Deductions** section
+
+Line payout before → after and margin, then one row per deduction with its
+type, amount, settlement, payee, basis, milestone, invoice and who added it.
+Buttons: **Raise Invoice** (Paid Out, draft to the payee), **Edit**,
+**Remove** (also deletes a draft invoice), confirmed in the app's own dialog
+(`components/ConfirmDialog.jsx` — `useConfirm()`, one provider in `App.jsx`,
+for any page that needs one). Locked rows say why.
+
+### Table
+
+- **Deductions** column, shown by default: the amount plus a state pill —
+  **Invoice Due** (a Paid Out deduction has no live invoice), **Invoiced**,
+  or **Retained** (nothing to invoice). Its Excel filter offers those states,
+  so "which lines still owe an invoice" is one filter. Footer total.
+- A small amber `−80.00` beside a reduced payout; hover names the type and
+  the figure before deductions.
+
+### Raising the Paid Out invoices from the list
+
+Toolbar **Raise Deduction Invoice (N)** — N is the selected lines that say
+Invoice Due. It shows each payee with its line count and amount, then raises
+**one draft Purchase Invoice per payee, one item per deduction**, so a report
+preparer paid for ten sites gets one bill with ten lines. A cancelled invoice
+counts as none, so the line becomes Invoice Due again. The popup's Raise
+Invoice button does the same for a single row. Both read one expression
+(`_INVOICE_DUE_SQL`), as do the column and its filter.
+
+## Phases
+
+1. ✅ Master, child table, helper, Subcon PO entry UI.
+2. ✅ Readers sweep — tables above.
+3. ✅ Supplier PO discount, and the re-rate tools keeping it.
+4. ✅ Raise Invoice, with the `poid`-free invoice item.
+5. ✅ **INET-crew lines.** Entry: a **Deductions** chip in the PIC Tracker's
+   line form (these lines never appear on Subcon PO). Only **Paid Out** off
+   the **Line Value** applies — there is no payout to retain from; the form
+   offers nothing else and the backend refuses it. The cost reaches the
+   Command dashboard, IM Performance, Top Teams, Revenue Tracking and the PIC
+   split.
+
+## Verification (inet_backup, 27 Oct 2026)
+
+Lines `SYS-2026-14098` (70/30, 80%) and `SYS-2026-14133` (70/30, 90%):
+
+1. Retained 100 spread → payout 880.80 → 800.80, margin 220.20 → 300.20.
+2. Paid Out 50 pinned to MS2 → MS2 payout (460.80 − 50) × 90% = 369.72;
+   MS2 margin +45 − 50.
+3. Payout-basis 20 on MS1 → MS1 payout 967.68 → 947.68.
+4. Subcon PO totals fell by exactly 76 (MS1) and 69 (MS2).
+5. PO for MS1 (2.1 units): agreed rate 293.60, discount 26.67, net 266.93,
+   "Less: Report Preparation"; stamped 560.55 against an expected 560.56 —
+   2-decimal rates cannot hit a 2.1-unit figure exactly.
+6. Paid Out invoice: no `poid`, no milestone; `_purchase_doc_lines` returns
+   nothing for it.
+7. Every report above moved by the hand-computed amount; the INET/Subcon
+   split's grand total did not move.
+8. Closed lines refused with the reason; a split total re-divides across the
+   eligible lines.
+9. All eight endpoints whitelisted; exercised over HTTP with a real session.
+10. `schema_check` — no new findings.

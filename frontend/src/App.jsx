@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { TableRowLimitProvider } from "./context/TableRowLimitContext";
+import { ConfirmProvider } from "./components/ConfirmDialog";
 import { prefetchTablePreferences } from "./hooks/useTablePreferences";
 import { syncServerTime } from "./utils/serverTime";
 import { pmApi } from "./services/api";
@@ -250,6 +251,7 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
+     <ConfirmProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
@@ -261,6 +263,7 @@ export default function App() {
           }
         />
       </Routes>
+     </ConfirmProvider>
     </AuthProvider>
   );
 }

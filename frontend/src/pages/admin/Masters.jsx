@@ -105,6 +105,15 @@ const MASTER_DOCTYPES = [
                   "sub_payout_pct", "monthly_target", "status"],
   },
   {
+    label: "Deduction Type",
+    doctype: "Deduction Type",
+    description: "Amounts taken off a subcontractor's payout",
+    icon: "➖",
+    color: "#b45309",
+    fields: ["name", "deduct_from", "default_amount", "default_settlement", "expense_item", "enabled"],
+    displayCols: ["deduct_from", "default_amount", "default_settlement", "expense_item", "enabled"],
+  },
+  {
     label: "Customer Item",
     doctype: "Customer Item Master",
     description: "Customer-specific billing rates",

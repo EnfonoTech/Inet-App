@@ -1,0 +1,14 @@
+[
+ {
+  "deduct_from": "Line Value",
+  "deduction_type": "Report Preparation",
+  "default_amount": 100.0,
+  "default_settlement": "Retained",
+  "docstatus": 0,
+  "doctype": "Deduction Type",
+  "enabled": 1,
+  "expense_item": "Report Preparation",
+  "modified": "2026-10-27 09:52:58.589161",
+  "name": "Report Preparation"
+ }
+]

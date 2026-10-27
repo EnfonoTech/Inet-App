@@ -1,0 +1,126 @@
+{
+ "actions": [],
+ "creation": "2026-10-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "deduction_type",
+  "deduct_from",
+  "amount",
+  "settlement",
+  "payee",
+  "col_scope",
+  "subcontractor",
+  "milestone",
+  "purchase_invoice",
+  "col_meta",
+  "remark",
+  "added_by",
+  "added_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "deduction_type",
+   "fieldtype": "Link",
+   "options": "Deduction Type",
+   "label": "Deduction Type",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "deduct_from",
+   "fieldtype": "Select",
+   "options": "Line Value\nPayout",
+   "label": "Deduct From",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "label": "Amount",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "settlement",
+   "fieldtype": "Select",
+   "options": "Retained\nPaid Out",
+   "label": "Settlement",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "payee",
+   "fieldtype": "Link",
+   "options": "Supplier",
+   "label": "Payee",
+   "in_list_view": 1,
+   "columns": 2,
+   "depends_on": "eval:doc.settlement=='Paid Out'"
+  },
+  {
+   "fieldname": "col_scope",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "subcontractor",
+   "fieldtype": "Link",
+   "options": "Subcontract Master",
+   "label": "Subcontractor"
+  },
+  {
+   "fieldname": "milestone",
+   "fieldtype": "Select",
+   "options": "\nMS1\nMS2",
+   "label": "Milestone"
+  },
+  {
+   "fieldname": "purchase_invoice",
+   "fieldtype": "Link",
+   "options": "Purchase Invoice",
+   "label": "Purchase Invoice",
+   "read_only": 1,
+   "no_copy": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "col_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  },
+  {
+   "fieldname": "added_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Added By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "added_on",
+   "fieldtype": "Datetime",
+   "label": "Added On",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inet App",
+ "name": "PO Payout Deduction",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

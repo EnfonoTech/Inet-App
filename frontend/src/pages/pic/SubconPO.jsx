@@ -16,6 +16,7 @@ import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import { PoStatusBadge, PicStatusBadge, PicMs2Badge, SubPoStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "./picShared";
 import { money, qty as fmtQty } from "../../utils/numberFormat";
+import { DeductionMark, DeductionSheet, DeductionsPanel, DeductionStateCell } from "./PayoutDeduction";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -124,6 +125,8 @@ function detailFields(row) {
     "vat_ms1", "vat_ms2",
     "can_order_ms1", "can_order_ms2", "ready_ms1", "ready_ms2",
     "supplier_missing",
+    // Shown by the Payout Deductions section instead.
+    "payout_deductions", "deduction_amount", "gross_payout_ms1", "gross_payout_ms2",
   ]);
   const out = {};
   Object.entries(row).forEach(([k, v]) => { if (!drop.has(k)) out[k] = v; });
@@ -199,7 +202,7 @@ function LineLegs({ legs }) {
   );
 }
 
-function DetailModal({ row, onClose }) {
+function DetailModal({ row, onClose, onChanged }) {
   const [docs, setDocs] = useState(null);
   const name = row?.po_dispatch;
   useEffect(() => {
@@ -270,6 +273,8 @@ function DetailModal({ row, onClose }) {
               accent={row.ms2_amount && row.vat_ms2 ? `+ ${money.format(row.vat_ms2)} VAT` : undefined} />
           </DetailHero>
         </div>
+
+        <DeductionsPanel poDispatch={row.po_dispatch} poid={row.poid} onChanged={onChanged} />
 
         {/* Documents, properly — replaces the raw "name|MS1|Submitted" CSV
             fields, and is the only place the supplier's own bill reference and
@@ -561,6 +566,16 @@ export default function SubconPO() {
   const [copyErr, setCopyErr] = useState(null);
   const [capability, setCapability] = useState(null);
   const [detailRow, setDetailRow] = useState(null);
+  const [deductLines, setDeductLines] = useState(null);   // Add Deduction sheet
+  // A deduction added from the View popup reloads the table; point the open
+  // popup at the fresh row so its payout tiles show the new figures too.
+  useEffect(() => {
+    if (!detailRow) return;
+    const fresh = rows.find((r) => r.po_dispatch === detailRow.po_dispatch
+      && r.subcontract === detailRow.subcontract);
+    if (fresh && fresh !== detailRow) setDetailRow(fresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
@@ -809,11 +824,26 @@ export default function SubconPO() {
       ms1_amount: sum("ms1_amount"), ms2_amount: sum("ms2_amount"),
       payout_ms1: payout(1), payout_ms2: payout(2),
       vat_ms1: sum("vat_ms1"), vat_ms2: sum("vat_ms2"),
+      deduction: sum("deduction_amount"),
     };
   }, [rows, displayedCount]);
 
   const selectedRows = useMemo(
     () => rows.filter((r) => selected.has(r.po_dispatch)), [rows, selected]);
+  // Selected lines with a Paid Out deduction still waiting for its invoice.
+  const invoiceDue = useMemo(
+    () => selectedRows.filter((r) => r.deduction_state === "Invoice Due"), [selectedRows]);
+  const invoiceDueByPayee = useMemo(() => {
+    const out = {};
+    invoiceDue.forEach((r) => (r.payout_deductions || [])
+      .filter((d) => d.settlement === "Paid Out" && !d.purchase_invoice)
+      .forEach((d) => {
+        const k = d.payee || "(no payee)";
+        out[k] = out[k] || { lines: 0, amount: 0 };
+        out[k].lines += 1; out[k].amount += Number(d.amount) || 0;
+      }));
+    return Object.entries(out);
+  }, [invoiceDue]);
 
   // Create PO acts on exactly what PIC marked Ready to Order — there is no
   // milestone picker any more. Marking Ready (which does take a milestone) is
@@ -1062,6 +1092,14 @@ export default function SubconPO() {
     done(`${res.updated} line(s) reopened.`);
   }, "Could not reopen");
 
+  const raiseDeductionInvoices = () => run(async () => {
+    const res = await pmApi.raiseDeductionInvoices(invoiceDue.map((r) => r.po_dispatch));
+    setCreateResult({ dedinv: res });
+    done(`${res.created.length} draft deduction invoice(s) raised — `
+      + res.created.map((c) => `${c.purchase_invoice} (${c.payee}, SAR ${money.format(c.amount)})`).join(", ")
+      + (res.skipped.length ? `. Skipped: ${res.skipped.join("; ")}` : ""), 10000);
+  }, "Could not raise the invoices", true);
+
   const updateStatus = () => run(async () => {
     const res = await pmApi.bulkUpdateSubconPoStatus(
       Array.from(selected), stStatus, stMs, actDate, actRemark);
@@ -1118,7 +1156,7 @@ export default function SubconPO() {
     }
   }
 
-  const COLS = 34;
+  const COLS = 35;
 
   return (
     <div>
@@ -1238,6 +1276,23 @@ export default function SubconPO() {
           <button type="button" className="btn-secondary" disabled={selected.size === 0} onClick={copyPoids}>
             Copy POIDs{selected.size > 0 ? ` (${selected.size})` : ""}
           </button>
+          {/* On every tab: whether a line can still take a deduction depends
+              on each milestone's order state, which the sheet's preview
+              explains line by line. */}
+          <button type="button" className="btn-secondary" disabled={selected.size === 0}
+            title={selected.size === 0 ? "Select lines" : "Take an amount off what these lines pay their subcontractor"}
+            onClick={() => setDeductLines(selectedRows.map((r) => ({ po_dispatch: r.po_dispatch, poid: r.poid })))}>
+            Add Deduction{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
+          {/* Only when the selection holds a line that still owes one — the
+              case is rare, so a permanently disabled button would be noise. */}
+          {invoiceDue.length > 0 && (
+            <button type="button" className="btn-secondary"
+              title="Raise draft purchase invoices for the Paid Out deductions on these lines — one per payee"
+              onClick={() => openAction("dedinv")}>
+              Raise Deduction Invoice ({invoiceDue.length})
+            </button>
+          )}
           {/* Only this tab's actions. A button that can't act is disabled with
               the reason in its tooltip — never enabled so the user can click
               through to an error message. */}
@@ -1313,6 +1368,8 @@ export default function SubconPO() {
                 <th style={{ textAlign: "right" }} title="Quantity actually on live supplier POs for MS2">Ord Qty MS2</th>
                 <th style={{ textAlign: "right" }}>Payout MS2</th>
                 <th style={{ textAlign: "right" }}>VAT MS2</th>
+                <th style={{ textAlign: "right" }}
+                    title="Payout deductions on this subcontractor's share of the line, both milestones. Invoice Due = a Paid Out deduction with no invoice yet">Deductions</th>
                 <th>Purchase Orders</th>
                 <th>Purchase Invoices</th>
                 {/* Remarks captured by Mark Ready / Close / Update Status had
@@ -1417,6 +1474,7 @@ export default function SubconPO() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
                       title={r.sub_po_amount_ms1 ? "Amount on the issued Purchase Order" : "Expected from the master payout %"}>
                     {money.format(r.sub_po_amount_ms1 || r.expected_payout_ms1 || 0)}
+                    <DeductionMark row={r} n={1} />
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>{money.format(r.vat_ms1 || 0)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(r.ms2_amount || 0)}</td>
@@ -1430,12 +1488,13 @@ export default function SubconPO() {
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}
                       title={r.sub_po_amount_ms2 ? "Amount on the issued Purchase Order" : "Expected from the master payout %"}>
                     {r.ms2_amount
-                      ? money.format(r.sub_po_amount_ms2 || r.expected_payout_ms2 || 0)
+                      ? <>{money.format(r.sub_po_amount_ms2 || r.expected_payout_ms2 || 0)}<DeductionMark row={r} n={2} /></>
                       : <span style={{ color: "#cbd5e1" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#64748b" }}>
                     {r.ms2_amount ? money.format(r.vat_ms2 || 0) : <span style={{ color: "#cbd5e1" }}>—</span>}
                   </td>
+                  <td style={{ textAlign: "right" }}><DeductionStateCell row={r} /></td>
                   <td onClick={(e) => e.stopPropagation()}><DocLinks csv={r.purchase_orders_csv} base="purchase-order" /></td>
                   <td onClick={(e) => e.stopPropagation()}><DocLinks csv={r.purchase_invoices_csv} base="purchase-invoice" /></td>
                   <td style={{ fontSize: "0.78rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#64748b" }}
@@ -1487,6 +1546,7 @@ export default function SubconPO() {
                   <td></td>{/* Ord Qty MS2 */}
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.payout_ms2)}</td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money.format(footTotals.vat_ms2)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{footTotals.deduction ? `−${money.format(footTotals.deduction)}` : ""}</td>
                   <td></td>{/* Purchase Orders */}
                   <td></td>{/* Purchase Invoices */}
                   <td></td>{/* Remark */}
@@ -1513,11 +1573,13 @@ export default function SubconPO() {
             close:   "Close",
             reopen:  "Reopen",
             status:  "Update Subcon PO Status",
+            dedinv:  "Raise Deduction Invoice",
           }[action]}
           count={{
             ready: readyTargets.length, create: creatable.length,
             close: closable.length,
             reopen: reopenable.length, status: selected.size,
+            dedinv: invoiceDue.length,
           }[action]}
           busy={busy}
           width={action === "create" ? 660 : action === "receive" ? 600 : 520}
@@ -1538,10 +1600,12 @@ export default function SubconPO() {
                     ready: readyTargets.length, create: creatable.length,
                     receive: recvOpen.length, close: closable.length,
                     reopen: reopenable.length, status: selected.size,
+                    dedinv: invoiceDue.length,
                   }[action]}
                   onClick={{
                     ready: markReady, create: createPo, receive: receiveInvoice,
                     close: closeLines, reopen: reopenLines, status: updateStatus,
+                    dedinv: raiseDeductionInvoices,
                   }[action]}
                 >
                   {busy ? "Working…" : {
@@ -1551,6 +1615,7 @@ export default function SubconPO() {
                     close:   `Close (${closable.length})`,
                     reopen:  `Reopen (${reopenable.length})`,
                     status:  `Update (${selected.size})`,
+                    dedinv:  `Raise ${invoiceDueByPayee.length} Invoice${invoiceDueByPayee.length === 1 ? "" : "s"}`,
                   }[action]}
                 </button>
               </>
@@ -1779,6 +1844,40 @@ export default function SubconPO() {
             </>
           )}
 
+          {action === "dedinv" && (createResult?.dedinv ? (
+            <>
+              {createResult.dedinv.created.map((c) => (
+                <div key={c.purchase_invoice} style={{ fontSize: "0.86rem", marginBottom: 6 }}>
+                  <a href={c.purchase_invoice_url} target="_blank" rel="noreferrer"
+                     style={{ fontFamily: "monospace", fontWeight: 700 }}>{c.purchase_invoice}</a>
+                  {" "}— {c.payee}, {c.lines} line{c.lines === 1 ? "" : "s"}, SAR {money.format(c.amount)}
+                  {c.grand_total != null && c.grand_total !== c.amount ? ` + VAT = ${money.format(c.grand_total)}` : ""} · Draft
+                </div>
+              ))}
+              {createResult.dedinv.skipped.length > 0 && (
+                <div className="notice" style={{ fontSize: "0.8rem", marginTop: 8 }}>
+                  Skipped: {createResult.dedinv.skipped.join("; ")}
+                </div>
+              )}
+              <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: 8 }}>
+                Drafts — Accounts reviews and submits them in ERPNext as usual.
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: "0.84rem", color: "#334155", marginBottom: 10 }}>
+                One draft purchase invoice per payee, one line per deduction:
+              </div>
+              <Summary rows={invoiceDueByPayee.map(([payee, v]) => [
+                payee, `${v.lines} line${v.lines === 1 ? "" : "s"} · SAR ${money.format(v.amount)}`])} />
+              <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: 8 }}>
+                Amounts are before VAT — the purchase tax template from INET Settings is added on each invoice.
+                These are the Paid Out deductions with no invoice yet. Retained deductions
+                need none — that money is not paid to anyone.
+              </div>
+            </>
+          ))}
+
           {action === "status" && (
             <>
               <Field label="Milestone">
@@ -1808,7 +1907,13 @@ export default function SubconPO() {
         </Sheet>
       )}
 
-      <DetailModal row={detailRow} onClose={() => setDetailRow(null)} />
+      <DetailModal row={detailRow} onClose={() => setDetailRow(null)} onChanged={load} />
+
+      {deductLines && (
+        <DeductionSheet lines={deductLines}
+          onClose={() => setDeductLines(null)}
+          onDone={(msg) => { setDeductLines(null); done(msg, 8000); }} />
+      )}
     </div>
   );
 }

@@ -15,6 +15,8 @@ from inet_app.api.subcontractor_sync import (
     ALLOC_JOIN_SQL,
     ALLOC_SHARE_SQL,
     LAST_VISIT_SUBCONTRACTOR_SQL,
+    paid_out_sql,
+    payout_reduction_sql,
 )
 from inet_app.setup import ACCOUNTING_DUID_FIELDNAME
 
@@ -1242,6 +1244,24 @@ def pic_invoicing_summary(portal_filters=None):
     vat_on_invoiced = _vat_on_sql(_inv1)
     vat_on_ms2_invoiced = _vat_on_sql(_inv2)
 
+    # Payout deductions, scaled by the part of the milestone this window
+    # invoiced — the same slicing subcon_payout_events_sql applies to the
+    # payout itself. One row per line here, so every deduction row counts in
+    # full (no per-supplier split on this summary). Zero on a line with none.
+    # The INET/Subcon columns divide the invoiced value, so a deduction Paid
+    # Out to a third party moves to the outgoing side and the two still sum
+    # to what was invoiced.
+    _pct_line = "IFNULL(COALESCE(sm_pd.sub_payout_pct, sm_sub.sub_payout_pct), 0)"
+    _red1, _red2, _paid1, _paid2 = (
+        payout_reduction_sql(_pct_line, n, f"({_inv}) / NULLIF(IFNULL(pd.ms{n}_amount, 0), 0)",
+                             sm_name=None, share_sql="1")
+        if kind == "red" else
+        paid_out_sql(n, f"({_inv}) / NULLIF(IFNULL(pd.ms{n}_amount, 0), 0)",
+                     sm_name=None, share_sql="1")
+        for kind, n, _inv in (("red", 1, _inv1), ("red", 2, _inv2),
+                              ("paid", 1, _inv1), ("paid", 2, _inv2))
+    )
+
     # ── MS1 breakdown query ───────────────────────────────────────────────
     ms1_sql = f"""
     SELECT
@@ -1251,10 +1271,10 @@ def pic_invoicing_summary(portal_filters=None):
       SUM({_inv1}) AS invoiced,
       SUM({vat_on_invoiced}) AS vat,
       SUM(IFNULL(pd.ms1_unbilled,0)) AS unbilled,
-      SUM({_inv1} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
-      SUM({_inv1} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
-      SUM({_inv1} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
-      SUM({_inv1} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
+      SUM({_inv1} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 - {_red1} + {_paid1}) AS subcon_amt,
+      SUM({_inv1} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 + {_red1} - {_paid1}) AS inet_amt,
+      SUM(({_inv1} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 - {_red1} + {_paid1}) * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
+      SUM(({_inv1} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 + {_red1} - {_paid1}) * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
     {_PIC_FROM_JOIN_LEAN}
     {_j1}
     WHERE {' AND '.join(where_ms1)}
@@ -1271,10 +1291,10 @@ def pic_invoicing_summary(portal_filters=None):
       SUM({_inv2}) AS invoiced,
       SUM({vat_on_ms2_invoiced}) AS vat,
       SUM(IFNULL(pd.ms2_unbilled,0)) AS unbilled,
-      SUM({_inv2} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100) AS subcon_amt,
-      SUM({_inv2} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100) AS inet_amt,
-      SUM({_inv2} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
-      SUM({_inv2} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
+      SUM({_inv2} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 - {_red2} + {_paid2}) AS subcon_amt,
+      SUM({_inv2} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 + {_red2} - {_paid2}) AS inet_amt,
+      SUM(({_inv2} * IFNULL(COALESCE(sm_pd.sub_payout_pct,   sm_sub.sub_payout_pct),   0)   / 100 - {_red2} + {_paid2}) * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS subcon_vat,
+      SUM(({_inv2} * COALESCE(sm_pd.inet_margin_pct, sm_sub.inet_margin_pct, 100) / 100 + {_red2} - {_paid2}) * ({_TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")})) AS inet_vat
     {_PIC_FROM_JOIN_LEAN}
     {_j2}
     WHERE {' AND '.join(where_ms2)}
@@ -2655,25 +2675,46 @@ def pic_dashboard_payload(from_date=None, to_date=None):
     _sj1, _sjp1, _samt1 = invoiced_amount_in_period_sql(1, fd, td)
     _sj2, _sjp2, _samt2 = invoiced_amount_in_period_sql(2, fd, td)
 
-    def _leg(n, pct, vat=False):
+    # Payout deductions on this leg, scaled by the part of the milestone the
+    # window invoiced: what the subcontractor is no longer paid moves to the
+    # INET side, and what is Paid Out to a third party moves from the INET
+    # side to the outgoing one. This chart divides INVOICED value between
+    # "kept" and "paid out", so the two sides must still sum to what was
+    # invoiced — a third party's share goes out with the subcontractor's.
+    _leg_sm = "COALESCE(sm_alloc.name, sm_pd.name, sm_sub.name)"
+
+    def _ded(n, kind):
+        amt = _samt1 if n == 1 else _samt2
+        frac = f"({amt}) / NULLIF(IFNULL(pd.ms{n}_amount, 0), 0)"
+        if kind == "red":
+            return payout_reduction_sql(_sub_pct, n, frac, sm_name=_leg_sm)
+        return paid_out_sql(n, frac, sm_name=_leg_sm)
+
+    def _leg(n, pct, vat=False, adj=""):
         cond = _ms1_invoiced if n == 1 else _ms2_invoiced
         amt = _samt1 if n == 1 else _samt2
         tail = f" * ({vat_frac})" if vat else ""
         # No date clause here: the joined amount is already zero outside the
         # window, so the window cannot be applied twice or forgotten.
         return (f"SUM(CASE WHEN {cond} "
-                f"THEN {amt} * ({ALLOC_SHARE_SQL}) * {pct} / 100{tail} ELSE 0 END)")
+                f"THEN ({amt} * ({ALLOC_SHARE_SQL}) * {pct} / 100{adj}){tail} ELSE 0 END)")
+
+    def _inet_adj(n):
+        return f" + {_ded(n, 'red')} - {_ded(n, 'paid')}"
+
+    def _sub_adj(n):
+        return f" - {_ded(n, 'red')} + {_ded(n, 'paid')}"
 
     _split_sql = f"""
         SELECT
-          {_leg(1, _inet_pct)} AS inet_ms1,
-          {_leg(1, _sub_pct)} AS subcon_ms1,
-          {_leg(2, _inet_pct)} AS inet_ms2,
-          {_leg(2, _sub_pct)} AS subcon_ms2,
-          {_leg(1, _inet_pct, vat=True)} AS inet_ms1_vat,
-          {_leg(1, _sub_pct, vat=True)} AS subcon_ms1_vat,
-          {_leg(2, _inet_pct, vat=True)} AS inet_ms2_vat,
-          {_leg(2, _sub_pct, vat=True)} AS subcon_ms2_vat
+          {_leg(1, _inet_pct, adj=_inet_adj(1))} AS inet_ms1,
+          {_leg(1, _sub_pct, adj=_sub_adj(1))} AS subcon_ms1,
+          {_leg(2, _inet_pct, adj=_inet_adj(2))} AS inet_ms2,
+          {_leg(2, _sub_pct, adj=_sub_adj(2))} AS subcon_ms2,
+          {_leg(1, _inet_pct, vat=True, adj=_inet_adj(1))} AS inet_ms1_vat,
+          {_leg(1, _sub_pct, vat=True, adj=_sub_adj(1))} AS subcon_ms1_vat,
+          {_leg(2, _inet_pct, vat=True, adj=_inet_adj(2))} AS inet_ms2_vat,
+          {_leg(2, _sub_pct, vat=True, adj=_sub_adj(2))} AS subcon_ms2_vat
         {_PIC_FROM_JOIN_LEAN}
         {ALLOC_JOIN_SQL}
         {_sj1}

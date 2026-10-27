@@ -112,6 +112,112 @@ ALLOC_SHARE_SQL = """
       ELSE 1 / GREATEST(IFNULL(alloc_tot.legs, 1), 1) END)"""
 
 
+# ── Payout deductions, as SQL ────────────────────────────────────────────────
+#
+# A `PO Payout Deduction` row takes money off what a line pays its
+# subcontractor: survey report preparation is the first type, and any other is
+# a new `Deduction Type` row, not new code. This is the one definition every
+# payout and margin figure reads, for the same reason ALLOC_SHARE_SQL is: the
+# moment two reports compute a deduction their own way, they disagree.
+#
+# A row is spread the way the money it comes off is spread:
+#   * across milestones by the line's own MS1/MS2 amounts, unless the row is
+#     pinned to one milestone
+#   * across subcontractors by the allocation share, unless the row names
+#     one subcontractor — then it lands on that leg alone
+#
+# The three kinds:
+#   * "line"   — Deduct From = Line Value: comes off the line before the payout
+#                % applies, (880 − 100) × 80%
+#   * "payout" — Deduct From = Payout: comes off the payout itself
+#   * "paid"   — Settlement = Paid Out, whatever its basis: money that leaves
+#                the company to a third party, and so a cost in the margin
+#
+# A correlated lookup on `parent` (indexed on every child table) rather than a
+# derived-table join, so it drops into any existing FROM without touching it.
+# Almost every line has no rows, which makes each lookup an empty index probe.
+_DEDUCTION_KIND_SQL = {
+    "line": "d.deduct_from = 'Line Value'",
+    "payout": "d.deduct_from = 'Payout'",
+    "paid": "d.settlement = 'Paid Out'",
+    "all": "1 = 1",
+}
+
+
+def deduction_ms_factor_sql(n, pd="pd"):
+    """The part of a deduction row that falls on milestone ``n``."""
+    both = f"(IFNULL({pd}.ms1_amount, 0) + IFNULL({pd}.ms2_amount, 0))"
+    spread = (f"(CASE WHEN {both} > 0 THEN IFNULL({pd}.ms{n}_amount, 0) / {both}"
+              f" ELSE {1 if n == 1 else 0} END)")
+    return (f"(CASE WHEN IFNULL(d.milestone, '') = '' THEN {spread}"
+            f" WHEN d.milestone = 'MS{n}' THEN 1 ELSE 0 END)")
+
+
+def deduction_sql(n, kind, pd="pd", sm_name="sm.name", share_sql=ALLOC_SHARE_SQL):
+    """Milestone ``n``'s deduction of ``kind`` for the row's subcontractor leg.
+
+    ``sm_name`` is the SQL for the Subcontract Master the row resolved to and
+    ``share_sql`` that leg's share of the line — both default to the aliases
+    the Subcon PO join uses. A query that is one row per LINE rather than one
+    per leg passes ``sm_name=None, share_sql="1"``: every row then counts in
+    full, whichever subcontractor it names.
+    """
+    if sm_name:
+        who = (f"(CASE WHEN IFNULL(d.subcontractor, '') = '' THEN {share_sql}"
+               f" WHEN d.subcontractor = {sm_name} THEN 1 ELSE 0 END)")
+    else:
+        who = f"({share_sql})"
+    return (
+        f"(SELECT IFNULL(SUM(d.amount * {deduction_ms_factor_sql(n, pd)} * {who}), 0)"
+        f" FROM `tabPO Payout Deduction` d"
+        f" WHERE d.parent = {pd}.name AND d.parenttype = 'PO Dispatch'"
+        f" AND d.parentfield = 'payout_deductions' AND {_DEDUCTION_KIND_SQL[kind]})"
+    )
+
+
+def net_payout_sql(ms_amount_sql, pct_sql, n, pd="pd", sm_name="sm.name",
+                   share_sql=ALLOC_SHARE_SQL):
+    """The subcontractor's payout on milestone ``n`` once deductions are taken.
+
+    ``(milestone amount − line-value deductions) × % − payout deductions``,
+    never below zero. With no deduction rows this is exactly
+    ``milestone amount × %``, today's figure.
+    """
+    line = deduction_sql(n, "line", pd, sm_name, share_sql)
+    payout = deduction_sql(n, "payout", pd, sm_name, share_sql)
+    return (f"GREATEST(0, ({ms_amount_sql} - {line}) * ({pct_sql}) / 100 - {payout})")
+
+
+def _ms_list(n):
+    return (1, 2) if n is None else (n,)
+
+
+def payout_reduction_sql(pct_sql, n=None, fraction_sql="1", pd="pd",
+                         sm_name="sm.name", share_sql=ALLOC_SHARE_SQL):
+    """How much LESS the subcontractor is paid because of deductions.
+
+    For reports that compute a payout as ``amount × %`` over some slice of a
+    line — an invoiced amount in a window, a Work Done's revenue — rather
+    than through ``net_payout_sql``. ``n`` is the milestone (None = both) and
+    ``fraction_sql`` the part of it the slice covers, so a milestone billed
+    in two months carries its deduction in the same two parts. Subtract it
+    from the payout and add it to the margin.
+    """
+    line = " + ".join(deduction_sql(m, "line", pd, sm_name, share_sql) for m in _ms_list(n))
+    pay = " + ".join(deduction_sql(m, "payout", pd, sm_name, share_sql) for m in _ms_list(n))
+    # IFNULL: a zero milestone makes a ratio fraction NULL, and NULL would
+    # blank the whole figure it is subtracted from.
+    return f"((({line}) * ({pct_sql}) / 100 + ({pay})) * IFNULL({fraction_sql}, 0))"
+
+
+def paid_out_sql(n=None, fraction_sql="1", pd="pd", sm_name="sm.name",
+                 share_sql=ALLOC_SHARE_SQL):
+    """Deductions Paid Out to a third party — a cost, so subtract from margin.
+    Same slicing as ``payout_reduction_sql``."""
+    paid = " + ".join(deduction_sql(m, "paid", pd, sm_name, share_sql) for m in _ms_list(n))
+    return f"(({paid}) * IFNULL({fraction_sql}, 0))"
+
+
 # Remark written on the PO Status Event when a person (not the rollout track)
 # decided a line's subcontractor. A line carrying one is not re-derived: the
 # client's own records beat anything we can infer from the plans, and on this

@@ -27,6 +27,7 @@ def after_migrate():
     _ensure_duid_accounting_dimension()
     _ensure_qty_precision()
     _ensure_subcon_po_fields()
+    _ensure_report_preparation_item()
     _ensure_pic_sales_invoice_fields()
     _separate_duid_dimensions()
     _ensure_material_permissions()
@@ -1006,6 +1007,24 @@ def _ensure_subcon_po_fields():
             "module": "Inet App",
         })
 
+    # A Paid Out payout deduction's bill to a third party. It carries the
+    # line's `poid` (the accounting dimension, so the cost reaches the ledger
+    # against the line); this field marks it as NOT the subcontractor's bill,
+    # and every reader of subcontractor bills by poid excludes it — see
+    # not_deduction_bill_sql in api/subcon_po.py.
+    if frappe.db.exists("DocType", "Purchase Invoice Item"):
+        _add_field("Purchase Invoice Item", "Purchase Invoice Item-payout_deduction", {
+            "fieldname": "payout_deduction",
+            "label": "Payout Deduction",
+            "fieldtype": "Data",
+            "insert_after": "payout_pct",
+            "read_only": 1,
+            "print_hide": 1,
+            "no_copy": 1,
+            "module": "Inet App",
+        })
+        _retire_deduction_poid_field()
+
     # Retrofit print_hide/no_copy on sites where these already exist from an
     # earlier migrate — _add_field only applies its definition on creation.
     for dt in ("Purchase Order Item", "Purchase Invoice Item"):
@@ -1015,6 +1034,60 @@ def _ensure_subcon_po_fields():
                 frappe.db.set_value("Custom Field", cf, {"print_hide": 1, "no_copy": 0})
 
     frappe.db.commit()
+
+
+def _retire_deduction_poid_field():
+    """`deduction_poid` was the first build's link from a deduction bill to its
+    line, before the bill carried the real `poid`. It only ever existed on the
+    two test sites. Copy any value into `poid`, then drop that one field —
+    matched by its exact name AND module AND type, never by fieldname alone."""
+    cf = "Purchase Invoice Item-deduction_poid"
+    row = frappe.db.get_value("Custom Field", cf, ["module", "fieldtype", "options"], as_dict=True)
+    if row and (row.module != "Inet App" or row.fieldtype != "Link" or row.options != "PO Dispatch"):
+        return  # someone else's field of the same name — not ours to touch
+    has_col = frappe.db.has_column("Purchase Invoice Item", "deduction_poid")
+    if not row and not has_col:
+        return
+    try:
+        if has_col:
+            frappe.db.sql("""UPDATE `tabPurchase Invoice Item`
+                                SET poid = deduction_poid
+                              WHERE IFNULL(deduction_poid, '') <> ''
+                                AND IFNULL(poid, '') = ''""")
+        if row:
+            frappe.delete_doc("Custom Field", cf, ignore_permissions=True, force=True)
+        frappe.db.commit()
+        # Deleting a Custom Field leaves its column; schema_check would then
+        # report it as unshipped on every site that ran the first build.
+        if has_col and not frappe.db.exists("Custom Field", cf):
+            frappe.db.sql_ddl("ALTER TABLE `tabPurchase Invoice Item` DROP COLUMN `deduction_poid`")
+            frappe.clear_cache(doctype="Purchase Invoice Item")
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Retiring deduction_poid failed")
+
+
+def _ensure_report_preparation_item():
+    """The expense Item the shipped "Report Preparation" Deduction Type
+    invoices against (see the fixture in hooks.py). Created when missing and
+    never touched after, so edits on the site — accounts, defaults — stay."""
+    if frappe.db.exists("Item", "Report Preparation"):
+        return
+    if not (frappe.db.exists("Item Group", "Services") and frappe.db.exists("UOM", "Nos")):
+        return
+    try:
+        frappe.get_doc({
+            "doctype": "Item",
+            "item_code": "Report Preparation",
+            "item_name": "Report Preparation",
+            "item_group": "Services",
+            "stock_uom": "Nos",
+            "is_stock_item": 0,
+            "is_purchase_item": 1,
+            "is_sales_item": 0,
+        }).insert(ignore_permissions=True)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Report Preparation item setup failed")
 
 
 def _ensure_pic_sales_invoice_fields():

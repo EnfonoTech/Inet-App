@@ -17,6 +17,7 @@ import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
 import { PoStatusBadge, PicStatusBadge, PicMs2Badge, IMStatusBadge, SubcontractorCell, SubcontractorSplitTable, isPicRejection, picRejectionReasonError, picRejectionReasonKey } from "./picShared";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
+import { DeductionsPanel } from "./PayoutDeduction";
 import { money, qty, count as fmt } from "../../utils/numberFormat";
 
 import { DOC_REQUIREMENTS } from "../../utils/docRequirements";
@@ -1389,6 +1390,7 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
             <HeroChip label="PIC MS2" value={ms2Status || "—"} active={tab === "MS2"} onClick={() => setTab("MS2")} disabled={ms2Pct <= 0 && !ms2Status} />
             <HeroChip label="Acceptance" value={`${row.sqc_status || "SQC ?"} · ${row.pat_status || "PAT ?"}`} active={tab === "ACC"} onClick={() => setTab("ACC")} />
             <HeroChip label="📎" value="Attachments" active={tab === "ATT"} onClick={() => setTab("ATT")} />
+            <HeroChip label="➖" value="Deductions" active={tab === "DED"} onClick={() => setTab("DED")} />
           </div>
         </div>
 
@@ -1453,6 +1455,12 @@ function EditPopover({ row, fields, setFields, onClose, onSave, busy, err, initi
               busy={busy}
             />
           )}
+          {/* Payout deductions — the only entry point for an INET-crew line,
+              which never appears on the Subcon PO page. */}
+          {tab === "DED" && (
+            <DeductionsPanel poDispatch={row.po_dispatch} poid={row.poid} />
+          )}
+
           {tab === "ATT" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Card title="IM Documents">

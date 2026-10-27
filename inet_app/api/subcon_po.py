@@ -30,6 +30,9 @@ from inet_app.api.subcontractor_sync import (
     ALLOC_SHARE_SQL,
     ALLOC_TOTALS_JOIN_SQL,
     LAST_VISIT_SUBCONTRACTOR_SQL,
+    deduction_sql,
+    net_payout_sql,
+    paid_out_sql,
 )
 
 from inet_app.api.command_center import (
@@ -281,6 +284,18 @@ def _norm_milestone(raw, default=None):
     return ms
 
 
+# A payout deduction's Paid Out bill to a third party carries the line's
+# `poid` — it is the POID accounting dimension, so the cost lands on the line
+# in the ledger — but it is NOT the subcontractor's bill. Its items are marked
+# by `payout_deduction`, and every reader of subcontractor bills by POID must
+# exclude them with this, or the third party's bill passes as the
+# subcontractor's: in the tracker's bill column, the popup, the re-rate guard.
+# The status hooks need no SQL — they also require a milestone, which these
+# items never carry — but _purchase_doc_lines checks the mark as well.
+def not_deduction_bill_sql(alias):
+    return f"IFNULL({alias}.payout_deduction, '') = ''"
+
+
 # ── SQL fragments ────────────────────────────────────────────────────────
 # One `sm` alias, because a line resolves to exactly one Subcontract Master.
 # NULLIF on pd.contract matters: the column is '' rather than NULL on plenty
@@ -357,8 +372,26 @@ def _expected_payout_sql(n):
     show "expected" on unordered lines and the real document figure on
     ordered ones, and so a later edit to ``sub_payout_pct`` can never appear
     to rewrite an issued PO.
+
+    Net of the line's payout deductions (see ``net_payout_sql``); a line with
+    none is exactly ``amount × %`` as before.
     """
+    return f"ROUND({net_payout_sql(_ms_amount_sql(n), 'IFNULL(sm.sub_payout_pct, 0)', n)}, 2)"
+
+
+def _gross_payout_sql(n):
+    """The payout before any deduction — the "before" of before → after."""
     return f"ROUND({_ms_amount_sql(n)} * IFNULL(sm.sub_payout_pct, 0) / 100, 2)"
+
+
+def _deduction_state_sql():
+    from inet_app.api.payout_deduction import deduction_state_sql
+    return deduction_state_sql()
+
+
+def _deduction_total_sql():
+    """Every deduction on this supplier's leg, both milestones, any kind."""
+    return f"ROUND({deduction_sql(1, 'all')} + {deduction_sql(2, 'all')}, 2)"
 
 
 def _payout_shown_sql(n):
@@ -437,7 +470,11 @@ def subcon_invoice_window(pf):
 
 def subcon_payout_events_sql():
     """``(po_dispatch, subcontract, milestone, event_date, revenue, payout,
-    inet_margin)``, one row per payout event, as a UNION ALL subquery.
+    inet_margin, paid_out)``, one row per payout event, as a UNION ALL subquery.
+
+    ``paid_out`` is payout deductions Paid Out to a third party on the same
+    slice — money that leaves the company for the work but is not the
+    subcontractor's payout. ``inet_margin`` is already net of it.
 
     All three money columns come out of the same row so a caller cannot put
     revenue in one period and its own cost in another — the mismatch that
@@ -471,7 +508,8 @@ def subcon_payout_events_sql():
                si.posting_date AS event_date,
                ROUND(IFNULL(sii.amount, 0) * ({_ALLOC_SHARE_SQL}), 4) AS revenue,
                ROUND({_payout_shown_sql(n)} * (IFNULL(sii.amount, 0) / NULLIF({ms_full}, 0)), 4) AS payout,
-               ROUND({_inet_amount_sql(n)} * (IFNULL(sii.amount, 0) / NULLIF({ms_full}, 0)), 4) AS inet_margin
+               ROUND({_inet_amount_sql(n)} * (IFNULL(sii.amount, 0) / NULLIF({ms_full}, 0)), 4) AS inet_margin,
+               ROUND({paid_out_sql(n, f"IFNULL(sii.amount, 0) / NULLIF({ms_full}, 0)")}, 4) AS paid_out
         {_SUBCON_FROM_JOIN}
         JOIN `tabSales Invoice Item` sii
               ON sii.poid = pd.name AND IFNULL(sii.milestone, '') = 'MS{n}'
@@ -483,7 +521,8 @@ def subcon_payout_events_sql():
                {_legacy_invoiced_date(n)} AS event_date,
                {_ms_amount_sql(n)} AS revenue,
                {_payout_shown_sql(n)} AS payout,
-               {_inet_amount_sql(n)} AS inet_margin
+               {_inet_amount_sql(n)} AS inet_margin,
+               ROUND({paid_out_sql(n)}, 4) AS paid_out
         {_SUBCON_FROM_JOIN}
         WHERE {' AND '.join(_SUBCON_BASE_WHERE)}
           AND {_customer_billed_ms_sql(n)}
@@ -498,9 +537,15 @@ def _inet_amount_sql(n):
     Same expression pic_invoicing_summary already uses for its `inet_amt`
     (ms_amount x inet_margin_pct / 100), so the customer-side and supplier-side
     reports state INET's margin identically instead of two near-miss formulas.
+
+    A payout deduction moves it twice: what the subcontractor is no longer
+    paid comes back to the margin, and a deduction Paid Out to a third party
+    leaves it. Retained, 880 at 80% less 100: 176 + 80 = 256. Paid Out:
+    176 + 80 − 100 = 156. With no deduction rows both terms are zero.
     """
-    return (f"ROUND({_ms_amount_sql(n)} * "
-            f"COALESCE(sm.inet_margin_pct, 0) / 100, 2)")
+    return (f"ROUND({_ms_amount_sql(n)} * COALESCE(sm.inet_margin_pct, 0) / 100"
+            f" + ({_gross_payout_sql(n)} - {_expected_payout_sql(n)})"
+            f" - {deduction_sql(n, 'paid')}, 2)")
 
 
 def _vat_sql(n):
@@ -644,6 +689,8 @@ def _batch_linked_purchase_docs(po_dispatch_names):
     ):
         if not frappe.db.has_column(child_dt, "poid"):
             continue
+        _bill_filter = (f" AND {not_deduction_bill_sql('c')}"
+                        if frappe.db.has_column(child_dt, "payout_deduction") else "")
         for chunk in _chunk(names, 800):
             ph = ", ".join(["%s"] * len(chunk))
             rows = frappe.db.sql(
@@ -659,7 +706,7 @@ def _batch_linked_purchase_docs(po_dispatch_names):
                          ORDER BY p.name SEPARATOR ', ') AS csv
                 FROM `tab{child_dt}` c
                 JOIN `tab{parent_dt}` p ON p.name = c.parent
-                WHERE c.poid IN ({ph})
+                WHERE c.poid IN ({ph}){_bill_filter}
                 GROUP BY c.poid
                 """,
                 tuple(chunk),
@@ -1029,6 +1076,9 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         "cust_ms2": (
             "IF(IFNULL(pd.ms2_pct,0) <= 0, 'NIL', IF(IFNULL(pd.pic_status_ms2,'') = '', 'Work Not Done', pd.pic_status_ms2))"
         ),
+        # The Deduction cell shows the amount AND its state; the state is the
+        # useful part to filter on ("which lines still owe an invoice").
+        "deductions": _deduction_state_sql(),
         "payout_ms1": f"CAST({_expected_payout_sql(1)} AS CHAR)",
         "payout_ms2": f"CAST({_expected_payout_sql(2)} AS CHAR)",
         "vat_ms1": f"CAST({_vat_sql(1)} AS CHAR)",
@@ -1067,7 +1117,7 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
             "ORDER BY p_i.name SEPARATOR ', ') "
             "FROM `tabPurchase Invoice Item` c_i "
             "JOIN `tabPurchase Invoice` p_i ON p_i.name = c_i.parent "
-            "WHERE c_i.poid = pd.name), '')"
+            "WHERE c_i.poid = pd.name AND IFNULL(c_i.payout_deduction, '') = ''), '')"
         ),
         "im": "IFNULL(imm.full_name,'')",
         "pic_status_ms1": "IF(IFNULL(pd.pic_status,'') = '', 'Work Not Done', pd.pic_status)",
@@ -1240,6 +1290,10 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
           sup.supplier_name,
           {_expected_payout_sql(1)} AS expected_payout_ms1,
           {_expected_payout_sql(2)} AS expected_payout_ms2,
+          {_gross_payout_sql(1)} AS gross_payout_ms1,
+          {_gross_payout_sql(2)} AS gross_payout_ms2,
+          {_deduction_total_sql()} AS deduction_amount,
+          {_deduction_state_sql()} AS deduction_state,
           -- Per-milestone orderability. A line whose MS1 is already ordered
           -- but whose MS2 is still open legitimately stays on the To Order
           -- tab (the stages overlap by design), so the UI has to know which
@@ -1296,6 +1350,7 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
                COALESCE(SUM({_expected_payout_sql(2)}), 0) AS expected_ms2,
                COALESCE(SUM({_vat_sql(1)}), 0) AS vat_ms1,
                COALESCE(SUM({_vat_sql(2)}), 0) AS vat_ms2,
+               COALESCE(SUM({_deduction_total_sql()}), 0) AS deduction_amount,
                COALESCE(SUM(pd.sub_po_amount_ms1), 0) AS ordered_ms1,
                COALESCE(SUM(pd.sub_po_amount_ms2), 0) AS ordered_ms2,
                COALESCE(SUM({_ms_amount_sql(1)}), 0) AS ms1_amount,
@@ -1321,6 +1376,8 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         # marker and the View popup need the other legs to say so.
         from inet_app.api.subcontractor_sync import attach_allocations
         attach_allocations(rows, key="po_dispatch")
+        from inet_app.api.payout_deduction import attach_deductions
+        attach_deductions(rows, key="po_dispatch")
 
     return {
         "rows": rows,
@@ -1328,6 +1385,7 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         "totals": {
             "vat_ms1": flt(agg.get("vat_ms1") or 0),
             "vat_ms2": flt(agg.get("vat_ms2") or 0),
+            "deduction_amount": flt(agg.get("deduction_amount") or 0),
             "expected_ms1": flt(agg.get("expected_ms1") or 0),
             "expected_ms2": flt(agg.get("expected_ms2") or 0),
             "ordered_ms1": flt(agg.get("ordered_ms1") or 0),
@@ -1403,7 +1461,15 @@ def get_subcon_po_filter_options():
 
 # ── Purchase Order creation ──────────────────────────────────────────────
 def _po_item_pricing(pd_row, milestone, payout_pct, precision, already_ordered=0.0):
-    """Return (qty, rate, description) for one supplier PO line.
+    """Return (qty, rate, description, list_rate) for one supplier PO line.
+
+    ``list_rate`` is the supplier's agreed unit rate and ``rate`` what is
+    actually paid per unit. They differ only on a line with payout
+    deductions: the PO then prints the agreed rate, the deduction as the
+    item's discount, and the type named in the description — so the supplier
+    can check both the rate and the reason against their contract. The
+    deduction is spread per unit over the milestone's quantity, so a PO for
+    2 of 6 units carries 2/6 of it.
 
     ``qty`` carries the milestone split (MS1 = 70% of the line → 0.7 × qty)
     and ``rate`` carries the payout split, so the printed PO shows the
@@ -1439,6 +1505,7 @@ def _po_item_pricing(pd_row, milestone, payout_pct, precision, already_ordered=0
     if already_ordered:
         qty = max(0.0, flt(qty) - flt(already_ordered))
     rate = flt(full_rate * payout_pct / 100.0, precision)
+    list_rate = rate
 
     # Plain item description only. Site and milestone used to be appended here;
     # they now ride on the line's own `duid` / `project_control_center` /
@@ -1447,7 +1514,16 @@ def _po_item_pricing(pd_row, milestone, payout_pct, precision, already_ordered=0
     # made the appended line read as a duplicate).
     description = (pd_row.get("item_description") or pd_row.get("item_code") or "").strip()
 
-    return qty, rate, description
+    from inet_app.api.payout_deduction import deduction_labels, deduction_per_unit
+    per_unit = deduction_per_unit(pd_row.get("po_dispatch"), pd_row.get("subcontract"),
+                                  milestone, payout_pct, full_qty, ms_pct)
+    if per_unit > 0:
+        rate = max(0.0, flt(list_rate - per_unit, precision))
+        labels = deduction_labels(pd_row["po_dispatch"], (milestone or "").upper())
+        if labels:
+            description = f"{description}\nLess: {', '.join(labels)}"
+
+    return qty, rate, description, list_rate
 
 
 @frappe.whitelist()
@@ -1664,7 +1740,7 @@ def create_purchase_order_from_pic(po_dispatch=None, milestone=None):
             _sub_k = cstr(line.get("subcontract") or "")
             _done = (ordered_qty.get((line["po_dispatch"], ms, _sub_k), 0.0)
                      + ordered_qty.get((line["po_dispatch"], ms, ""), 0.0))
-            qty, rate, description = _po_item_pricing(
+            qty, rate, description, list_rate = _po_item_pricing(
                 line, ms, payout_pct, precision, already_ordered=_done)
             duid = (line.get("site_code") or "").strip()
             project = (line.get("project_code") or "").strip()
@@ -1673,9 +1749,12 @@ def create_purchase_order_from_pic(po_dispatch=None, milestone=None):
                 "description": description,
                 "qty": qty,
                 "rate": rate,
-                "price_list_rate": rate,   # see _po_item_pricing docstring
+                # Equal to rate unless the line carries a payout deduction —
+                # then the agreed rate, with the deduction as the discount.
+                # Never blank: see _po_item_pricing docstring.
+                "price_list_rate": list_rate,
                 "discount_percentage": 0,
-                "discount_amount": 0,
+                "discount_amount": flt(list_rate - rate, precision),
                 "schedule_date": schedule_date,
                 "poid": line["po_dispatch"],
                 "milestone": ms,
@@ -1996,7 +2075,7 @@ def get_subcon_line_documents(po_dispatch=None):
                IFNULL(pii.amount, 0) AS amount
         FROM `tabPurchase Invoice Item` pii
         JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
-        WHERE pii.poid = %s
+        WHERE pii.poid = %s AND IFNULL(pii.payout_deduction, '') = ''
         ORDER BY pi.creation
     """, (po_dispatch,), as_dict=True):
         d = invoices.setdefault(r.name, {
@@ -2177,7 +2256,7 @@ def _purchase_doc_lines(doc):
     are ignored, so these hooks are inert on the rest of the bench's buying."""
     for item in (doc.get("items") or []):
         pd_name = (item.get("poid") or "").strip()
-        if not pd_name:
+        if not pd_name or (item.get("payout_deduction") or "").strip():
             continue
         ms = (item.get("milestone") or "").strip().upper()
         if ms not in ("MS1", "MS2"):
@@ -2534,11 +2613,13 @@ def _subcon_lines_from_payment_entry(pe_doc):
             items = frappe.db.get_all(
                 "Purchase Invoice Item",
                 filters={"parent": pi_name},
-                fields=["poid", "milestone"],
+                fields=["poid", "milestone", "payout_deduction"],
             )
         except Exception:
             continue
         for item in items:
+            if (item.get("payout_deduction") or "").strip():
+                continue  # a deduction's third-party bill, not the subcontractor's
             pd_name = (item.get("poid") or "").strip()
             ms = (item.get("milestone") or "").strip().upper()
             if pd_name and ms in ("MS1", "MS2") and frappe.db.exists("PO Dispatch", pd_name):

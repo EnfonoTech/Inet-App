@@ -1082,6 +1082,31 @@ export const pmApi = {
   getSubconLineDocuments: (poDispatch) => call("inet_app.api.subcon_po.get_subcon_line_documents", {
     po_dispatch: poDispatch,
   }),
+  // Payout deductions (payout_deduction.py) — money taken off what a line pays
+  // its subcontractor, Retained or Paid Out to a third party.
+  getDeductionTypes: () => call("inet_app.api.payout_deduction.get_deduction_types"),
+  searchDeductionPayees: (txt) => call("inet_app.api.payout_deduction.search_payees", { txt }),
+  getLineDeductions: (poDispatch) => call("inet_app.api.payout_deduction.get_line_deductions", {
+    po_dispatch: poDispatch,
+  }),
+  previewPayoutDeduction: (args) => call("inet_app.api.payout_deduction.preview_payout_deduction", {
+    ...args,
+    po_dispatches: JSON.stringify(args.po_dispatches || []),
+    amounts: JSON.stringify(args.amounts || {}),
+  }),
+  addPayoutDeduction: (args) => call("inet_app.api.payout_deduction.add_payout_deduction", {
+    ...args,
+    po_dispatches: JSON.stringify(args.po_dispatches || []),
+    amounts: JSON.stringify(args.amounts || {}),
+  }),
+  updatePayoutDeduction: (row, fields) => call("inet_app.api.payout_deduction.update_payout_deduction", {
+    row, ...fields,
+  }),
+  removePayoutDeduction: (row) => call("inet_app.api.payout_deduction.remove_payout_deduction", { row }),
+  createDeductionPurchaseInvoice: (row) => call("inet_app.api.payout_deduction.create_deduction_purchase_invoice", { row }),
+  raiseDeductionInvoices: (poDispatches) => call("inet_app.api.payout_deduction.raise_deduction_invoices", {
+    po_dispatches: JSON.stringify(poDispatches || []),
+  }),
   // Header + lines of one supplier PO, read from the document (so it carries
   // VAT, which the list rows don't) for the Receive Invoice screen.
   getPurchaseOrderSummary: (purchaseOrder) => call("inet_app.api.subcon_po.get_purchase_order_summary", {
