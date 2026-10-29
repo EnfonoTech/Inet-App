@@ -1053,6 +1053,10 @@ def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None, _sum
             }
         for r in rows:
             r["im_full_name"] = im_names.get(r.get("im"))
+        # A line split across subcontractors carries every share, so the
+        # Contract cell can mark it and the View popup can break it down.
+        from inet_app.api.subcontractor_sync import attach_allocations
+        attach_allocations(rows, key="po_dispatch")
 
     return {"rows": rows, "total_count": total_count}
 

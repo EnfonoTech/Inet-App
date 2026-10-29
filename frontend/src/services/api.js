@@ -656,6 +656,12 @@ export const pmApi = {
          { po_dispatch, allocation, remark }),
   clearSubcontractorOverride: (po_dispatch) =>
     call("inet_app.api.subcon_reconcile.clear_subcontractor_override", { po_dispatch }),
+  getSubcontractorReconcileLines: ({ poids, disagreements } = {}) =>
+    call("inet_app.api.subcon_reconcile.get_subcontractor_reconcile_lines",
+         { poids: poids ? JSON.stringify(poids) : undefined, disagreements: disagreements ? 1 : 0 }),
+  setSubcontractorBulk: (po_dispatches, subcontractor, remark) =>
+    call("inet_app.api.subcon_reconcile.set_subcontractor_bulk",
+         { po_dispatches: JSON.stringify(po_dispatches), subcontractor, remark }),
   // What becomes of a short-confirmed line's leftover, answered whenever the
   // IM finds out — deliberately not asked at confirmation time.
   setRemainingQtyAction: (po_dispatch, action, remark) => call("inet_app.api.command_center.set_remaining_qty_action", { po_dispatch, action, remark }),

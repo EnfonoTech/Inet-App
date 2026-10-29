@@ -18,7 +18,7 @@ who gets paid, and an issued supplier PO still blocks it.
 """
 
 import frappe
-from frappe.utils import cstr, flt
+from frappe.utils import cint, cstr, flt
 
 from inet_app.api.subcontractor_sync import (
     ALLOC_FROM_ADMIN,
@@ -162,7 +162,27 @@ def set_subcontractor_allocation(po_dispatch, allocation, remark=None):
     """
     _require_superuser()
     name = _resolve_dispatch(po_dispatch)
+    _apply_split(name, allocation, remark)
+    frappe.db.commit()
+    return get_subcontractor_reconcile(name)
 
+
+def _split_total(name):
+    """The quantity a split must add up to, and the line's Work Done (or None).
+
+    What was actually closed when there is a Work Done, the confirmed quantity
+    next, the ordered quantity last.
+    """
+    wd = frappe.get_all("Work Done", filters={"system_id": name},
+                        fields=["name", "executed_qty", "revenue_sar"], limit=1)
+    if wd:
+        return flt(wd[0]["executed_qty"]), wd[0]
+    pd = frappe.db.get_value("PO Dispatch", name, ["qty", "confirmed_qty"], as_dict=True) or {}
+    return (flt(pd.get("confirmed_qty")) or flt(pd.get("qty"))), None
+
+
+def _apply_split(name, allocation, remark=None):
+    """Validate and write one line's split. Does not commit — the caller does."""
     if isinstance(allocation, str):
         allocation = frappe.parse_json(allocation)
     clean, seen = [], set()
@@ -187,12 +207,7 @@ def set_subcontractor_allocation(po_dispatch, allocation, remark=None):
                              as_dict=True)
     poid = pd.get("poid") or name
 
-    wd = frappe.get_all("Work Done", filters={"system_id": name},
-                        fields=["name", "executed_qty", "revenue_sar"], limit=1)
-    # The total to match: what was actually closed when there is a Work Done,
-    # the confirmed quantity next, the ordered quantity last.
-    expected = (flt(wd[0]["executed_qty"]) if wd
-                else (flt(pd.get("confirmed_qty")) or flt(pd.get("qty"))))
+    expected, wd = _split_total(name)
     total = round(sum(e["qty"] for e in clean), 4)
     if expected and abs(total - flt(expected)) > 0.0001:
         frappe.throw(
@@ -205,7 +220,7 @@ def set_subcontractor_allocation(po_dispatch, allocation, remark=None):
     assert_subcontractor_change_allowed(name, clean)
 
     if wd:
-        _rewrite_ledger(wd[0], clean, remark)
+        _rewrite_ledger(wd, clean, remark)
     _write_allocations(name, clean, pd)
 
     try:
@@ -222,9 +237,6 @@ def set_subcontractor_allocation(po_dispatch, allocation, remark=None):
                              remark=MANUAL_OVERRIDE_REMARK, stamp_stage=False)
     except Exception:
         frappe.log_error(frappe.get_traceback(), "subcon reconcile: contract stamp")
-
-    frappe.db.commit()
-    return get_subcontractor_reconcile(name)
 
 
 def _rewrite_ledger(wd_row, clean, remark):
@@ -325,3 +337,186 @@ def clear_subcontractor_override(po_dispatch):
     resync_dispatch_allocations(name, reason="admin cleared the override")
     frappe.db.commit()
     return get_subcontractor_reconcile(name)
+
+
+# ── Many lines at once ──────────────────────────────────────────────────────
+#
+# The single-line screen shows every source for one POID. Corrections usually
+# arrive as a list ("these POIDs were done by Team No. 10"), and the same
+# disagreement tends to repeat across a batch, so the bulk view loads many
+# lines in one row each and moves the selected ones to ONE subcontractor.
+# A split between several subcontractors stays on the single-line screen.
+
+_BULK_LIMIT = 500
+
+
+def _parse_poids(poids):
+    if isinstance(poids, str):
+        try:
+            parsed = frappe.parse_json(poids)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, list):
+            poids = parsed
+        else:
+            poids = poids.replace(",", "\n").split()
+    out, seen = [], set()
+    for p in poids or []:
+        p = cstr(p).strip()
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _bulk_rows(names):
+    """One summary row per PO Dispatch name, in the order given."""
+    if not names:
+        return []
+    from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
+    rows = frappe.db.sql(
+        f"""
+        SELECT pd.name, pd.poid, pd.im, pd.dispatch_status, pd.qty, pd.confirmed_qty,
+               pd.line_amount, IFNULL(pd.contract, '') AS contract,
+               IFNULL(lv.team, '') AS plan_team, IFNULL(it.team_name, '') AS plan_team_name,
+               IFNULL(lv.team_type, '') AS plan_team_type,
+               IFNULL(lv.subcontractor, '') AS plan_team_sub,
+               (SELECT wd.executed_qty FROM `tabWork Done` wd WHERE wd.system_id = pd.name
+                 ORDER BY wd.creation LIMIT 1) AS wd_qty,
+               (SELECT IFNULL(wd.subcontractor, '') FROM `tabWork Done` wd WHERE wd.system_id = pd.name
+                 ORDER BY wd.creation LIMIT 1) AS wd_subcontractor,
+               (SELECT GROUP_CONCAT(CONCAT(a.subcontractor, ' ', ROUND(a.qty, 4)) ORDER BY a.idx SEPARATOR ' + ')
+                  FROM `tabPO Subcontract Allocation` a
+                 WHERE a.parent = pd.name AND a.parenttype = 'PO Dispatch') AS split,
+               EXISTS (SELECT 1 FROM `tabPO Subcontract Allocation` a
+                        WHERE a.parent = pd.name AND a.parenttype = 'PO Dispatch'
+                          AND a.source = %(admin)s) AS is_override
+        FROM `tabPO Dispatch` pd
+        LEFT JOIN ({LAST_VISIT_SUBCONTRACTOR_SQL}) lv ON lv.po_dispatch = pd.name
+        LEFT JOIN `tabINET Team` it ON it.name = lv.team
+        WHERE pd.name IN %(names)s
+        """,
+        {"names": tuple(names), "admin": ALLOC_FROM_ADMIN}, as_dict=True,
+    )
+    by_name = {r.name: r for r in rows}
+    out = []
+    for n in names:
+        r = by_name.get(n)
+        if not r:
+            continue
+        locks = dispatch_subcontractor_locks(n)
+        locked = {s: i for s, i in locks.items() if i["state"] == SUBCON_LOCKED}
+        r["split_qty"] = (flt(r.wd_qty) if r.wd_qty is not None
+                          else (flt(r.confirmed_qty) or flt(r.qty)))
+        r["is_override"] = bool(r.is_override)
+        r["locked"] = bool(locked)
+        r["lock_text"] = "; ".join(
+            f"{s}: {' / '.join(i['statuses'])}" for s, i in (locked or locks).items())
+        out.append(r)
+    return out
+
+
+@frappe.whitelist()
+def get_subcontractor_reconcile_lines(poids=None, disagreements=0):
+    """Summary rows for many lines — pasted POIDs, or every disagreement.
+
+    ``disagreements=1`` lists lines whose stamped contract names a different
+    party from the team on their last live visit — the pattern behind most
+    corrections. The team is read as it is TODAY, so a team that has since
+    changed supplier shows up here too; that is for the person to judge.
+    """
+    _require_superuser()
+    missing = []
+    if cint(disagreements):
+        from inet_app.api.subcontractor_sync import LAST_VISIT_SUBCONTRACTOR_SQL
+        names = frappe.db.sql_list(
+            f"""
+            SELECT pd.name
+            FROM `tabPO Dispatch` pd
+            JOIN ({LAST_VISIT_SUBCONTRACTOR_SQL}) lv ON lv.po_dispatch = pd.name
+            WHERE IFNULL(pd.contract, '') <> ''
+              AND IFNULL(lv.subcontractor, '') <> ''
+              AND pd.contract <> lv.subcontractor
+              AND IFNULL(pd.dispatch_status, '') <> 'Cancelled'
+            ORDER BY pd.poid
+            LIMIT {_BULK_LIMIT * 4}
+            """
+        )
+    else:
+        wanted = _parse_poids(poids)
+        if len(wanted) > _BULK_LIMIT:
+            frappe.throw(f"Paste at most {_BULK_LIMIT} POIDs at a time.")
+        names = []
+        for key in wanted:
+            name = (key if frappe.db.exists("PO Dispatch", key)
+                    else frappe.db.get_value("PO Dispatch", {"poid": key}, "name"))
+            if name:
+                if name not in names:
+                    names.append(name)
+            else:
+                missing.append(key)
+    return {
+        "rows": _bulk_rows(names),
+        "missing": missing,
+        "subcontractors": frappe.get_all(
+            "Subcontract Master", fields=["name", "subcontractor_name", "type", "sub_payout_pct"],
+            order_by="subcontractor_name", limit_page_length=0),
+    }
+
+
+@frappe.whitelist()
+def set_subcontractor_bulk(po_dispatches, subcontractor, remark=None):
+    """Give each line's whole quantity to one subcontractor.
+
+    Line by line, each committed on its own: one refusal (a submitted supplier
+    PO, a quantity mismatch) must not undo or block the rest of the batch. Each
+    line goes through exactly the checks the single-line save applies.
+    """
+    _require_superuser()
+    subcontractor = cstr(subcontractor).strip()
+    if not subcontractor or not frappe.db.exists("Subcontract Master", subcontractor):
+        frappe.throw(f"Unknown subcontractor: {subcontractor or '(blank)'}")
+    names = _parse_poids(po_dispatches)
+    if not names:
+        frappe.throw("Select at least one line.")
+    if len(names) > _BULK_LIMIT:
+        frappe.throw(f"At most {_BULK_LIMIT} lines at a time.")
+
+    results = []
+    for key in names:
+        res = {"po_dispatch": key, "poid": key}
+        try:
+            name = _resolve_dispatch(key)
+            res["po_dispatch"] = name
+            res["poid"] = frappe.db.get_value("PO Dispatch", name, "poid") or name
+            old = cstr(frappe.db.get_value("PO Dispatch", name, "contract") or "")
+            qty, _wd = _split_total(name)
+            current = frappe.get_all(
+                "PO Subcontract Allocation",
+                filters={"parent": name, "parenttype": "PO Dispatch",
+                         "parentfield": "subcontract_allocations"},
+                fields=["subcontractor", "qty"])
+            if (old == subcontractor and len(current) == 1
+                    and current[0].subcontractor == subcontractor
+                    and abs(flt(current[0].qty) - qty) < 0.0001):
+                res.update(status="unchanged", message=f"Already {subcontractor}")
+                results.append(res)
+                continue
+            frappe.db.savepoint("subcon_bulk")
+            _apply_split(name, [{"subcontractor": subcontractor, "qty": qty}], remark)
+            frappe.db.commit()
+            res.update(status="ok", message=f"{old or '(blank)'} → {subcontractor}")
+        except Exception as exc:
+            try:
+                frappe.db.rollback(save_point="subcon_bulk")
+            except Exception:
+                frappe.db.rollback()
+            frappe.clear_messages()
+            res.update(status="error", message=cstr(exc) or exc.__class__.__name__)
+        results.append(res)
+    return {
+        "results": results,
+        "ok": sum(1 for r in results if r["status"] == "ok"),
+        "unchanged": sum(1 for r in results if r["status"] == "unchanged"),
+        "failed": sum(1 for r in results if r["status"] == "error"),
+    }

@@ -5,6 +5,7 @@ import { missingImRows, imRequiredMessage } from "../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../utils/requiredFields";
 import { money } from "../utils/numberFormat";
 import useFeatureFlags from "../hooks/useFeatureFlags";
+import { SubcontractorSplitTable } from "../pages/pic/picShared";
 
 /**
  * Close lines directly, with or without a milestone scope.
@@ -268,6 +269,9 @@ export default function DirectCloseModal({
                     placeholder={dcSubconLoading ? "Loading…" : "— Select subcontractor —"}
                     disabled={dcBusy || dcSubconLoading || !!subLocked}
                   />
+                  {/* A line already credited to several subcontractors: show who
+                      holds what, so the outstanding quantity goes to the right one. */}
+                  <SubcontractorSplitTable rows={singleRow?.subcontract_allocations} compact />
                 </div>
               );
             })()}

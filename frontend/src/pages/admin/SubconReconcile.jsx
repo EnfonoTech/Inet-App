@@ -2,6 +2,8 @@ import { useState } from "react";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { money, qty as qtyFmt } from "../../utils/numberFormat";
+import { useConfirm } from "../../components/ConfirmDialog";
+import BulkReconcile from "./SubconReconcileBulk";
 
 /**
  * Correct a line's subcontractor split — Administrator only.
@@ -14,6 +16,11 @@ import { money, qty as qtyFmt } from "../../utils/numberFormat";
  *
  * The server enforces the Administrator check (`roles.is_superuser`); hiding
  * the page is only so it stays out of everyone else's way.
+ *
+ * Two tabs: "One line" is the full side-by-side view below; "Multiple lines"
+ * (SubconReconcileBulk.jsx) loads many lines and moves the selected ones to a
+ * single subcontractor. Its state lives here so opening a line from the list
+ * and coming back does not lose the list.
  */
 const card = {
   background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10,
@@ -92,7 +99,13 @@ function SourceTable({ title, rows, cols, empty }) {
 export default function SubconReconcile() {
   const { user } = useAuth();
   const isSuperuser = user?.email === "Administrator";
+  const confirm = useConfirm();
 
+  const [tab, setTab] = useState("single");
+  const [bulk, setBulk] = useState({
+    input: "", source: null, rows: [], missing: [], subcontractors: [],
+    selected: new Set(), results: {}, summary: null, target: "", remark: "",
+  });
   const [poid, setPoid] = useState("");
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState([]);
@@ -108,12 +121,13 @@ export default function SubconReconcile() {
     })));
   }
 
-  async function load(e) {
+  async function load(e, key) {
     e?.preventDefault?.();
-    if (!poid.trim()) return;
+    const target = (key ?? poid).trim();
+    if (!target) return;
     setBusy(true); setErr(null); setMsg(null);
     try {
-      adopt(await pmApi.getSubcontractorReconcile(poid.trim()));
+      adopt(await pmApi.getSubcontractorReconcile(target));
     } catch (e2) {
       setData(null); setErr(e2.message || "Could not load that POID");
     } finally { setBusy(false); }
@@ -168,10 +182,38 @@ export default function SubconReconcile() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Subcontractor reconcile</h1>
-          <div className="page-subtitle">Administrator only · corrects who a line's quantity belongs to</div>
+          <div className="page-subtitle">Administrator only · corrects who a line's quantity belongs to — one line, or many at once</div>
         </div>
       </div>
 
+      <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
+        {[
+          { id: "single", label: "One line" },
+          { id: "multi", label: "Multiple lines", count: bulk.rows.length },
+        ].map((tt) => {
+          const active = tab === tt.id;
+          return (
+            <button key={tt.id} type="button" role="tab" aria-selected={active} onClick={() => setTab(tt.id)}
+              style={{ padding: "5px 14px", fontSize: "0.78rem", fontWeight: 700, border: "none", borderRadius: 6, cursor: "pointer", background: active ? "#1d4ed8" : "transparent", color: active ? "#fff" : "#475569", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {tt.label}
+              {!!tt.count && (
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 6px", borderRadius: 999, fontSize: "0.66rem", fontWeight: 800, background: active ? "#fff" : "#64748b", color: active ? "#1d4ed8" : "#fff" }}>
+                  {tt.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "multi" ? (
+        <BulkReconcile
+          state={bulk}
+          setState={setBulk}
+          confirm={confirm}
+          onOpenLine={(key) => { setPoid(key); setTab("single"); load(null, key); }}
+        />
+      ) : (<>
       <form className="toolbar" onSubmit={load}>
         <input
           value={poid}
@@ -424,6 +466,7 @@ export default function SubconReconcile() {
           )}
         </div>
       </div>
+      </>)}
     </div>
   );
 }

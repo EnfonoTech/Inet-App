@@ -13,6 +13,7 @@ import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { money, qty } from "../../utils/numberFormat";
+import { SubcontractorCell, SubcontractorSplitTable } from "./picShared";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtInt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -91,6 +92,7 @@ function DetailModal({ row, onClose }) {
           hiddenFields={[
             "po_dispatch", "poid", "acceptance", "source", "project_code",
             "invoiced_amount", "vat_amount", "grand_total", "invoice_date",
+            "subcontract_allocations",
           ]}
           keyOrder={[
             "invoice_no", "contract", "sub_contract", "project_domain", "duid",
@@ -100,6 +102,7 @@ function DetailModal({ row, onClose }) {
             "im_full_name", "payment_terms", "dispatch_status",
           ]}
         />
+        <SubcontractorSplitTable rows={row.subcontract_allocations} />
       </div>
     </div>
   );
@@ -355,7 +358,11 @@ export default function PICInvoiceDetail() {
                     data-doc-name={r.po_dispatch}
                     style={idx >= displayLimit ? { display: "none" } : undefined}>
                   <td style={{ fontSize: "0.82rem" }}>{r.contract || "—"}</td>
-                  <td style={{ fontSize: "0.82rem" }}>{r.sub_contract || "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}>
+                    {r.subcontract_allocations?.length > 1
+                      ? <SubcontractorCell rows={r.subcontract_allocations} fallback={r.sub_contract} />
+                      : (r.sub_contract || "—")}
+                  </td>
                   <td style={{ fontSize: "0.82rem" }}>{r.project_domain || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid || r.po_dispatch}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.duid || "—"}</td>

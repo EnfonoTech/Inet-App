@@ -23192,6 +23192,10 @@ def get_project_summary(project_code):
 
     rollout_by_duid = _build_rollout_by_duid_groups(dispatches, plans, executions, work_done)
 
+    # Split lines carry each subcontractor's share for the Sub-Contract tab.
+    from inet_app.api.subcontractor_sync import attach_allocations
+    attach_allocations(dispatches, key="name")
+
     return {
         "project": project,
         "dispatches": dispatches,

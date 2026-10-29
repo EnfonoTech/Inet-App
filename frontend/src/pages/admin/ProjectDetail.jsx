@@ -5,7 +5,7 @@ import { pmApi } from "../../services/api";
 import SearchableSelect from "../../components/SearchableSelect";
 // Same badges the PIC pages use — pic_status / sub_po_status is the same
 // field and vocab here, so it must render identically.
-import { PicStatusBadge, PicMs2Badge, SubPoStatusBadge } from "../pic/picShared";
+import { PicStatusBadge, PicMs2Badge, SubPoStatusBadge, SubcontractorCell, SubcontractorSplitTable } from "../pic/picShared";
 import { money, qty } from "../../utils/numberFormat";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
@@ -686,7 +686,9 @@ export default function ProjectDetail() {
     { key: "subcon_status", label: "Subcon Status", render: v => <Badge value={v} /> },
     { key: "subcon_submission_status", label: "Submission" },
     { key: "subcon_completed_on", label: "Completed On" },
-    { key: "sub_po_supplier", label: "Supplier" },
+    { key: "sub_po_supplier", label: "Supplier", render: (v, row) => (row.subcontract_allocations?.length > 1
+        ? <SubcontractorCell rows={row.subcontract_allocations} fallback={v || row.contract} />
+        : (v ?? "\u2014")) },
     { key: "sub_po_status", label: "Subcon PO", render: v => <SubPoStatusBadge value={v} /> },
     { key: "sub_po_status_ms1", label: "PO Status (MS1)", render: v => <SubPoStatusBadge value={v} /> },
     { key: "sub_po_amount_ms1", label: "Payout (MS1)", align: "right", render: v => v ? money.format(v) : "—" },
@@ -1037,7 +1039,7 @@ export default function ProjectDetail() {
                     ))}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, borderRadius: 8, background: "#fff" }}>
-                  {Object.entries(detailModal.row || {}).map(([k, v]) => (
+                  {Object.entries(detailModal.row || {}).filter(([, v]) => v == null || typeof v !== "object").map(([k, v]) => (
                     <div key={k} style={{ padding: "8px 10px" }}>
                       <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>
                         {k.replace(/_/g, " ").replace(/\b\w/g, (x) => x.toUpperCase())}
@@ -1074,6 +1076,7 @@ export default function ProjectDetail() {
                     </div>
                   ))}
                 </div>
+                <SubcontractorSplitTable rows={detailModal.row?.subcontract_allocations} />
               </div>
             </div>
           </div>
