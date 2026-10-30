@@ -1067,9 +1067,9 @@ def _retire_deduction_poid_field():
 
 
 def _ensure_report_preparation_item():
-    """The expense Item the shipped "Report Preparation" Deduction Type
-    invoices against (see the fixture in hooks.py). Created when missing and
-    never touched after, so edits on the site — accounts, defaults — stay."""
+    """The expense Item the "Report Preparation" Deduction Type invoices
+    against. Created when missing and never touched after, so edits on the
+    site — accounts, defaults — stay."""
     if frappe.db.exists("Item", "Report Preparation"):
         return
     if not (frappe.db.exists("Item Group", "Services") and frappe.db.exists("UOM", "Nos")):

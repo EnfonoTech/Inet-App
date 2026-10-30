@@ -83,24 +83,18 @@ are already Closed, so they are locked — they were settled by hand.
 Only `deduction_type` and `deduct_from` are mandatory. On the **Masters** page
 (it opens Desk to create and edit, like every other master there).
 
-**Shipped, so every site has it after `migrate`** — the fixture is meant for
-the first production update only and is to be removed from `hooks.py` after
-it (decided 27 Oct 2026), so later edits on the site stick:
+**Report Preparation** — Line Value, 100, Retained, expense item →
+`Report Preparation` — is the one deduction type the client uses. It shipped
+as a fixture for the first production update only, and the fixture was then
+removed (30 Oct 2026), so an edit to it on a site now sticks. A new site
+creates it by hand on the Masters page.
 
-| record | how |
-|---|---|
-| **Deduction Type** `Report Preparation` — Line Value, 100, Retained, expense item → `Report Preparation` | fixture, `fixtures/deduction_type.json` (hooks.py, filtered by name) |
-| **Item** `Report Preparation` — non-stock, purchase item, `Services`, `Nos` | `setup._ensure_report_preparation_item`, run from `after_migrate`: created when missing, never touched after |
-
-The Item is deliberately not a fixture. Frappe loads a fixture by deleting
-the record and inserting it again on every `migrate`; an ERPNext Item behind
-real purchase invoices must not go through that, and its accounts and
-defaults set on the site would be lost each time.
-
-The fixture side of that applies to the Deduction Type: **an edit to Report
-Preparation on a site (say 100 → 120) is reverted at the next migrate.**
-Change it in `fixtures/deduction_type.json` instead. Other deduction types
-created on a site are not fixtures and are never touched.
+The expense **Item** `Report Preparation` (non-stock, purchase item,
+`Services`, `Nos`) is still created by `setup._ensure_report_preparation_item`
+from `after_migrate` when it is missing, and never touched after. It was
+never a fixture: Frappe loads a fixture by deleting the record and inserting
+it again on every `migrate`, and an ERPNext Item behind real purchase invoices
+must not go through that.
 
 ### `PO Payout Deduction` — child table `payout_deductions` on PO Dispatch
 

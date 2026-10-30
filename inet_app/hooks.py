@@ -24,14 +24,6 @@ fixtures = [
 		"filters": [["name", "in", ["Huawei Outbound Analytics", "Bill Wise Material Status", "DUID Wise Material Status"]]],
 	},
 	{
-		# The one payout deduction every site needs. Its expense Item is NOT a
-		# fixture: Frappe deletes and re-inserts fixture records on every
-		# migrate, which an ERPNext Item behind real invoices must not go
-		# through — setup._ensure_report_preparation_item creates it instead.
-		"dt": "Deduction Type",
-		"filters": [["name", "in", ["Report Preparation"]]],
-	},
-	{
 		"dt": "Notification",
 		"filters": [["name", "like", "INET Certificate%"]],
 	},
