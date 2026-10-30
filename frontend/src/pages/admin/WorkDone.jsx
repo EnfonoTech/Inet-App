@@ -371,6 +371,8 @@ export default function WorkDone() {
   // Accepts a subcontract list from dashboard drill-through (Sub-Contractor
   // block), matched against the POID's own `contract` link server-side.
   const [subconFilter, setSubconFilter] = useState(_navWD?.subconFilter ?? []);
+  const [contractModelFilter, setContractModelFilter] = useState([]);
+  const [domainFilter, setDomainFilter] = useState([]);
   const [fromDate, setFromDate] = useState(_navWD?.fromDate ?? "");
   const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [detailRow, setDetailRow] = useState(null);
@@ -736,6 +738,8 @@ export default function WorkDone() {
       if (projectFilter.length) filters.project_code = projectFilter;
       if (duidFilter.length) filters.site_code = duidFilter;
       if (subconFilter.length) filters.subcontractor = subconFilter;
+      if (contractModelFilter.length) filters.contract_model = contractModelFilter;
+      if (domainFilter.length) filters.domain = domainFilter;
       if (fromDate) filters.from_date = fromDate;
       if (toDate) filters.to_date = toDate;
       if (searchDebounced.trim()) filters.search = searchDebounced.trim();
@@ -755,7 +759,7 @@ export default function WorkDone() {
       if (Object.keys(colFilters).length) filters.column_filters = colFilters;
       return filters;
   }, [tab, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter,
-      fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, submissionFilter,
+      contractModelFilter, domainFilter, fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, submissionFilter,
       pipelineFilter, ageBandFilter, columnFiltersDebounced]);
 
   useEffect(() => {
@@ -834,6 +838,8 @@ export default function WorkDone() {
     setProjectFilter([]);
     setDuidFilter([]);
     setSubconFilter([]);
+    setContractModelFilter([]);
+    setDomainFilter([]);
     setFromDate("");
     setToDate("");
     setWorkTypeFilter([]);
@@ -880,7 +886,7 @@ export default function WorkDone() {
     setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
   }
 
-  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate || pipelineFilter.length || ageBandFilter.length);
+  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || contractModelFilter.length || domainFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate || pipelineFilter.length || ageBandFilter.length);
 
   // What a Summary card put on the table. Shown as removable chips, because
   // clicking a card used to filter the list with nothing on screen saying
@@ -904,6 +910,10 @@ export default function WorkDone() {
   const projects = dispOpts.project_code || [];
   const duids = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
+  const { options: smOpts } = useFilterOptions("Subcontract Master", ["contract_model"]);
+  const { options: domOpts } = useFilterOptions("Project Domain", ["name"]);
+  const contractModelOptions = (smOpts.contract_model || []).map((v) => ({ id: v, label: v }));
+  const domainOptions = (domOpts.name || []).map((v) => ({ id: v, label: v }));
   const [knownImOptions, setKnownImOptions] = useState([]);
   useEffect(() => {
     if (!rows.length) return;
@@ -1059,6 +1069,24 @@ export default function WorkDone() {
           minWidth={170}
         />
         <SearchableSelect
+          allowBlank
+          multi
+          value={contractModelFilter}
+          onChange={setContractModelFilter}
+          options={contractModelOptions}
+          placeholder="All Contract Models"
+          minWidth={170}
+        />
+        <SearchableSelect
+          allowBlank
+          multi
+          value={domainFilter}
+          onChange={setDomainFilter}
+          options={domainOptions}
+          placeholder="All Domains"
+          minWidth={150}
+        />
+        <SearchableSelect
           multi
           value={submissionFilter}
           onChange={setSubmissionFilter}
@@ -1130,7 +1158,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); setPipelineFilter([]); setAgeBandFilter([]); }}
+            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setContractModelFilter([]); setDomainFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); setPipelineFilter([]); setAgeBandFilter([]); }}
           >
             Clear
           </button>

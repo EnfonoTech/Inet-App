@@ -370,6 +370,8 @@ export default function IMWorkDone() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
+  const [contractModelFilter, setContractModelFilter] = useState([]);
+  const [domainFilter, setDomainFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedRows, setSelectedRows] = useState(new Set());
@@ -944,6 +946,8 @@ export default function IMWorkDone() {
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
         if (subconFilter.length) filters.subcontractor = subconFilter;
+        if (contractModelFilter.length) filters.contract_model = contractModelFilter;
+        if (domainFilter.length) filters.domain = domainFilter;
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
         if (sourceFilter.length) filters.source = sourceFilter;
@@ -983,7 +987,7 @@ export default function IMWorkDone() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, effectiveRowLimit, searchDebounced, projectFilter, duidFilter, subconFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
+  }, [imName, effectiveRowLimit, searchDebounced, projectFilter, duidFilter, subconFilter, contractModelFilter, domainFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, sourceFilter, submissionFilter, execStatusFilter, issueFlagFilter, tab]);
 
   // PIC Rejected tab badge — fetched independently of `tab`/`rows` because
   // the backend now scopes list_work_done_rows to whichever tab is active
@@ -1073,7 +1077,11 @@ export default function IMWorkDone() {
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
-  const hasFilters = !!(search || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
+  const { options: smOpts } = useFilterOptions("Subcontract Master", ["contract_model"]);
+  const { options: domOpts } = useFilterOptions("Project Domain", ["name"]);
+  const contractModelOptions = (smOpts.contract_model || []).map((v) => ({ id: v, label: v }));
+  const domainOptions = (domOpts.name || []).map((v) => ({ id: v, label: v }));
+  const hasFilters = !!(search || submissionFilter.length || execStatusFilter.length || issueFlagFilter.length || sourceFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || contractModelFilter.length || domainFilter.length || fromDate || toDate || legacyPoStatusFilter.length);
 
   const totals = filteredRows.slice(0, displayedCount).reduce(
     (acc, r) => ({
@@ -1176,6 +1184,14 @@ export default function IMWorkDone() {
         <SearchableSelect
               allowBlank multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="All Subcontractors" minWidth={170} />
         )}
+        {tab !== "legacy" && (
+        <SearchableSelect
+              allowBlank multi value={contractModelFilter} onChange={setContractModelFilter} options={contractModelOptions} placeholder="All Contract Models" minWidth={170} />
+        )}
+        {tab !== "legacy" && (
+        <SearchableSelect
+              allowBlank multi value={domainFilter} onChange={setDomainFilter} options={domainOptions} placeholder="All Domains" minWidth={150} />
+        )}
         {tab === "legacy" && (
           <SearchableSelect
               allowBlank
@@ -1209,7 +1225,7 @@ export default function IMWorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
+            onClick={() => { setSearch(""); setSubmissionFilter([]); setExecStatusFilter([]); setIssueFlagFilter([]); setSourceFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setContractModelFilter([]); setDomainFilter([]); setFromDate(""); setToDate(""); setLegacyPoStatusFilter([]); }}
           >
             Clear
           </button>

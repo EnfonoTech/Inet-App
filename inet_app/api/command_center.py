@@ -10637,11 +10637,26 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
         _contract_model_expr_wd = "COALESCE(sm_pd.contract_model, sm_it.contract_model)"
         _subcon_id_expr_wd = "COALESCE(sm_pd.name, sm_it.name)"
 
-    subcontractor_vals = _ensure_list(filters.get("subcontractor"))
-    if subcontractor_vals and subcon_join_wd:
-        ph_sc = ", ".join(["%s"] * len(subcontractor_vals))
-        wheres.append(f"{_subcon_id_expr_wd} IN ({ph_sc})")
-        params.extend(subcontractor_vals)
+    # The line's domain wins; the project's is the fallback — the same rule the
+    # Domain cell renders (_enrich_with_project_fields).
+    _wd_domain_expr = (
+        "COALESCE(NULLIF(pd.project_domain,''), NULLIF(pd_sys.project_domain,''), "
+        "(SELECT project_domain FROM `tabProject Control Center` "
+        "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
+    )
+    # Toolbar dropdowns: Subcontractor, Contract Model, Domain. Each accepts
+    # FILTER_BLANK, which a plain IN could never match.
+    for _expr, _key in ((_subcon_id_expr_wd, "subcontractor"),
+                        (_contract_model_expr_wd, "contract_model")):
+        if subcon_join_wd:
+            clause, p = _sql_in_or_eq(_expr, filters.get(_key))
+            if clause:
+                wheres.append(clause)
+                params.extend(p)
+    clause, p = _sql_in_or_eq(_wd_domain_expr, filters.get("domain"))
+    if clause:
+        wheres.append(clause)
+        params.extend(p)
 
     # Per-column "Manage Table" filters — see list_im_rollout_plans for the
     # rationale (each column matched independently and ANDed, not blended
@@ -10723,11 +10738,7 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
             "IF(COALESCE(NULLIF(pd.pic_status_ms2,''), pd_sys.pic_status_ms2, '') = '', 'Work Not Done', "
             "COALESCE(NULLIF(pd.pic_status_ms2,''), pd_sys.pic_status_ms2, '')))"
         ),
-        "domain": (
-            "COALESCE(NULLIF(pd.project_domain,''), NULLIF(pd_sys.project_domain,''), "
-            "(SELECT project_domain FROM `tabProject Control Center` "
-            "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
-        ),
+        "domain": _wd_domain_expr,
         "huawei_im": (
             "IFNULL((SELECT huawei_im FROM `tabProject Control Center` "
             "WHERE name = COALESCE(NULLIF(pd.project_code,''), pd_sys.project_code)), '')"
@@ -10983,12 +10994,13 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
         return _synthesize_subcon_workdone_rows(filters) or []
 
     order_index = {n: i for i, n in enumerate(wd_ids)}
-    rows = frappe.get_all(
+    # Chunked: on "All" this is every Work Done (20k+), past sqlparse's limit.
+    rows = [r for chunk in _chunked(wd_ids) for r in frappe.get_all(
         "Work Done",
-        filters={"name": ["in", wd_ids]},
+        filters={"name": ["in", chunk]},
         fields=wd_fields,
-        limit_page_length=len(wd_ids) + 1,
-    )
+        limit_page_length=len(chunk) + 1,
+    )]
     rows.sort(key=lambda r: order_index.get(r.name, 10**9))
 
     # NOTE: `limit_page_length` below is deliberately `len(<names>) + 1`, not a
@@ -11011,12 +11023,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
         if _team_rating_columns_exist():
             de_fields.extend([f for f, _ in TEAM_RATING_FIELDS])
             de_fields.extend(["rating_remark", "rated_by", "rated_on"])
-        ex_rows = frappe.get_all(
+        ex_rows = [r for chunk in _chunked(exec_names) for r in frappe.get_all(
             "Daily Execution",
-            filters={"name": ["in", exec_names]},
+            filters={"name": ["in", chunk]},
             fields=de_fields,
-            limit_page_length=len(exec_names) + 1,
-        )
+            limit_page_length=len(chunk) + 1,
+        )]
         ex_map = {e.name: e for e in ex_rows}
 
     plan_names = [e.rollout_plan for e in ex_map.values() if e.rollout_plan]
@@ -11027,12 +11039,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
             rp_fields_wd.append("region_type")
         if frappe.db.has_column("Rollout Plan", "im"):
             rp_fields_wd.append("im")
-        rp_rows = frappe.get_all(
+        rp_rows = [r for chunk in _chunked(plan_names) for r in frappe.get_all(
             "Rollout Plan",
-            filters={"name": ["in", plan_names]},
+            filters={"name": ["in", chunk]},
             fields=rp_fields_wd,
-            limit_page_length=len(plan_names) + 1,
-        )
+            limit_page_length=len(chunk) + 1,
+        )]
         rp_map = {r.name: r for r in rp_rows}
 
     dispatch_names = [r.po_dispatch for r in rp_map.values() if r.po_dispatch]
@@ -11080,12 +11092,12 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
                     "remaining_qty_action", "confirmation_date", "cancel_request_status"):
             if frappe.db.has_column("PO Dispatch", opt):
                 pd_fields_wd.append(opt)
-        pd_rows = frappe.get_all(
+        pd_rows = [r for chunk in _chunked(all_dispatch_names) for r in frappe.get_all(
             "PO Dispatch",
-            filters={"name": ["in", all_dispatch_names]},
+            filters={"name": ["in", chunk]},
             fields=pd_fields_wd,
-            limit_page_length=len(all_dispatch_names) + 1,
-        )
+            limit_page_length=len(chunk) + 1,
+        )]
         pd_map = {p.name: p for p in pd_rows}
 
     team_prefetch = set()
@@ -11360,11 +11372,21 @@ def _synthesize_subcon_workdone_rows(filters, _summary=None):
         params.extend(terminal_ms_sub)
         params.extend(terminal_ms_sub)
 
-    subcontractor_vals = _ensure_list(f.get("subcontractor"))
-    if subcontractor_vals and subcon_join_sub:
-        ph_sc = ", ".join(["%s"] * len(subcontractor_vals))
-        where.append(f"{_subcon_id_expr_sub} IN ({ph_sc})")
-        params.extend(subcontractor_vals)
+    # Same three toolbar dropdowns as list_work_done_rows' main path.
+    for _expr, _key in ((_subcon_id_expr_sub, "subcontractor"),
+                        (_contract_model_expr_sub, "contract_model")):
+        if subcon_join_sub:
+            c, p = _sql_in_or_eq(_expr, f.get(_key))
+            if c:
+                where.append(c)
+                params.extend(p)
+    c, p = _sql_in_or_eq(
+        "COALESCE(NULLIF(pd.project_domain,''), (SELECT project_domain FROM "
+        "`tabProject Control Center` WHERE name = pd.project_code), '')",
+        f.get("domain"))
+    if c:
+        where.append(c)
+        params.extend(p)
 
     im_vals = _ensure_list(f.get("im"))
     if im_vals:
