@@ -215,6 +215,8 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
               width: "min(520px, 96vw)",
               boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
               padding: 18,
+              // Rendered inside a table cell — don't inherit its nowrap/alignment.
+              whiteSpace: "normal", textAlign: "left",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -249,12 +251,13 @@ export default function RemarksCell({ value, tone = "general", poDispatch, poid,
               }}>
                 {lines.map((ln, i) => (
                   <span key={i} style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    padding: "5px 10px", borderRadius: 999,
+                    display: "inline-flex", alignItems: "flex-start", gap: 6,
+                    padding: "5px 10px", borderRadius: 12,
                     background: "#fff", border: "1px solid #e2e8f0",
                     fontSize: "0.78rem", color: "#1e293b",
+                    maxWidth: "100%", boxSizing: "border-box", overflowWrap: "anywhere",
                   }}>
-                    <span style={{ width: 6, height: 6, borderRadius: 999, background: t.dot }} />
+                    <span style={{ width: 6, height: 6, borderRadius: 999, background: t.dot, flexShrink: 0, marginTop: 5 }} />
                     {ln}
                   </span>
                 ))}
