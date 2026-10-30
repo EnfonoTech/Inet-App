@@ -9,6 +9,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
@@ -179,6 +180,7 @@ export default function PICInvoiceDetail() {
   const [imFilter, setImFilter] = useState([]);
   const [monthFilter, setMonthFilter] = useState([]);
   const [acceptanceFilter, setAcceptanceFilter] = useState([]);
+  const attr = useLineAttributeFilters();
   const [detailRow, setDetailRow] = useState(null);
 
   const [refreshKey, setRefreshKey] = useState(0);
@@ -196,6 +198,7 @@ export default function PICInvoiceDetail() {
       if (imFilter.length) portal.im = imFilter;
       if (monthFilter.length) portal.invoice_month = monthFilter;
       if (acceptanceFilter.length) portal.acceptance = acceptanceFilter;
+      attr.apply(portal);
       // Must fold in BEFORE the signature — the skip-refetch guard below
       // compares it, so a column-filter change added afterwards would look
       // identical and the fetch would be skipped entirely.
@@ -230,7 +233,7 @@ export default function PICInvoiceDetail() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, imFilter, monthFilter, acceptanceFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, imFilter, monthFilter, acceptanceFilter, attr.key, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code"]);
   const projectOptions = dispOpts.project_code || [];
@@ -251,7 +254,7 @@ export default function PICInvoiceDetail() {
   }, [rows]);
 
   const hasFilters = !!(search || projectFilter.length || duidFilter.length || imFilter.length
-    || monthFilter.length || acceptanceFilter.length);
+    || monthFilter.length || acceptanceFilter.length || attr.active);
 
   const totals = useMemo(() => {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
@@ -292,8 +295,9 @@ export default function PICInvoiceDetail() {
               allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <LineAttributeFilters attr={attr} />
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setImFilter([]); setMonthFilter([]); setAcceptanceFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setImFilter([]); setMonthFilter([]); setAcceptanceFilter([]); attr.reset(); }}>
             Clear
           </button>
         )}

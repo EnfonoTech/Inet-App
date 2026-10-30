@@ -11,6 +11,7 @@ import TableRowsLimitFooter from "../../components/TableRowsLimitFooter";
 import { EXECUTION_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import IMNoteCallout from "../../components/IMNoteCallout";
 import RemarksPanel from "../../components/RemarksPanel";
@@ -188,6 +189,7 @@ export default function ExecutionMonitor() {
   const [projectFilter, setProjectFilter] = useState(_navExec?.projectFilter ?? []);
   const [teamFilter, setTeamFilter] = useState(_navExec?.teamFilter ?? []);
   const [duidFilter, setDuidFilter] = useState(_navExec?.duidFilter ?? []);
+  const attr = useLineAttributeFilters();
   const [fromDate, setFromDate] = useState(_navExec?.fromDate ?? "");
   const [toDate, setToDate] = useState(_navExec?.toDate ?? "");
   const [tab, setTab] = useState(_navExec?.tab ?? "all"); // "all" | "internal_done"
@@ -352,6 +354,7 @@ export default function ExecutionMonitor() {
         if (teamFilter.length) filters.team = teamFilter;
         if (projectFilter.length) filters.project_code = projectFilter;
         if (duidFilter.length) filters.site_code = duidFilter;
+        attr.apply(filters);
         if (fromDate) filters.from_date = fromDate;
         if (toDate) filters.to_date = toDate;
         if (searchDebounced.trim()) filters.search = searchDebounced.trim();
@@ -407,7 +410,7 @@ export default function ExecutionMonitor() {
         intervalRef.current = null;
       }
     };
-  }, [effectiveRowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab, navBucket, navClosure, navVisits]);
+  }, [effectiveRowLimit, searchDebounced, planStatusFilter, executionStatusFilter, visitFilter, imFilter, projectFilter, teamFilter, duidFilter, attr.key, fromDate, toDate, refreshKey, columnFiltersDebounced, internalImFilter, internalTeamFilter, internalDomainFilter, internalTypeFilter, internalFromDate, internalToDate, tab, navBucket, navClosure, navVisits]);
 
   function formatTime(d) {
     if (!d) return "";
@@ -436,7 +439,7 @@ export default function ExecutionMonitor() {
     });
   }, [rows]);
 
-  const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || imFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate);
+  const hasFilters = !!(searchDebounced || planStatusFilter.length || executionStatusFilter.length || visitFilter.length || imFilter.length || projectFilter.length || teamFilter.length || duidFilter.length || attr.active || fromDate || toDate);
 
   // Internal work has no Work Done record — once its Execution Status is
   // Completed it moves out of the main table and into its own archive tab,
@@ -630,6 +633,7 @@ export default function ExecutionMonitor() {
               allowBlank multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <LineAttributeFilters attr={attr} />
         <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
         {hasFilters && (
           <button
@@ -644,6 +648,7 @@ export default function ExecutionMonitor() {
               setProjectFilter([]);
               setTeamFilter([]);
               setDuidFilter([]);
+              attr.reset();
               setFromDate("");
               setToDate("");
             }}
@@ -878,6 +883,8 @@ export default function ExecutionMonitor() {
                   <th>Activity Type</th>
                   <th>Project</th>
                   <th>Domain</th>
+                  <th>Subcontractor</th>
+                  <th>Contract Model</th>
                   <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
@@ -905,7 +912,7 @@ export default function ExecutionMonitor() {
               <tbody>
                 {mainRows.length === 0 ? (
                   <tr>
-                    <td colSpan={31} style={{ padding: 0 }}>
+                    <td colSpan={33} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
                           Loading execution data…
@@ -940,6 +947,8 @@ export default function ExecutionMonitor() {
                       <td style={{ fontSize: "0.82rem" }}>{row.activity_type || "—"}</td>
                       <td>{row.project_code || "—"}</td>
                       <td>{row.project_domain || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.subcontractor || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{row.contract_model || "—"}</td>
                       <td>{row.huawei_im || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={row.site_name || ""}>{row.site_code || "—"}</td>
                       <td style={{ fontSize: "0.78rem", maxWidth: 120 }} title={row.center_area || ""}>
@@ -1037,7 +1046,7 @@ export default function ExecutionMonitor() {
                     <td style={{ padding: "8px 16px", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                       {displayedMainCount} rows
                     </td>{/* Plan */}
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     {/* POID · Dummy POID · Item code · Description · Activity Type · Project · Domain ·
                         Huawei IM · DUID · Center area · Region · Team · IM · Plan Date · Access Time ·
                         Access · Visit Type · Visit No */}

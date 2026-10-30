@@ -11,6 +11,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
@@ -167,6 +168,7 @@ export default function PICPending() {
   const [poStatusFilter, setPoStatusFilter] = useState([]);
   const [imStatusFilter, setImStatusFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
+  const attr = useLineAttributeFilters({ withSubcontractor: false });
 
   const [showBulk, setShowBulk] = useState(false);
   const [bulkMilestone, setBulkMilestone] = useState("MS1");
@@ -198,6 +200,7 @@ export default function PICPending() {
       if (poStatusFilter.length) portal.dispatch_status = poStatusFilter;
       if (imStatusFilter.length) portal.im_status = imStatusFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
+      attr.apply(portal);
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) portal.column_filters = colFilters;
       const signature = JSON.stringify([portal, refreshKey]);
@@ -238,14 +241,14 @@ export default function PICPending() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, poStatusFilter, imStatusFilter, subconFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, poStatusFilter, imStatusFilter, subconFilter, attr.key, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || poStatusFilter.length || imStatusFilter.length || subconFilter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || poStatusFilter.length || imStatusFilter.length || subconFilter.length || attr.active);
 
   const totals = useMemo(() => {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
@@ -360,9 +363,10 @@ export default function PICPending() {
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <SearchableSelect multi value={poStatusFilter} onChange={setPoStatusFilter} options={PO_STATUSES} placeholder="PO Status" minWidth={150} />
         <SearchableSelect multi value={imStatusFilter} onChange={setImStatusFilter} options={IM_STATUSES} placeholder="IM Status" minWidth={160} />
-        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <SearchableSelect allowBlank multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <LineAttributeFilters attr={attr} />
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setImStatusFilter([]); setSubconFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setImStatusFilter([]); setSubconFilter([]); attr.reset(); }}>
             Clear
           </button>
         )}

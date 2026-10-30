@@ -11,6 +11,7 @@ import { pmApi } from "../../services/api";
 import IMPlanningExecutionModal from "./IMPlanningExecutionModal";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import RecordDetailView from "../../components/RecordDetailView";
@@ -83,6 +84,7 @@ export default function IMPlanning() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const attr = useLineAttributeFilters();
   const [dummyFilter, setDummyFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -220,6 +222,7 @@ export default function IMPlanning() {
       if (projectFilter.length) portal.project_code = projectFilter;
       if (teamFilter.length) portal.team = teamFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
+      attr.apply(portal);
       if (fromDate) portal.from_date = fromDate;
       if (toDate) portal.to_date = toDate;
       if (dummyFilter) portal.dummy_preset = "dummy";
@@ -274,6 +277,7 @@ export default function IMPlanning() {
     projectFilter,
     teamFilter,
     duidFilter,
+    attr.key,
     fromDate,
     toDate,
     refreshKey,
@@ -346,7 +350,7 @@ export default function IMPlanning() {
     }
   }
 
-  const hasFilters = !!(visitFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate || dummyFilter);
+  const hasFilters = !!(visitFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || attr.active || fromDate || toDate || dummyFilter);
   const totalAmt = plans.reduce((s, p) => s + (p.target_amount || 0), 0);
   const selectedAmt = plans
     .filter((p) => selected.has(p.name))
@@ -504,6 +508,7 @@ export default function IMPlanning() {
               allowBlank multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
           <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+          <LineAttributeFilters attr={attr} />
           <button
             type="button"
             style={{
@@ -521,7 +526,7 @@ export default function IMPlanning() {
             <button
               className="btn-secondary"
               style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setSearch(""); setVisitFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setDummyFilter(""); setFromDate(""); setToDate(""); }}
+              onClick={() => { setSearch(""); setVisitFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); attr.reset(); setDummyFilter(""); setFromDate(""); setToDate(""); }}
             >
               Clear
             </button>
@@ -598,6 +603,8 @@ export default function IMPlanning() {
                   <th>Activity Type</th>
                   <th>DUID</th>
                   <th>Domain</th>
+                  <th>Subcontractor</th>
+                  <th>Contract Model</th>
                   <th>Huawei IM</th>
                   <th>Center area</th>
                   <th>Region</th>
@@ -650,6 +657,8 @@ export default function IMPlanning() {
                     <td style={{ fontSize: "0.82rem" }}>{p.activity_type || "—"}</td>
                     <td>{p.site_code || "—"}</td>
                     <td>{p.project_domain || p.internal_domain || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.subcontractor || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{p.contract_model || "—"}</td>
                     <td>{p.huawei_im || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={p.center_area || ""}>
                       {p.center_area || "—"}
@@ -754,7 +763,7 @@ export default function IMPlanning() {
                         </span>
                       )}
                     </td>
-                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
+                    <td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td /><td />
                     <td style={{ textAlign: "right", fontWeight: 700, padding: "8px 16px", color: "#0f172a" }}>
                       {money.format(totalAmt)}
                     </td>

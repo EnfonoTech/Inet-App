@@ -11,6 +11,7 @@ import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
 import { missingFields, missingFieldsMessage } from "../../utils/requiredFields";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import DirectCloseModal from "../../components/DirectCloseModal";
 import useFeatureFlags from "../../hooks/useFeatureFlags";
 import DirectCloseApprovalModal from "../../components/DirectCloseApprovalModal";
@@ -471,6 +472,8 @@ export default function IMPOIntake() {
   const [ovModeFilter, setOvModeFilter] = useState("all"); // kept for API but hidden from UI
   const [ovPlanStatusFilter, setOvPlanStatusFilter] = useState([]);
   const [ovDuidFilter, setOvDuidFilter] = useState([]);
+  // Subcontractor + Contract Model; this tab keeps its own Domain dropdown.
+  const ovAttr = useLineAttributeFilters({ withDomain: false });
   const [ovTeamFilter, setOvTeamFilter] = useState([]);
   const [ovFromDate, setOvFromDate] = useState("");
   const [ovToDate, setOvToDate] = useState("");
@@ -668,6 +671,7 @@ export default function IMPOIntake() {
         if (ovDomainFilter.length) portal.domain = ovDomainFilter;
         if (ovStatusFilter.length) portal.dispatch_status = ovStatusFilter;
         if (ovDuidFilter.length) portal.site_code = ovDuidFilter;
+        ovAttr.apply(portal);
         if (ovFromDate) portal.from_date = ovFromDate;
         if (ovToDate) portal.to_date = ovToDate;
         if (ovDirectCloseOnly) portal.direct_close_only = true;
@@ -701,7 +705,7 @@ export default function IMPOIntake() {
       }
     })();
     return () => { cancelled = true; };
-  }, [imName, tab, effectiveOvRowLimit, ovSearchDebounced, ovProjectFilter, ovDomainFilter, ovStatusFilter, ovDuidFilter, ovFromDate, ovToDate, ovDirectCloseOnly, ovRefreshKey, ovColumnFiltersDebounced]);
+  }, [imName, tab, effectiveOvRowLimit, ovSearchDebounced, ovProjectFilter, ovDomainFilter, ovStatusFilter, ovDuidFilter, ovAttr.key, ovFromDate, ovToDate, ovDirectCloseOnly, ovRefreshKey, ovColumnFiltersDebounced]);
 
   // ── Transfers load (outgoing + incoming, merged; split by sub-tab client-side) ──
   useEffect(() => {
@@ -1443,7 +1447,7 @@ export default function IMPOIntake() {
     [ovFilteredRows],
   );
 
-  const hasOvFilters = !!(ovSearch || ovProjectFilter.length || ovDomainFilter.length || ovStatusFilter.length || ovDuidFilter.length || ovTeamFilter.length || ovPlanStatusFilter.length || ovFromDate || ovToDate || ovDirectCloseOnly);
+  const hasOvFilters = !!(ovSearch || ovProjectFilter.length || ovDomainFilter.length || ovStatusFilter.length || ovDuidFilter.length || ovAttr.active || ovTeamFilter.length || ovPlanStatusFilter.length || ovFromDate || ovToDate || ovDirectCloseOnly);
   const filteredDummyRows = useMemo(() => {
     let rows_ = dummyRows;
     if (dummyDomainFilter.length) rows_ = rows_.filter((r) => dummyDomainFilter.includes(r.project_domain));
@@ -1682,6 +1686,7 @@ export default function IMPOIntake() {
           <SearchableSelect multi value={ovDomainFilter} onChange={setOvDomainFilter} options={ovDomainOptions} placeholder="Domain" minWidth={130} />
           <SearchableSelect multi value={ovStatusFilter} onChange={setOvStatusFilter} options={ovStatusOptions} placeholder="Status" minWidth={140} />
           <SearchableSelect multi value={ovDuidFilter} onChange={setOvDuidFilter} options={ovDuidOptions} placeholder="DUID" minWidth={120} />
+          <LineAttributeFilters attr={ovAttr} />
           {ovTeamOptions.length > 0 && (
             <SearchableSelect multi value={ovTeamFilter} onChange={setOvTeamFilter} options={ovTeamOptions} placeholder="Team" minWidth={130} />
           )}
@@ -1699,7 +1704,7 @@ export default function IMPOIntake() {
           </button>
           {hasOvFilters && (
             <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-              onClick={() => { setOvSearch(""); setOvProjectFilter([]); setOvDomainFilter([]); setOvStatusFilter([]); setOvDuidFilter([]); setOvTeamFilter([]); setOvPlanStatusFilter([]); setOvFromDate(""); setOvToDate(""); setOvDirectCloseOnly(false); }}>
+              onClick={() => { setOvSearch(""); setOvProjectFilter([]); setOvDomainFilter([]); setOvStatusFilter([]); setOvDuidFilter([]); ovAttr.reset(); setOvTeamFilter([]); setOvPlanStatusFilter([]); setOvFromDate(""); setOvToDate(""); setOvDirectCloseOnly(false); }}>
               Clear filters
             </button>
           )}
@@ -2200,6 +2205,8 @@ export default function IMPOIntake() {
                     <th>PO No</th>
                     <th>Project</th>
                     <th>Domain</th>
+                    <th>Subcontractor</th>
+                    <th>Contract Model</th>
                     <th>DUID</th>
                     <th>Center Area</th>
                     <th>Region</th>
@@ -2227,7 +2234,7 @@ export default function IMPOIntake() {
                 <tbody>
                   {ovFilteredRows.length === 0 ? (
                     <tr>
-                      <td colSpan={26} style={{ padding: 0 }}>
+                      <td colSpan={28} style={{ padding: 0 }}>
                         {ovLoading ? (
                           <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                         ) : (
@@ -2305,6 +2312,8 @@ export default function IMPOIntake() {
                         <td style={{ fontSize: "0.82rem" }}>{row.po_no || "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.project_code || "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.project_domain || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.contract || "—"}</td>
+                        <td style={{ fontSize: "0.82rem" }}>{row.contract_model || "—"}</td>
                         <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{row.site_code || "—"}</td>
                         <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={row.center_area || ""}>{row.center_area || "—"}</td>
                         <td style={{ fontSize: "0.82rem" }}>{row.region_type || "—"}</td>
@@ -2338,14 +2347,16 @@ export default function IMPOIntake() {
                 </tbody>
                 {ovFilteredRows.length > 0 && (
                   <tfoot>
-                    {/* POID·Dispatch Status·Closed Via·Mode·PO No·Project·Domain·DUID·
-                        Center Area·Region·Item Code·Description·Activity Type = 13 columns, then Qty·Line Amount (SAR),
+                    {/* POID·Dispatch Status·Closed Via·Mode·PO No·Project·Domain·Subcontractor·Contract Model·DUID·
+                        Center Area·Region·Item Code·Description·Activity Type = 15 columns, then Qty·Line Amount (SAR),
                         then Target Month..Actions = 10 columns */}
                     <tr style={{ borderTop: "2px solid #e2e8f0", background: "#f8fafc" }}>
                       <td />{/* select */}
                       <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }}>
                         {ovDisplayedCount} row{ovDisplayedCount !== 1 ? "s" : ""}
                       </td>
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />

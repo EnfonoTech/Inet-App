@@ -11,6 +11,7 @@ import { pmApi } from "../../services/api";
 import { EXECUTION_STATUS_OPTIONS, TL_STATUS_OPTIONS, ISSUE_CATEGORY_OPTIONS } from "../../constants/executionStatuses";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import RecordDetailView from "../../components/RecordDetailView";
 import PlanDsaMapping from "../../components/PlanDsaMapping";
 import PlanTeamsBreakdown from "../../components/PlanTeamsBreakdown";
@@ -163,6 +164,7 @@ export default function IMExecution() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const attr = useLineAttributeFilters();
   const [dummyFilter, setDummyFilter] = useState("");
   const location = useLocation();
   const _navExec = location.state?.execFilters;
@@ -374,6 +376,7 @@ export default function IMExecution() {
         if (projectFilter.length) portal.project_code = projectFilter;
         if (teamFilter.length) portal.team = teamFilter;
         if (duidFilter.length) portal.site_code = duidFilter;
+        attr.apply(portal);
         if (fromDate) portal.from_date = fromDate;
         if (toDate) portal.to_date = toDate;
         if (dummyFilter) portal.dummy_preset = "dummy";
@@ -427,6 +430,7 @@ export default function IMExecution() {
     projectFilter,
     teamFilter,
     duidFilter,
+    attr.key,
     fromDate,
     toDate,
     refreshKey,
@@ -519,7 +523,7 @@ export default function IMExecution() {
     internalTypeFilter.length || internalFromDate || internalToDate
   );
 
-  const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || fromDate || toDate || dummyFilter);
+  const hasFilters = !!(statusFilter.length || qcFilter.length || ciagFilter.length || search || projectFilter.length || teamFilter.length || duidFilter.length || attr.active || fromDate || toDate || dummyFilter);
   const totalAchieved = executions.slice(0, displayLimit).reduce((s, e) => s + (e.achieved_qty || 0), 0);
   // Multi-team plans have one Daily Execution per team but only ONE
   // Work Done per plan. De-duplicate by rollout_plan: surface a single
@@ -1386,6 +1390,7 @@ export default function IMExecution() {
               allowBlank multi value={teamFilter} onChange={setTeamFilter} options={teamEntries.map(([id, label]) => ({ id, label }))} placeholder="All Teams" minWidth={150} />
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
+        <LineAttributeFilters attr={attr} />
         <button
           type="button"
           style={{
@@ -1403,7 +1408,7 @@ export default function IMExecution() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); setDummyFilter(""); setFromDate(""); setToDate(""); }}
+            onClick={() => { setSearch(""); setStatusFilter([]); setQcFilter([]); setCiagFilter([]); setProjectFilter([]); setTeamFilter([]); setDuidFilter([]); attr.reset(); setDummyFilter(""); setFromDate(""); setToDate(""); }}
           >
             Clear
           </button>
@@ -1625,6 +1630,8 @@ export default function IMExecution() {
                   <th>Activity Type</th>
                   <th>Project</th>
                   <th>Domain</th>
+                  <th>Subcontractor</th>
+                  <th>Contract Model</th>
                   <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
@@ -1683,6 +1690,8 @@ export default function IMExecution() {
                     <td style={{ fontSize: "0.82rem" }}>{e.activity_type || "—"}</td>
                     <td>{e.project_code || "—"}</td>
                     <td>{e.project_domain || e.internal_domain || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{e.subcontractor || "—"}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{e.contract_model || "—"}</td>
                     <td>{e.huawei_im || "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={e.site_name || ""}>{e.site_code || "—"}</td>
                     <td style={{ fontSize: "0.82rem", maxWidth: 120 }} title={e.center_area || ""}>
@@ -1850,6 +1859,8 @@ export default function IMExecution() {
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }}>
                       {displayedExecCount} row{displayedExecCount !== 1 ? "s" : ""}
                     </td>
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />
+                    <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />
                     <td style={{ padding: "10px 16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontWeight: 700, fontSize: "0.78rem" }} />

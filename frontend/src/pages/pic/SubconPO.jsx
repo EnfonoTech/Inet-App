@@ -637,6 +637,7 @@ export default function SubconPO() {
   const [subconFilter, setSubconFilter] = useState([]);
   const [supplierFilter, setSupplierFilter] = useState([]);
   const [modelFilter, setModelFilter] = useState([]);
+  const [domainFilter, setDomainFilter] = useState([]);
   const [statusFilter, setStatusFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [poFilter, setPoFilter] = useState([]);
@@ -747,6 +748,7 @@ export default function SubconPO() {
       if (subconFilter.length) portal.subcontract = subconFilter;
       if (supplierFilter.length) portal.supplier = supplierFilter;
       if (modelFilter.length) portal.contract_model = modelFilter;
+      if (domainFilter.length) portal.domain = domainFilter;
       if (statusFilter.length) portal.sub_po_status = statusFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       if (poFilter.length) portal.purchase_order = poFilter;
@@ -792,22 +794,23 @@ export default function SubconPO() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, searchDebounced, columnFiltersDebounced, projectFilter, subconFilter, supplierFilter, modelFilter,
+  }, [tab, searchDebounced, columnFiltersDebounced, projectFilter, subconFilter, supplierFilter, modelFilter, domainFilter,
       statusFilter, duidFilter, poFilter, dateRange, rowLimit, refreshKey, invoiceWindow]);
 
   const projectOptions = options.project_code || [];
   const subconOptions = (options.subcontract || []).map((v) => ({ id: v, label: v }));
   const supplierOptions = (options.supplier || []).map((v) => ({ id: v, label: v }));
   const modelOptions = options.contract_model || [];
+  const domainOptions = (options.domain || []).map((v) => ({ id: v, label: v }));
   const duidOptions = (options.site_code || []).map((v) => ({ id: v, label: v }));
 
   const hasFilters = !!(search || projectFilter.length || subconFilter.length
-    || supplierFilter.length || modelFilter.length || statusFilter.length
+    || supplierFilter.length || modelFilter.length || domainFilter.length || statusFilter.length
     || duidFilter.length || poFilter.length || dateRange.from || dateRange.to);
 
   function clearFilters() {
     setSearch(""); setProjectFilter([]); setSubconFilter([]); setSupplierFilter([]);
-    setModelFilter([]); setStatusFilter([]); setDuidFilter([]); setPoFilter([]);
+    setModelFilter([]); setDomainFilter([]); setStatusFilter([]); setDuidFilter([]); setPoFilter([]);
     setDateRange({ from: "", to: "" });
   }
 
@@ -1156,7 +1159,7 @@ export default function SubconPO() {
     }
   }
 
-  const COLS = 35;
+  const COLS = 36;
 
   return (
     <div>
@@ -1250,6 +1253,7 @@ export default function SubconPO() {
         <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={170} />
         <SearchableSelect multi value={supplierFilter} onChange={setSupplierFilter} options={supplierOptions} placeholder="Supplier" minWidth={160} />
         <SearchableSelect multi value={modelFilter} onChange={setModelFilter} options={modelOptions} placeholder="Contract Model" minWidth={150} />
+        <SearchableSelect allowBlank multi value={domainFilter} onChange={setDomainFilter} options={domainOptions} placeholder="All Domains" minWidth={150} />
         <SearchableSelect
               allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={150} />
         <SearchableSelect multi value={statusFilter} onChange={setStatusFilter} options={SUB_PO_STATUSES} placeholder="Subcon PO Status" minWidth={165} />
@@ -1343,6 +1347,7 @@ export default function SubconPO() {
                 <th>POID</th>
                 <th>PO No</th>
                 <th>Project</th>
+                <th>Domain</th>
                 <th>DUID</th>
                 {/* One rolled-up status for the whole line — the two
                     per-milestone status columns were dropped in favour of it.
@@ -1424,6 +1429,7 @@ export default function SubconPO() {
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.poid}</td>
                   <td>{r.po_no || "—"}</td>
                   <td title={r.project_name || ""}>{r.project_code || "—"}</td>
+                  <td>{r.project_domain || "—"}</td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }} title={r.site_name || ""}>{r.site_code || "—"}</td>
                   {/* Plain rollup — the Subcon MS1 / MS2 columns show which
                       leg a "Partially …" refers to, so no qualifier needed. */}
@@ -1524,6 +1530,7 @@ export default function SubconPO() {
                   <td></td>{/* POID */}
                   <td></td>{/* PO No */}
                   <td></td>{/* Project */}
+                  <td></td>{/* Domain */}
                   <td></td>{/* DUID */}
                   <td></td>{/* Subcon Status */}
                   <td></td>{/* Item */}

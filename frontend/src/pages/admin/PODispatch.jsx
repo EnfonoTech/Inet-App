@@ -7,6 +7,8 @@ import { useDebounced } from "../../hooks/useDebounced";
 import PageSummary from "../../components/PageSummary";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
+import LineLifecycle from "../../components/LineLifecycle";
 import RecordDetailView, { DetailHero, DetailStatTile } from "../../components/RecordDetailView";
 import DateRangePicker from "../../components/DateRangePicker";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -123,15 +125,19 @@ function Modal({ open, onClose, title, children, width = 480 }) {
       background: "rgba(15,23,42,0.5)", display: "flex",
       alignItems: "center", justifyContent: "center",
     }} onClick={onClose}>
+      {/* Capped to the viewport with the body scrolling under a fixed title —
+          without it a long popup (the line detail) ran off both edges with
+          no way to scroll, since the overlay is centred and fixed. */}
       <div style={{
         background: "#fff", borderRadius: 14, padding: "28px 32px",
         width, maxWidth: "95vw", boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+        maxHeight: "calc(100vh - 40px)", display: "flex", flexDirection: "column", boxSizing: "border-box",
       }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexShrink: 0 }}>
           <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700 }}>{title}</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8", lineHeight: 1 }}>&times;</button>
         </div>
-        {children}
+        <div style={{ overflowY: "auto", minHeight: 0, flex: "1 1 auto" }}>{children}</div>
       </div>
     </div>
   );
@@ -371,6 +377,9 @@ export default function PODispatch() {
   const [duidFilter, setDuidFilter] = useState([]);
   const [itemCodeFilter, setItemCodeFilter] = useState([]);
   const [statusFilter, setStatusFilter] = useState([]);
+  // Subcontractor / Contract Model / Domain — All Lines only: a line's
+  // subcontractor is only real once it has been planned.
+  const attr = useLineAttributeFilters();
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -505,13 +514,14 @@ export default function PODispatch() {
     // = 0 rows, looking like "no lines pending dispatch" for no
     // apparent reason).
     if (activeTab === "all" && statusFilter.length) portal.line_status = statusFilter;
+    if (activeTab === "all") attr.apply(portal);
     if (fromDate) portal.from_date = fromDate;
     if (toDate) portal.to_date = toDate;
     const colFilters = JSON.parse(columnFiltersDebounced);
     if (Object.keys(colFilters).length) portal.column_filters = colFilters;
     return portal;
   }, [activeTab, tableSearchDebounced, projectFilter, imFilter, duidFilter,
-      itemCodeFilter, statusFilter, fromDate, toDate, columnFiltersDebounced]);
+      itemCodeFilter, statusFilter, attr.key, fromDate, toDate, columnFiltersDebounced]);
 
   useEffect(() => {
     let cancelled = false;
@@ -607,7 +617,7 @@ export default function PODispatch() {
     ),
     [imList],
   );
-  const hasFilters = !!(tableSearch || projectFilter.length || imFilter.length || duidFilter.length || statusFilter.length || fromDate || toDate);
+  const hasFilters = !!(tableSearch || projectFilter.length || imFilter.length || duidFilter.length || statusFilter.length || (activeTab === "all" && attr.active) || fromDate || toDate);
   const STATUS_OPTIONS = ["New", "Dispatched", "Completed", "Closed", "Cancelled"].map((s) => ({ id: s, label: s }));
 
   function toggleAll() {
@@ -1025,7 +1035,7 @@ export default function PODispatch() {
               // tab the row was opened from.
               "dispatch_status", "plan_status", "plan_date", "pic_status", "pic_status_ms2",
               "work_type", "subcon_status", "subcon_completed_on", "backend_team",
-              "ms1_amount", "ms2_amount", "huawei_im", "project_domain",
+              "ms1_amount", "ms2_amount", "huawei_im", "project_domain", "contract", "contract_model",
               "po_no", "po_intake", "parent", "name", "system_id",
               "po_line_no", "shipment_number", "dispatch_name",
               "site_code", "site_name", "area", "center_area", "region_type",
@@ -1037,6 +1047,9 @@ export default function PODispatch() {
             ]}
           />
         )}
+        {/* Where the line actually is, once it has been dispatched: work done,
+            billing, supplier, visits, remarks. */}
+        {detailRow?.dispatch_name && <LineLifecycle poDispatch={detailRow.dispatch_name} />}
       </Modal>
 
       {/* ── Header ─────────────────────────────────────────── */}
@@ -1123,9 +1136,10 @@ export default function PODispatch() {
               allowBlank multi value={itemCodeFilter} onChange={setItemCodeFilter} options={itemCodeOptions} placeholder="All Item Codes" minWidth={160} />
             <SearchableSelect
               allowBlank multi value={statusFilter} onChange={setStatusFilter} options={STATUS_OPTIONS} placeholder="All Status" minWidth={150} />
+            {activeTab === "all" && <LineAttributeFilters attr={attr} />}
             <DateRangePicker value={{ from: fromDate, to: toDate }} onChange={({ from, to }) => { setFromDate(from); setToDate(to); }} />
             {hasFilters && (
-              <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setStatusFilter([]); setFromDate(""); setToDate(""); }}>
+              <button className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => { setTableSearch(""); setProjectFilter([]); setImFilter([]); setDuidFilter([]); setItemCodeFilter([]); setStatusFilter([]); attr.reset(); setFromDate(""); setToDate(""); }}>
                 Clear
               </button>
             )}
@@ -1321,7 +1335,7 @@ export default function PODispatch() {
             // cost — on the "All Lines" view where a PM is looking across the
             // whole pipeline. Pending Dispatch/Dispatched don't need that
             // much detail, so those 5 columns are "all"-tab only.
-            const colCount = activeTab === "all" ? 33 : showDispatched ? 23 : 20;
+            const colCount = activeTab === "all" ? 35 : showDispatched ? 23 : 20;
             const totals = rows.slice(0, displayedCount).reduce((acc, r) => ({
               qty: acc.qty + (parseFloat(r.qty) || 0),
               amount: acc.amount + (parseFloat(r.line_amount) || 0),
@@ -1366,6 +1380,12 @@ export default function PODispatch() {
                   <th style={{ textAlign: "right" }}>Amount</th>
                   <th>Project</th>
                   <th>Domain</th>
+                  {activeTab === "all" && (
+                    <>
+                      <th>Subcontractor</th>
+                      <th>Contract Model</th>
+                    </>
+                  )}
                   <th>Huawei IM</th>
                   <th>DUID</th>
                   <th>Center area</th>
@@ -1491,6 +1511,12 @@ export default function PODispatch() {
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{money.format(row.line_amount || 0)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{row.project_code}</td>
                       <td>{row.project_domain || "—"}</td>
+                      {activeTab === "all" && (
+                        <>
+                          <td style={{ fontSize: "0.82rem" }}>{row.contract || "—"}</td>
+                          <td style={{ fontSize: "0.82rem" }}>{row.contract_model || "—"}</td>
+                        </>
+                      )}
                       <td>{row.huawei_im || "—"}</td>
                       <td>{row.site_code}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 140 }} title={row.center_area || ""}>
@@ -1591,7 +1617,7 @@ export default function PODispatch() {
           placement="tableCard"
           loadedCount={displayedCount}
           filteredCount={displayedCount}
-          filterActive={!!tableSearch || !!projectFilter.length || !!imFilter.length || !!duidFilter.length || !!itemCodeFilter.length || !!statusFilter.length || !!fromDate || !!toDate}
+          filterActive={!!tableSearch || !!projectFilter.length || !!imFilter.length || !!duidFilter.length || !!itemCodeFilter.length || !!statusFilter.length || (activeTab === "all" && attr.active) || !!fromDate || !!toDate}
           value={effectiveRowLimit}
           onChange={confirmRowLimit}
         />

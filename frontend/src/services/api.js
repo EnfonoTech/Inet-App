@@ -1088,6 +1088,11 @@ export const pmApi = {
   getSubconLineDocuments: (poDispatch) => call("inet_app.api.subcon_po.get_subcon_line_documents", {
     po_dispatch: poDispatch,
   }),
+  // One line end to end (confirmation, Work Done, billing, supplier) — the
+  // PO Dispatch "All Lines" detail popup.
+  getLineLifecycle: (poDispatch) => call("inet_app.api.pic.get_line_lifecycle", {
+    po_dispatch: poDispatch,
+  }),
   // Payout deductions (payout_deduction.py) — money taken off what a line pays
   // its subcontractor, Retained or Paid Out to a third party.
   getDeductionTypes: () => call("inet_app.api.payout_deduction.get_deduction_types"),
@@ -1195,7 +1200,7 @@ export const pmApi = {
     const args = { ...(params || {}) };
     // The PO Dispatch column itself stays backend_team (vendor-side concept);
     // we just renamed the user-facing terminology.
-    ["project_code", "site_code", "backend_team"].forEach((k) => {
+    ["project_code", "site_code", "backend_team", "subcontractor", "contract_model", "domain"].forEach((k) => {
       if (Array.isArray(args[k])) args[k] = JSON.stringify(args[k]);
     });
     return call("inet_app.api.command_center.list_backend_dispatches", args);

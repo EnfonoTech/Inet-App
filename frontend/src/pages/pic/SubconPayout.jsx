@@ -25,6 +25,7 @@ export default function SubconPayout() {
   const [subconFilter, setSubconFilter] = useState([]);
   const [supplierFilter, setSupplierFilter] = useState([]);
   const [modelFilter, setModelFilter] = useState([]);
+  const [domainFilter, setDomainFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   const [refreshKey, setRefreshKey] = useState(0);
@@ -43,6 +44,7 @@ export default function SubconPayout() {
       if (subconFilter.length) portal.subcontract = subconFilter;
       if (supplierFilter.length) portal.supplier = supplierFilter;
       if (modelFilter.length) portal.contract_model = modelFilter;
+      if (domainFilter.length) portal.domain = domainFilter;
       if (projectFilter.length) portal.project_code = projectFilter;
       if (dateRange.from) portal.from_date = dateRange.from;
       if (dateRange.to) portal.to_date = dateRange.to;
@@ -57,13 +59,13 @@ export default function SubconPayout() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subconFilter, supplierFilter, modelFilter, projectFilter, dateRange, refreshKey]);
+  }, [subconFilter, supplierFilter, modelFilter, domainFilter, projectFilter, dateRange, refreshKey]);
 
   const bySupplier = data?.by_supplier || [];
   const byStatus = data?.by_status || [];
   const byLineStatus = data?.by_line_status || [];
 
-  const hasFilters = !!(subconFilter.length || supplierFilter.length || modelFilter.length
+  const hasFilters = !!(subconFilter.length || supplierFilter.length || modelFilter.length || domainFilter.length
     || projectFilter.length || dateRange.from || dateRange.to);
 
   // Footer = the column sum, key for key. Every numeric column below reads its
@@ -126,13 +128,16 @@ export default function SubconPayout() {
           placeholder="Supplier" minWidth={170} />
         <SearchableSelect multi value={modelFilter} onChange={setModelFilter}
           options={options.contract_model || []} placeholder="Contract Model" minWidth={160} />
+        <SearchableSelect allowBlank multi value={domainFilter} onChange={setDomainFilter}
+          options={(options.domain || []).map((v) => ({ id: v, label: v }))}
+          placeholder="All Domains" minWidth={150} />
         <SearchableSelect
               allowBlank multi value={projectFilter} onChange={setProjectFilter}
           options={options.project_code || []} placeholder="All Projects" minWidth={150} />
         <DateRangePicker value={dateRange} onChange={setDateRange} />
         {hasFilters && (
           <button className="btn-secondary" onClick={() => {
-            setSubconFilter([]); setSupplierFilter([]); setModelFilter([]);
+            setSubconFilter([]); setSupplierFilter([]); setModelFilter([]); setDomainFilter([]);
             setProjectFilter([]); setDateRange({ from: "", to: "" });
           }}>Clear</button>
         )}

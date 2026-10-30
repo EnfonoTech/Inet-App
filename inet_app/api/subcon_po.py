@@ -300,6 +300,9 @@ def not_deduction_bill_sql(alias):
 # One `sm` alias, because a line resolves to exactly one Subcontract Master.
 # NULLIF on pd.contract matters: the column is '' rather than NULL on plenty
 # of imported rows, and '' would win a bare COALESCE and defeat the fallback.
+# What the Domain cell shows: the line's own domain, else its project's.
+_SUBCON_DOMAIN_SQL = "COALESCE(NULLIF(pd.project_domain,''), proj.project_domain, '')"
+
 _SUBCON_FROM_JOIN = f"""
 FROM `tabPO Dispatch` pd
 LEFT JOIN `tabIM Master` imm ON imm.name = pd.im
@@ -962,6 +965,7 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         ("sm.name", "subcontract"),
         ("sm.contract_model", "contract_model"),
         ("sm.supplier", "supplier"),
+        (_SUBCON_DOMAIN_SQL, "domain"),
     ):
         c, p = _sql_in_or_eq(col, pf.get(key))
         if c:
@@ -1032,6 +1036,7 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
         "poid": "COALESCE(NULLIF(pd.poid,''), pd.name)",
         "po_no": "IFNULL(pd.po_no,'')",
         "project": "IFNULL(pd.project_code,'')",
+        "domain": _SUBCON_DOMAIN_SQL,
         "duid": "IFNULL(pd.site_code,'')",
         "site_name": "IFNULL(pd.site_name,'')",
         "item": "IFNULL(pd.item_code,'')",
@@ -1267,6 +1272,7 @@ def list_subcon_po_rows(stage=None, portal_filters=None, limit=500, _options=Non
           ROUND(IFNULL(pd.line_amount, 0) * ({ALLOC_SHARE_SQL}), 2) AS line_amount,
           IFNULL(pd.line_amount, 0) AS full_line_amount,
           pd.project_code, proj.project_name,
+          {_SUBCON_DOMAIN_SQL} AS project_domain,
           pd.site_code, pd.site_name, pd.center_area, pd.region_type,
           pd.im, imm.full_name AS im_full_name,
           pd.dispatch_status,
@@ -1415,7 +1421,8 @@ def get_subcon_po_filter_options():
           IFNULL(imm.full_name,'')   AS im_full_name,
           IFNULL(sm.name,'')         AS subcontract,
           IFNULL(sm.contract_model,'') AS contract_model,
-          IFNULL(sm.supplier,'')     AS supplier
+          IFNULL(sm.supplier,'')     AS supplier,
+          {_SUBCON_DOMAIN_SQL}       AS domain
         {_SUBCON_FROM_JOIN}
         WHERE {where_sql}
         """,
@@ -1437,6 +1444,7 @@ def get_subcon_po_filter_options():
         "subcontract": uniq("subcontract"),
         "contract_model": uniq("contract_model"),
         "supplier": uniq("supplier"),
+        "domain": uniq("domain"),
         "im": [{"id": k, "label": v} for k, v in sorted(ims.items(), key=lambda kv: kv[1])],
         # PO Dispatch.dispatch_status vocabulary, straight off the doctype so
         # it can't drift from the Select.
@@ -2713,6 +2721,7 @@ def subcon_payout_summary(portal_filters=None):
         ("sm.contract_model", "contract_model"),
         ("sm.supplier", "supplier"),
         ("pd.dispatch_status", "dispatch_status"),
+        (_SUBCON_DOMAIN_SQL, "domain"),
     ):
         c, p = _sql_in_or_eq(col, pf.get(key))
         if c:

@@ -9,6 +9,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { useAuth } from "../../context/AuthContext";
 import DateRangePicker from "../../components/DateRangePicker";
@@ -256,6 +257,7 @@ export default function PICTracker() {
   const [poStatusFilter, setPoStatusFilter] = useState([]);
   const [dateRange, setDateRange] = useState({ from: "", to: "" });
   const [subconFilter, setSubconFilter] = useState([]);
+  const attr = useLineAttributeFilters({ withSubcontractor: false });
   const [isdpOwnerFilter, setIsdpOwnerFilter] = useState([]);
   const [ibuyOwnerFilter, setIbuyOwnerFilter] = useState([]);
 
@@ -304,6 +306,7 @@ export default function PICTracker() {
       if (dateRange.from) portal.from_date = dateRange.from;
       if (dateRange.to) portal.to_date = dateRange.to;
       if (subconFilter.length) portal.subcontractor = subconFilter;
+      attr.apply(portal);
       if (isdpOwnerFilter.length) portal.isdp_owner = isdpOwnerFilter;
       if (ibuyOwnerFilter.length) portal.ibuy_owner = ibuyOwnerFilter;
       const colFilters = JSON.parse(columnFiltersDebounced);
@@ -358,7 +361,7 @@ export default function PICTracker() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, poStatusFilter, dateRange, subconFilter, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey, columnFiltersDebounced]);
+  }, [searchDebounced, picFilter, picMs2Filter, projectFilter, duidFilter, poStatusFilter, dateRange, subconFilter, attr.key, isdpOwnerFilter, ibuyOwnerFilter, rowLimit, refreshKey, columnFiltersDebounced]);
 
   // Tried true row virtualization here (@tanstack/react-virtual) to also
   // fix scroll-time paint lag on top of the freeze fix below — reverted:
@@ -398,7 +401,7 @@ export default function PICTracker() {
   const isdpOwnerOptions = (dispOpts.isdp_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
   const ibuyOwnerOptions = (dispOpts.ibuy_owner || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
-  const hasFilters = !!(search || picFilter.length || picMs2Filter.length || projectFilter.length || duidFilter.length || poStatusFilter.length || dateRange.from || dateRange.to || subconFilter.length || isdpOwnerFilter.length || ibuyOwnerFilter.length);
+  const hasFilters = !!(search || picFilter.length || picMs2Filter.length || projectFilter.length || duidFilter.length || poStatusFilter.length || dateRange.from || dateRange.to || subconFilter.length || attr.active || isdpOwnerFilter.length || ibuyOwnerFilter.length);
 
   // Totals row — sums numeric columns across the loaded rows. DataTablePro
   // reorders / hides tfoot cells the same way it does the body, so the totals
@@ -745,12 +748,13 @@ export default function PICTracker() {
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <SearchableSelect multi value={poStatusFilter} onChange={setPoStatusFilter} options={PO_STATUSES} placeholder="PO Status" minWidth={150} />
-        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <SearchableSelect allowBlank multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <LineAttributeFilters attr={attr} />
         <SearchableSelect multi value={isdpOwnerFilter} onChange={setIsdpOwnerFilter} options={isdpOwnerOptions} placeholder="ISDP Owner" minWidth={140} />
         <SearchableSelect multi value={ibuyOwnerFilter} onChange={setIbuyOwnerFilter} options={ibuyOwnerOptions} placeholder="iBuy Owner" minWidth={140} />
         {/* <DateRangePicker value={dateRange} onChange={({ from, to }) => setDateRange({ from, to })} /> */}
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setPicFilter([]); setPicMs2Filter([]); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setDateRange({ from: "", to: "" }); setSubconFilter([]); setIsdpOwnerFilter([]); setIbuyOwnerFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setPicFilter([]); setPicMs2Filter([]); setProjectFilter([]); setDuidFilter([]); setPoStatusFilter([]); setDateRange({ from: "", to: "" }); setSubconFilter([]); attr.reset(); setIsdpOwnerFilter([]); setIbuyOwnerFilter([]); }}>
             Clear
           </button>
         )}

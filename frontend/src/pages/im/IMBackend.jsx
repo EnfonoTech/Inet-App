@@ -8,6 +8,7 @@ import { pmApi } from "../../services/api";
 import { missingImRows, imRequiredMessage } from "../../utils/requireIm";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
@@ -48,6 +49,7 @@ export default function IMBackend() {
   const searchDebounced = useDebounced(search, 300);
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
+  const attr = useLineAttributeFilters();
   const [teamFilter, setTeamFilter] = useState([]);
 
   const [showDoneModal, setShowDoneModal] = useState(false);
@@ -132,6 +134,7 @@ export default function IMBackend() {
       if (projectFilter.length) params.project_code = projectFilter;
       if (duidFilter.length) params.site_code = duidFilter;
       if (teamFilter.length) params.backend_team = teamFilter;
+      attr.apply(params);
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) params.column_filters = colFilters;
       queryArgsRef.current = params;
@@ -144,7 +147,7 @@ export default function IMBackend() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, searchDebounced, projectFilter, duidFilter, teamFilter, columnFiltersDebounced]);
+  }, [statusFilter, searchDebounced, projectFilter, duidFilter, teamFilter, attr.key, columnFiltersDebounced]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -158,7 +161,7 @@ export default function IMBackend() {
     }).catch(() => {});
   }, []);
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || teamFilter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || teamFilter.length || attr.active);
 
   const totalAmount = useMemo(
     () => rows.reduce((s, r) => s + (Number(r.line_amount) || 0), 0),
@@ -327,10 +330,11 @@ export default function IMBackend() {
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
         <SearchableSelect multi value={teamFilter} onChange={setTeamFilter} options={teamOptions} placeholder="All Teams" minWidth={150} />
+        <LineAttributeFilters attr={attr} />
         {hasFilters && (
           <button
             className="btn-secondary"
-            onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setTeamFilter([]); }}
+            onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setTeamFilter([]); attr.reset(); }}
           >
             Clear
           </button>
@@ -378,6 +382,8 @@ export default function IMBackend() {
                   <th>PO No</th>
                   <th>Project</th>
                   <th>Domain</th>
+                  <th>Subcontractor</th>
+                  <th>Contract Model</th>
                   <th>Huawei IM</th>
                   <th>Item</th>
                   <th>Description</th>
@@ -394,7 +400,7 @@ export default function IMBackend() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={16} style={{ padding: 0 }}>
+                    <td colSpan={18} style={{ padding: 0 }}>
                       {loading ? (
                         <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
                       ) : (
@@ -431,6 +437,8 @@ export default function IMBackend() {
                       <td>{r.po_no || "—"}</td>
                       <td>{r.project_code || "—"}</td>
                       <td>{r.project_domain || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{r.subcontractor || "—"}</td>
+                      <td style={{ fontSize: "0.82rem" }}>{r.contract_model || "—"}</td>
                       <td>{r.huawei_im || "—"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.78rem" }}>{r.item_code || "—"}</td>
                       <td style={{ fontSize: "0.82rem", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.item_description || ""}>
@@ -463,7 +471,7 @@ export default function IMBackend() {
                     </td>
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
-                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
+                    <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} /><td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} /><td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />
                     <td style={{ padding: "8px 12px", fontSize: "0.78rem", fontWeight: 700, color: "#64748b", whiteSpace: "nowrap" }} />

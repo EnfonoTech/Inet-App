@@ -295,6 +295,30 @@ def _sql_in_or_eq(expr, raw):
     return (parts[0] if len(parts) == 1 else "(" + " OR ".join(parts) + ")"), params
 
 
+def _line_subcon_sql(pd="pd", team="it"):
+    """A line's subcontractor as the rollout pages show it: the line's own
+    contract, else the team's — the precedence Work Done and PIC use. A
+    Subcontract Master's name is its display name, so this is both the
+    filter value and the cell."""
+    return f"COALESCE(NULLIF({pd}.contract,''), NULLIF({team}.subcontractor,''), '')"
+
+
+def _line_contract_model_sql(pd="pd", team="it"):
+    """The Contract Model of _line_subcon_sql's subcontractor. A subquery, so
+    a caller needs no extra join in each of its FROM blocks."""
+    return (
+        "IFNULL((SELECT sm_lc.contract_model FROM `tabSubcontract Master` sm_lc "
+        f"WHERE sm_lc.name = COALESCE(NULLIF({pd}.contract,''), {team}.subcontractor)), '')"
+    )
+
+
+# Contract Model of a line's own contract, for queries with no team joined.
+_CONTRACT_MODEL_OF_PD_SQL = (
+    "IFNULL((SELECT sm_lc.contract_model FROM `tabSubcontract Master` sm_lc "
+    "WHERE sm_lc.name = pd.contract), '')"
+)
+
+
 # Manage Table column key -> physical PO Dispatch column. Shared by the
 # substring filter, the Excel-style value filter and the column-options
 # endpoint so all three agree on what a column means.
@@ -386,6 +410,9 @@ PO_DISPATCH_LIST_COLS = frozenset((
     "im_full_name", "target_team_name", "activity_type",
     "ms1_closed", "ms2_closed", "ms1_closed_at", "ms2_closed_at",
     "wd_subcontractor",
+    # Subcontractor / Contract Model columns: the line's own contract and the
+    # model of that Subcontract Master (resolved after the query).
+    "contract", "contract_model",
 ))
 
 
@@ -511,6 +538,15 @@ def _po_dispatch_excel_expr(col_key, fields):
         return (
             "IFNULL((SELECT huawei_im FROM `tabProject Control Center` "
             "WHERE name = `tabPO Dispatch`.`project_code`), '')"
+        )
+    # No plan is joined on these pages, so the Subcontractor cell is the
+    # line's own contract — blank until a plan or a person sets it.
+    if col_key == "subcontractor" and "contract" in fields:
+        return "IFNULL(`tabPO Dispatch`.`contract`, '')"
+    if col_key == "contract_model" and "contract" in fields:
+        return (
+            "IFNULL((SELECT contract_model FROM `tabSubcontract Master` "
+            "WHERE name = `tabPO Dispatch`.`contract`), '')"
         )
     # MS1/MS2 display "✓ 1,190.00 · 50% · 2026-05-04" — a near-unique string
     # per row, useless as a checkbox list. The percentage is the part worth
@@ -2988,7 +3024,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
     def _portal_active():
         if not pf:
             return False
-        for k in ("search", "q", "project_code", "site_code", "item_code", "dispatched_im", "im", "from_date", "to_date", "line_status"):
+        for k in ("search", "q", "project_code", "site_code", "item_code", "dispatched_im", "im", "from_date", "to_date", "line_status",
+                  "subcontractor", "contract_model", "domain"):
             if (pf.get(k) or "").strip() if isinstance(pf.get(k), str) else pf.get(k):
                 return True
         cf = pf.get("column_filters")
@@ -3047,6 +3084,15 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             c, p = _sql_in_or_eq("IFNULL(pd.im,'')", im_vals)
             wheres.append(c)
             params.extend(p)
+        # Subcontractor / Contract Model / Domain toolbar dropdowns. The line's
+        # own contract (no plan is joined here), blank-aware.
+        for col, key in (("IFNULL(pd.contract,'')", "subcontractor"),
+                         (_CONTRACT_MODEL_OF_PD_SQL, "contract_model"),
+                         ("COALESCE(NULLIF(pd.project_domain,''), pcc_pil.project_domain, '')", "domain")):
+            c, p = _sql_in_or_eq(col, pf.get(key))
+            if c:
+                wheres.append(c)
+                params.extend(p)
         if pf.get("from_date") and pf.get("to_date"):
             wheres.append(
                 "(pd.name IS NULL OR (pd.target_month BETWEEN %s AND %s))"
@@ -3076,6 +3122,8 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             "project": "IFNULL(pil.project_code,'')",
             "duid": "IFNULL(pil.site_code,'')",
             "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_pil.project_domain, '')",
+            "subcontractor": "IFNULL(pd.contract,'')",
+            "contract_model": _CONTRACT_MODEL_OF_PD_SQL,
             "huawei_im": "IFNULL(pcc_pil.huawei_im,'')",
             "mode": "COALESCE(NULLIF(pil.dispatch_mode,''), pd.dispatch_mode, '')",
             "target_month": "CAST(pd.target_month AS CHAR)",
@@ -3302,7 +3350,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             # because 199 real 70/30 and 80/20 lines are zero-value. See
             # picMs2Label in frontend/src/pages/pic/picShared.jsx.
             "ms2_pct",
-            "subcon_status", "backend_team", "subcon_completed_on",
+            "subcon_status", "backend_team", "subcon_completed_on", "contract",
         ]
         disp_fields_base = [
             "name", "po_intake", "po_line_no", "system_id", "im",
@@ -3357,6 +3405,7 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
             line["subcon_status"] = dispatch_data.get("subcon_status")
             line["backend_team"] = dispatch_data.get("backend_team")
             line["subcon_completed_on"] = dispatch_data.get("subcon_completed_on")
+            line["contract"] = dispatch_data.get("contract")
 
         if not line.get("region_type"):
             line["region_type"] = region_type_from_center_area(line.get("center_area"))
@@ -3389,6 +3438,11 @@ def list_po_intake_lines(status="New", limit=None, portal_filters=None, _options
         if bt:
             line["backend_team"] = backend_team_name_map.get(bt) or bt
 
+    if any(line.get("contract") for line in lines):
+        models = dict(frappe.db.sql(
+            "SELECT name, IFNULL(contract_model, '') FROM `tabSubcontract Master`"))
+        for line in lines:
+            line["contract_model"] = models.get(line.get("contract") or "") or None
     _enrich_with_project_fields(lines)
     # Pre-existing gap: this function never populated activity_type at all
     # (admin/PODispatch.jsx's "Activity Type" column always showed blank),
@@ -4107,6 +4161,8 @@ def _po_dispatch_portal_pf_active(pf):
         "has_target_month",
         "has_target_week",
         "domain",
+        "subcontractor",
+        "contract_model",
         "dispatch_status",
         "direct_close_only",
     ):
@@ -4192,15 +4248,15 @@ def _po_dispatch_portal_sql_where(filters, pf, fields):
     # "Status" (dispatch_status) — dedicated toolbar filters on the IM PO
     # Intake page's Dummy/Overview tabs, previously applied only to already-
     # loaded rows client-side.
-    domain_vals = _ensure_list(pf.get("domain"))
-    if domain_vals and "project_code" in fields:
-        ph_dom = ", ".join(["%s"] * len(domain_vals))
-        wheres.append(
-            f"COALESCE(NULLIF(`tabPO Dispatch`.`project_domain`, ''), "
-            f"(SELECT project_domain FROM `tabProject Control Center` "
-            f"WHERE name = `tabPO Dispatch`.`project_code`)) IN ({ph_dom})"
-        )
-        params.extend(domain_vals)
+    # Domain, Subcontractor and Contract Model toolbar dropdowns — on the
+    # same expressions the Excel column filters use, and blank-aware.
+    for _key in ("domain", "subcontractor", "contract_model"):
+        _expr = _po_dispatch_excel_expr(_key, fields)
+        if _expr:
+            c, p = _sql_in_or_eq(_expr, pf.get(_key))
+            if c:
+                wheres.append(c)
+                params.extend(p)
     status_vals_pd = _ensure_list(pf.get("dispatch_status"))
     if status_vals_pd and "dispatch_status" in fields:
         ph_st = ", ".join(["%s"] * len(status_vals_pd))
@@ -4530,7 +4586,9 @@ SUMMARY_SOURCES = {
         list_backend_dispatches, limit=1,
         column_filters=pf.get("column_filters"), im=pf.get("im"),
         status=pf.get("status") or "all", project_code=pf.get("project_code"),
-        site_code=pf.get("site_code"), backend_team=pf.get("backend_team")),
+        site_code=pf.get("site_code"), backend_team=pf.get("backend_team"),
+        subcontractor=pf.get("subcontractor"), contract_model=pf.get("contract_model"),
+        domain=pf.get("domain")),
     "admin_teams": lambda pf, x: _summary_via(
         list_admin_teams, limit=1,
         column_filters=pf.get("column_filters"), status=pf.get("status"),
@@ -4870,7 +4928,9 @@ EXCEL_OPTION_SOURCES = {
         list_backend_dispatches, ck, b, s, l, limit=1,
         column_filters=pf.get("column_filters"), im=pf.get("im"),
         status=pf.get("status") or "all", project_code=pf.get("project_code"),
-        site_code=pf.get("site_code"), backend_team=pf.get("backend_team")),
+        site_code=pf.get("site_code"), backend_team=pf.get("backend_team"),
+        subcontractor=pf.get("subcontractor"), contract_model=pf.get("contract_model"),
+        domain=pf.get("domain")),
     "admin_teams": lambda ck, f, pf, b, s, l, x: _excel_options_via(
         list_admin_teams, ck, b, s, l, limit=1,
         column_filters=pf.get("column_filters"), status=pf.get("status"),
@@ -5044,6 +5104,11 @@ def list_po_dispatches(filters=None, order_by="modified desc", limit_page_length
         tt = r.get("target_team")
         r["target_team_name"] = (team_labels.get(tt) or tt) if tt else None
         r["activity_type"] = act_map.get(r.get("item_code") or "")
+    if any(r.get("contract") for r in rows):
+        models = dict(frappe.db.sql(
+            "SELECT name, IFNULL(contract_model, '') FROM `tabSubcontract Master`"))
+        for r in rows:
+            r["contract_model"] = models.get(r.get("contract") or "") or None
     _enrich_with_project_fields(rows)
     _apply_dummy_description(rows)
 
@@ -9397,7 +9462,10 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
                      ("rp.visit_type", "visit_type"),
                      ("rp.team", "team"),
                      ("IFNULL(pd.project_code,'')", "project_code"),
-                     ("IFNULL(pd.site_code,'')", "site_code")):
+                     ("IFNULL(pd.site_code,'')", "site_code"),
+                     (_line_subcon_sql("pd", "it"), "subcontractor"),
+                     (_line_contract_model_sql("pd", "it"), "contract_model"),
+                     ("COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '')", "domain")):
         c, p = _sql_in_or_eq(col, filters.get(key))
         if c:
             wheres.append(c)
@@ -9640,6 +9708,8 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     domain_parts.append("COALESCE(NULLIF(pd.project_domain,''), pcc.project_domain, '')")
     col_filter_map["domain"] = "CONCAT_WS(' ', " + ", ".join(domain_parts) + ")"
     col_filter_map["huawei_im"] = "COALESCE(NULLIF(pd.huawei_im,''), pcc.huawei_im, '')"
+    col_filter_map["subcontractor"] = _line_subcon_sql("pd", "it")
+    col_filter_map["contract_model"] = _line_contract_model_sql("pd", "it")
     if frappe.db.has_column("PO Dispatch", "general_remark"):
         col_filter_map["general"] = "IFNULL(pd.general_remark,'')"
     if frappe.db.has_column("PO Dispatch", "manager_remark"):
@@ -9790,7 +9860,9 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
                  "cond": f"{_ps} = 'Cancelled'", "hide_if_zero": True},
             ])
     id_sql = (
-        "SELECT rp.name AS plan_id "
+        "SELECT rp.name AS plan_id, "
+        f"{_line_subcon_sql('pd', 'it')} AS subcontractor, "
+        f"{_line_contract_model_sql('pd', 'it')} AS contract_model "
         f"{sql_from} "
         f"WHERE {' AND '.join(wheres)} "
         "ORDER BY rp.modified DESC "
@@ -9800,21 +9872,18 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     plan_names = [r.plan_id for r in (plan_rows or []) if r.get("plan_id")]
     if not plan_names:
         return []
+    line_attr = {r.plan_id: r for r in plan_rows if r.get("plan_id")}
 
     order_index = {n: i for i, n in enumerate(plan_names)}
-    plans = frappe.get_all(
+    plans = [r for chunk in _chunked(plan_names) for r in frappe.get_all(
         "Rollout Plan",
-        filters={"name": ["in", plan_names]},
+        filters={"name": ["in", chunk]},
         fields=rp_fields,
-        limit_page_length=len(plan_names) + 1,
-    )
+        limit_page_length=len(chunk) + 1,
+    )]
     plans.sort(key=lambda x: order_index.get(x.name, 10**9))
     dispatch_names = [p.po_dispatch for p in plans if p.po_dispatch]
 
-    if lim:
-        exec_cap = min(max(len(plan_names) * 25, lim), 5000)
-    else:
-        exec_cap = min(max(len(plan_names) * 25, 500), 50000)
     _de_fields = [
         "name", "rollout_plan", "execution_date", "execution_status",
         "tl_status", "issue_category", "achieved_qty", "achieved_amount",
@@ -9823,13 +9892,16 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
     ]
     if frappe.db.has_column("Daily Execution", "ciag_status"):
         _de_fields.append("ciag_status")
-    execution_rows = frappe.get_all(
+    # Chunked by plan, uncapped within a chunk: every execution of a plan lands
+    # in that plan's chunk, so "latest per plan" below still holds, and a plan
+    # past a global cap no longer loses its execution.
+    execution_rows = [r for chunk in _chunked(plan_names) for r in frappe.get_all(
         "Daily Execution",
-        filters={"rollout_plan": ["in", plan_names]},
+        filters={"rollout_plan": ["in", chunk]},
         fields=_de_fields,
         order_by="modified desc",
-        limit_page_length=exec_cap,
-    )
+        limit_page_length=0,
+    )]
     latest_exec_by_plan = {}
     for ex in execution_rows:
         if ex.rollout_plan not in latest_exec_by_plan:
@@ -9867,12 +9939,14 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
         for rk in ("general_remark", "manager_remark", "team_lead_remark"):
             if frappe.db.has_column("PO Dispatch", rk):
                 d_fields.append(rk)
-        drows = frappe.get_all(
+        # Was a flat 1000: past it, "All" dropped the line details of every
+        # further plan. Exact bound, chunked under sqlparse's token limit.
+        drows = [r for chunk in _chunked(set(dispatch_names)) for r in frappe.get_all(
             "PO Dispatch",
-            filters={"name": ["in", dispatch_names]},
+            filters={"name": ["in", chunk]},
             fields=d_fields,
-            limit_page_length=1000,
-        )
+            limit_page_length=len(chunk) + 1,
+        )]
         dispatch_map = {d.name: d for d in drows}
 
     team_ids = [p.team for p in plans if p.team]
@@ -9981,6 +10055,8 @@ def list_execution_monitor_rows(filters=None, limit=500, _options=None, _summary
                 "access_period": p.get("access_period") or None,
                 "plan_documents": p.get("plan_documents") or None,
                 "timer_start_ms": timer_start_map.get(p.name),
+                "subcontractor": (line_attr.get(p.name) or {}).get("subcontractor") or None,
+                "contract_model": (line_attr.get(p.name) or {}).get("contract_model") or None,
             }
         )
     if out:
@@ -20332,7 +20408,10 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
     for col, key in (("rp.visit_type", "visit_type"),
                      ("IFNULL(pd.project_code,'')", "project_code"),
                      ("IFNULL(pd.site_code,'')", "site_code"),
-                     ("IFNULL(rp.team,'')", "team")):
+                     ("IFNULL(rp.team,'')", "team"),
+                     (_line_subcon_sql("pd", "it"), "subcontractor"),
+                     (_line_contract_model_sql("pd", "it"), "contract_model"),
+                     ("COALESCE(NULLIF(pd.project_domain,''), pcc_rp.project_domain, '')", "domain")):
         c, p = _sql_in_or_eq(col, pf.get(key))
         if c:
             portal_clause += f" AND {c}"
@@ -20447,6 +20526,8 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
         "cancel": "IFNULL(rp.cancel_request_status,'')",
         "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_rp.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_rp.huawei_im, '')",
+        "subcontractor": _line_subcon_sql("pd", "it"),
+        "contract_model": _line_contract_model_sql("pd", "it"),
     }
     if frappe.db.has_column("PO Dispatch", "original_dummy_poid"):
         col_filter_map["dummy_poid"] = "IFNULL(pd.original_dummy_poid,'')"
@@ -20638,6 +20719,8 @@ def list_im_rollout_plans(im=None, plan_status=None, limit=500, portal_filters=N
                pd.im AS dispatch_im, pd.site_code, pd.po_no, pd.project_code, pd.item_code,
                pd.customer AS customer, pd.item_description, pd.is_dummy_po,
                pd.huawei_im,
+               {_line_subcon_sql("pd", "it")} AS subcontractor,
+               {_line_contract_model_sql("pd", "it")} AS contract_model,
                {_remark_select()},
                it.team_name AS team_name,
                {im_full_sql}
@@ -20689,7 +20772,10 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
     for col, key in (("IFNULL(de.qc_status,'')", "qc_status"),
                      ("IFNULL(pd.project_code,'')", "project_code"),
                      ("IFNULL(pd.site_code,'')", "site_code"),
-                     ("IFNULL(de.team,'')", "team")):
+                     ("IFNULL(de.team,'')", "team"),
+                     (_line_subcon_sql("pd", "it"), "subcontractor"),
+                     (_line_contract_model_sql("pd", "it"), "contract_model"),
+                     ("COALESCE(NULLIF(pd.project_domain,''), pcc_ex.project_domain, '')", "domain")):
         c, p = _sql_in_or_eq(col, pf.get(key))
         if c:
             portal_clause += f" AND {c}"
@@ -20895,6 +20981,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "visit": "CAST(rp.visit_number AS CHAR)",
         "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_ex.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_ex.huawei_im, '')",
+        "subcontractor": _line_subcon_sql("pd", "it"),
+        "contract_model": _line_contract_model_sql("pd", "it"),
     }
     if _team_rating_columns_exist():
         col_filter_map["rating"] = team_rating_filter_sql("de")
@@ -21152,6 +21240,8 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
                  LIMIT 1
                ) AS work_done_external_source,
                it.team_name AS team_name,
+               {_line_subcon_sql("pd", "it")} AS subcontractor,
+               {_line_contract_model_sql("pd", "it")} AS contract_model,
                -- What the line still owes. The page needs it to tell a line
                -- that is finished from one that has quantity left: the first
                -- is correctly refused a second Work Done, the second is the
@@ -26039,14 +26129,16 @@ def mark_backend_work_done(po_dispatch=None, po_dispatches=None, completed_on=No
 def list_backend_dispatches(
     im=None, search=None, status="all", limit=300,
     project_code=None, site_code=None, backend_team=None,
+    subcontractor=None, contract_model=None, domain=None,
     column_filters=None, _options=None, _summary=None,
 ):
     """Sub-Contract list feed.
 
     status: "all" | "pending" | "done"
     Visible to PM (all IMs) and IM (own POIDs only).
-    Optional filters ``project_code``, ``site_code`` and ``backend_team`` accept
-    a single value or a JSON-array / comma-separated list.
+    Optional filters ``project_code``, ``site_code``, ``backend_team``,
+    ``subcontractor``, ``contract_model`` and ``domain`` accept a single value
+    or a JSON-array / comma-separated list.
     """
     role = _user_role_class()
     if role not in ("pm", "im"):
@@ -26075,8 +26167,12 @@ def list_backend_dispatches(
     elif s in ("done", "work_done"):
         where.append("pd.subcon_status = 'Work Done'")
 
-    for col, raw in (("project_code", project_code), ("site_code", site_code), ("backend_team", backend_team)):
-        clause, in_params = _sql_in_or_eq(f"pd.{col}", raw)
+    for expr, raw in (("pd.project_code", project_code), ("pd.site_code", site_code),
+                      ("pd.backend_team", backend_team),
+                      (_line_subcon_sql("pd", "t"), subcontractor),
+                      (_line_contract_model_sql("pd", "t"), contract_model),
+                      ("COALESCE(NULLIF(pd.project_domain,''), pcc_bk.project_domain, '')", domain)):
+        clause, in_params = _sql_in_or_eq(expr, raw)
         if clause:
             where.append(clause)
             params.extend(in_params)
@@ -26092,6 +26188,8 @@ def list_backend_dispatches(
         "project": "IFNULL(pd.project_code,'')",
         "domain": "COALESCE(NULLIF(pd.project_domain,''), pcc_bk.project_domain, '')",
         "huawei_im": "COALESCE(NULLIF(pd.huawei_im,''), pcc_bk.huawei_im, '')",
+        "subcontractor": _line_subcon_sql("pd", "t"),
+        "contract_model": _line_contract_model_sql("pd", "t"),
         "item": "IFNULL(pd.item_code,'')",
         "description": "IFNULL(pd.item_description,'')",
         "qty": "CAST(pd.qty AS CHAR)",
@@ -26186,6 +26284,8 @@ def list_backend_dispatches(
                pd.backend_team, pd.subcon_status, pd.subcon_completed_on, pd.subcon_remark,
                t.team_id   AS backend_team_id,
                t.team_name AS backend_team_name,
+               {_line_subcon_sql("pd", "t")} AS subcontractor,
+               {_line_contract_model_sql("pd", "t")} AS contract_model,
                pd.modified
         FROM `tabPO Dispatch` pd
         LEFT JOIN `tabINET Team` t ON t.name = pd.backend_team

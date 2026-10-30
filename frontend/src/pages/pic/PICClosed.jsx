@@ -11,6 +11,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
@@ -190,6 +191,7 @@ export default function PICClosed() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
+  const attr = useLineAttributeFilters({ withSubcontractor: false });
   const [imFilter, setImFilter] = useState([]);
   const [picFilter, setPicFilter] = useState([]);
   const [picMs2Filter, setPicMs2Filter] = useState([]);
@@ -224,6 +226,7 @@ export default function PICClosed() {
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
+      attr.apply(portal);
       if (imFilter.length) portal.im = imFilter;
       if (picFilter.length) portal.pic_status = picFilter;
       if (picMs2Filter.length) portal.pic_status_ms2 = picMs2Filter;
@@ -267,7 +270,7 @@ export default function PICClosed() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, subconFilter, imFilter, picFilter, picMs2Filter, rowLimit, refreshKey]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, subconFilter, attr.key, imFilter, picFilter, picMs2Filter, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract", "im"]);
   const projectOptions = dispOpts.project_code || [];
@@ -286,7 +289,7 @@ export default function PICClosed() {
     return ids.map((id) => ({ id, label: labelById[id] || id }));
   }, [dispOpts.im, rows]);
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || subconFilter.length || imFilter.length || picFilter.length || picMs2Filter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || subconFilter.length || attr.active || imFilter.length || picFilter.length || picMs2Filter.length);
 
   const totals = useMemo(() => {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
@@ -408,9 +411,10 @@ export default function PICClosed() {
               allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
-        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <SearchableSelect allowBlank multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <LineAttributeFilters attr={attr} />
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setImFilter([]); setPicFilter([]); setPicMs2Filter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); attr.reset(); setImFilter([]); setPicFilter([]); setPicMs2Filter([]); }}>
             Clear
           </button>
         )}

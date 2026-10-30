@@ -11,6 +11,7 @@ import { useDebounced } from "../../hooks/useDebounced";
 import { pmApi } from "../../services/api";
 import useFilterOptions from "../../hooks/useFilterOptions";
 import SearchableSelect from "../../components/SearchableSelect";
+import LineAttributeFilters, { useLineAttributeFilters } from "../../components/LineAttributeFilters";
 import ExportExcelButton from "../../components/ExportExcelButton";
 import { handleSearchPaste } from "../../utils/searchPaste";
 import { copySelectedPoids } from "../../utils/selectedPoids";
@@ -148,6 +149,7 @@ export default function PICCancelled() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [subconFilter, setSubconFilter] = useState([]);
+  const attr = useLineAttributeFilters({ withSubcontractor: false });
   const [detailRow, setDetailRow] = useState(null);
   const [selected, setSelected] = useState(new Set());
 
@@ -178,6 +180,7 @@ export default function PICCancelled() {
       if (projectFilter.length) portal.project_code = projectFilter;
       if (duidFilter.length) portal.site_code = duidFilter;
       if (subconFilter.length) portal.subcontractor = subconFilter;
+      attr.apply(portal);
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) portal.column_filters = colFilters;
       const signature = JSON.stringify([portal, refreshKey]);
@@ -218,14 +221,14 @@ export default function PICCancelled() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, subconFilter, rowLimit, refreshKey]);
+  }, [searchDebounced, columnFiltersDebounced, projectFilter, duidFilter, subconFilter, attr.key, rowLimit, refreshKey]);
 
   const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
   const projectOptions = dispOpts.project_code || [];
   const duidOptions = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
 
-  const hasFilters = !!(search || projectFilter.length || duidFilter.length || subconFilter.length);
+  const hasFilters = !!(search || projectFilter.length || duidFilter.length || subconFilter.length || attr.active);
 
   const totals = useMemo(() => {
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
@@ -335,9 +338,10 @@ export default function PICCancelled() {
               allowBlank multi value={projectFilter} onChange={setProjectFilter} options={projectOptions} placeholder="All Projects" minWidth={170} />
         <SearchableSelect
               allowBlank multi value={duidFilter} onChange={setDuidFilter} options={duidOptions} placeholder="All DUIDs" minWidth={150} />
-        <SearchableSelect multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <SearchableSelect allowBlank multi value={subconFilter} onChange={setSubconFilter} options={subconOptions} placeholder="Subcontract" minWidth={160} />
+        <LineAttributeFilters attr={attr} />
         {hasFilters && (
-          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); }}>
+          <button className="btn-secondary" onClick={() => { setSearch(""); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); attr.reset(); }}>
             Clear
           </button>
         )}

@@ -492,11 +492,16 @@ def list_pic_rows(filters=None, limit=500, portal_filters=None, with_team_type=0
         )
         from_clause = _PIC_FROM_JOIN_LEAN
 
-    if subcon_vals:
-        ph = ", ".join(["%s"] * len(subcon_vals))
-        sc_col = "COALESCE(sm_pd.name, sm.name)" if with_team_type else "COALESCE(sm_pd.name, sm_sub.name)"
-        where.append(f"IFNULL({sc_col},'') IN ({ph})")
-        params.extend(subcon_vals)
+    # Toolbar dropdowns: Subcontract, Contract Model, Domain — each on what its
+    # cell renders, and each accepting FILTER_BLANK.
+    sc_col = "COALESCE(sm_pd.name, sm.name)" if with_team_type else "COALESCE(sm_pd.name, sm_sub.name)"
+    for _expr, _vals in ((sc_col, subcon_vals),
+                         (_contract_model_expr_pic, pf.get("contract_model")),
+                         (col_filter_map["project_domain"], pf.get("domain"))):
+        clause, p = _sql_in_or_eq(_expr, _vals)
+        if clause:
+            where.append(clause)
+            params.extend(p)
 
     vat_frac = _TAX_RATE_FRACTION_SQL.format(col="pd.tax_rate")
     sql = f"""
@@ -976,6 +981,13 @@ def list_invoice_detail_rows(portal_filters=None, limit=500, _options=None, _sum
     # Per-column filters applied on the wrapper, after the UNION.
     outer_where = ["u.invoice_no IS NOT NULL", "u.invoice_no != ''"]
     outer_params = []
+    # Toolbar dropdowns, on the same columns the cells render.
+    for _ck, _key in (("sub_contract", "subcontractor"), ("contract", "contract_model"),
+                      ("project_domain", "domain")):
+        _c, _p = _sql_in_or_eq(_INVOICE_DETAIL_COL_MAP[_ck], pf.get(_key))
+        if _c:
+            outer_where.append(_c)
+            outer_params.extend(_p)
     _cf = pf.get("column_filters")
     if isinstance(_cf, str):
         try:
@@ -4023,3 +4035,61 @@ def get_po_dispatch_pic_attachments(po_dispatch):
         fields=["name", "file_name", "file_url", "file_size", "creation"],
         order_by="creation desc",
     )
+
+
+@frappe.whitelist()
+def get_line_lifecycle(po_dispatch=None):
+    """One line, end to end, for a detail popup: confirmation, Work Done,
+    customer billing per milestone and the supplier side per milestone.
+
+    Every figure is read from where its own page reads it — invoice numbers
+    through the Invoice Detail SQL, the split through attach_allocations — so
+    the popup cannot disagree with the page a user checks it against.
+    """
+    _pic_role_or_throw()
+    name = (po_dispatch or "").strip()
+    if not name or not frappe.db.exists("PO Dispatch", name):
+        frappe.throw("Unknown line")
+
+    want = ["name", "poid", "qty", "rate", "line_amount", "dispatch_status", "contract",
+            "confirmed_qty", "confirmed_amount", "remaining_qty", "remaining_qty_action",
+            "confirmation_date", "confirmed_by", "im_confirmation_note", "pic_rejection_remark",
+            "sqc_status", "pat_status", "isdp_owner", "ibuy_owner", "sub_po_supplier"]
+    for n in ("1", "2"):
+        want += [f"ms{n}_pct", f"ms{n}_amount", f"ms{n}_applied_date", f"ms{n}_invoiced",
+                 f"ms{n}_unbilled", f"ms{n}_invoice_month", f"ms{n}_payment_received_date",
+                 f"sub_po_status_ms{n}", f"sub_po_pct_ms{n}", f"sub_po_amount_ms{n}",
+                 f"sub_po_date_ms{n}", f"sub_paid_date_ms{n}", f"sub_po_remark_ms{n}"]
+    want += ["pic_status", "pic_status_ms2", "pic_detail_remark", "pic_detail_remark_ms2"]
+    have = set(frappe.db.get_table_columns("PO Dispatch"))
+    line = frappe.db.get_value("PO Dispatch", name, [f for f in want if f in have], as_dict=True) or {}
+    if line.get("contract"):
+        line["contract_model"] = frappe.db.get_value(
+            "Subcontract Master", line["contract"], "contract_model")
+
+    wd_fields = [f for f in ("name", "source", "executed_qty", "revenue_sar", "subcontractor",
+                             "submission_status", "ready_for_confirmation_at", "confirmed_at",
+                             "ms1_closed", "ms1_closed_at", "ms2_closed", "ms2_closed_at",
+                             "direct_close_by", "creation")
+                 if frappe.db.has_column("Work Done", f)]
+    work_done = frappe.get_all("Work Done", filters={"system_id": name},
+                               fields=wd_fields, order_by="creation asc")
+
+    invoices = {}
+    for n in (1, 2):
+        rows = frappe.db.sql(_invoice_detail_milestone_sql(n, ["pd.name = %s"]), (name,), as_dict=True)
+        if rows:
+            invoices[f"ms{n}"] = {"invoice_no": rows[0].get("invoice_no"),
+                                  "invoice_date": rows[0].get("invoice_date"),
+                                  "source": rows[0].get("source")}
+
+    from inet_app.api.subcontractor_sync import attach_allocations
+    holder = [{"po_dispatch": name}]
+    attach_allocations(holder, key="po_dispatch")
+
+    return {
+        "line": line,
+        "work_done": work_done,
+        "invoices": invoices,
+        "allocations": holder[0].get("subcontract_allocations") or [],
+    }
