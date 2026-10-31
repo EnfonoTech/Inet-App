@@ -46,8 +46,10 @@
   white-space: nowrap;
 }
 
-/* The title block gives way; the summary gets the room. */
-.page-header > div:first-child { min-width: 0; flex: 0 1 auto; }
+/* The title never gives way: squeezing it to "PIC Tr" to fit the numbers made
+   the page unnamed. When both don't fit, the numbers take a row of their own
+   (below), and the subtitle is already clamped to one line. */
+.page-header > div:first-child { min-width: 0; flex: 0 0 auto; max-width: 100%; }
 
 .page-actions {
   display: flex;
@@ -64,7 +66,7 @@
 .page-summary {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   justify-content: stretch;
@@ -89,8 +91,8 @@
   /* grow into whatever the header isn't using, but never squeeze a figure
      narrower than it reads — past that the strip scrolls instead. */
   flex: 1 0 auto;
-  min-width: 74px;
-  padding: 3px 14px;
+  min-width: 64px;
+  padding: 3px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-white);
@@ -99,7 +101,7 @@
 }
 
 .page-summary-value {
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   font-weight: 800;
   letter-spacing: -0.3px;
   color: var(--text);
@@ -108,7 +110,7 @@
 }
 
 .page-summary-label {
-  font-size: 0.64rem;
+  font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
@@ -134,7 +136,7 @@
   align-items: center;
   justify-content: center;
   flex: 1 0 auto;
-  padding: 2px 14px 3px;
+  padding: 2px 10px 3px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-white);
@@ -155,7 +157,7 @@
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
 }
 
@@ -170,11 +172,11 @@
 /* Hairline separators instead of a border per figure. */
 .page-summary-part + .page-summary-part {
   border-left: 1px solid var(--border);
-  padding-left: 10px;
+  padding-left: 8px;
 }
 
 .page-summary-part-value {
-  font-size: 1rem;
+  font-size: 0.92rem;
   font-weight: 800;
   letter-spacing: -0.3px;
   font-variant-numeric: tabular-nums;
@@ -182,7 +184,7 @@
 }
 
 .page-summary-part-label {
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -191,6 +193,53 @@
 .page-summary-part.tone-warn .page-summary-part-value { color: #c2410c; }
 .page-summary-part.tone-bad  .page-summary-part-value { color: #b91c1c; }
 .page-summary-part.tone-info .page-summary-part-value { color: #0369a1; }
+
+/* Overflow cue. The strip scrolls sideways with its scrollbar hidden, so a
+   figure past the edge used to look simply cut off ("Manua", "BIL… 519,542.").
+   The hidden side now fades and carries an arrow (PageSummary sets
+   more-left / more-right), and the wheel scrolls it. */
+.page-summary-wrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.page-summary-wrap .page-summary { flex: 1 1 auto; }
+.page-summary-wrap.more-right .page-summary {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent);
+}
+.page-summary-wrap.more-left .page-summary {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent);
+          mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent);
+}
+.page-summary-wrap.more-left.more-right .page-summary {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent);
+          mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent);
+}
+.page-summary-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-white);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0 0 2px;
+}
+.page-summary-arrow:hover { color: var(--text); border-color: #cbd5e1; }
+.page-summary-arrow.left  { left: 2px; }
+.page-summary-arrow.right { right: 2px; }
 
 .page-summary-chip--skeleton {
   min-width: 96px;
@@ -1865,6 +1914,7 @@
      so without this it stays two columns on a phone while every other form
      grid has already stacked. */
   .form-grid.two-col { grid-template-columns: 1fr; }
+  .page-summary-wrap { width: 100%; }
   .page-summary {
     width: 100%;
     justify-content: flex-start;

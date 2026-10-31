@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { pmApi } from "../services/api";
 // Same qty formatter the tables use, so a summary tile can never
 // disagree with the column it summarises.
@@ -14,7 +14,10 @@ import { qty as fmtQty } from "../utils/numberFormat";
  *
  * Deliberately sized to fit the header that already exists: the strip is as
  * tall as the title + subtitle beside it, so adding it costs zero vertical
- * space on a page whose real estate belongs to the table.
+ * space on a page whose real estate belongs to the table. When the figures
+ * don't all fit they scroll sideways — the hidden edge fades and shows an
+ * arrow, and the mouse wheel scrolls it, so a cut-off figure never looks like
+ * the whole story.
  *
  *   <PageSummary source="work_done" filters={portal} />
  *
@@ -60,6 +63,7 @@ export default function PageSummary({ source, filters, extra, refreshKey }) {
   // aggregate comes back, and an out-of-order reply would show the wrong view's
   // numbers under the right view's title.
   const reqRef = useRef(0);
+  const stripRef = useRef(null);
 
   const filterKey = JSON.stringify(filters ?? null);
   const extraKey = JSON.stringify(extra ?? null);
@@ -88,6 +92,41 @@ export default function PageSummary({ source, filters, extra, refreshKey }) {
     return () => { cancelled = true; };
   }, [source, filterKey, extraKey, refreshKey]);
 
+  // Which edges have figures hidden behind them — drives the fade and arrows.
+  const [more, setMore] = useState({ left: false, right: false });
+  const shown = metrics.length > 0;
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return undefined;
+    const check = () => {
+      const left = strip.scrollLeft > 1;
+      const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+      setMore((m) => (m.left === left && m.right === right ? m : { left, right }));
+    };
+    // A vertical wheel scrolls the strip sideways — with the scrollbar hidden
+    // there is otherwise no way to reach the rest with a plain mouse.
+    const onWheel = (e) => {
+      if (strip.scrollWidth <= strip.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      strip.scrollLeft += e.deltaY;
+    };
+    check();
+    strip.addEventListener("scroll", check, { passive: true });
+    strip.addEventListener("wheel", onWheel, { passive: false });
+    const ro = new ResizeObserver(check);
+    ro.observe(strip);
+    return () => {
+      strip.removeEventListener("scroll", check);
+      strip.removeEventListener("wheel", onWheel);
+      ro.disconnect();
+    };
+  }, [shown, metrics]);
+
+  const nudge = (dir) => {
+    const strip = stripRef.current;
+    if (strip) strip.scrollBy({ left: dir * Math.max(160, strip.clientWidth * 0.6), behavior: "smooth" });
+  };
+
   // A summary is a convenience — when it can't be built the page carries on
   // without it rather than showing a broken or empty strip.
   if (failed && !metrics.length) return null;
@@ -104,7 +143,12 @@ export default function PageSummary({ source, filters, extra, refreshKey }) {
   const clusters = clusterMetrics(metrics);
 
   return (
+    <div className={`page-summary-wrap${more.left ? " more-left" : ""}${more.right ? " more-right" : ""}`}>
+    {more.left && (
+      <button type="button" className="page-summary-arrow left" onClick={() => nudge(-1)} aria-label="Show earlier figures">‹</button>
+    )}
     <div
+      ref={stripRef}
       className={`page-summary${loading ? " is-stale" : ""}`}
       role="group"
       aria-label="Page summary"
@@ -140,6 +184,10 @@ export default function PageSummary({ source, filters, extra, refreshKey }) {
           ))
         )
       ))}
+    </div>
+    {more.right && (
+      <button type="button" className="page-summary-arrow right" onClick={() => nudge(1)} aria-label="Show more figures">›</button>
+    )}
     </div>
   );
 }
