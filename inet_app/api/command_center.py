@@ -21995,19 +21995,24 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     # profit jumping upward across the board. Nothing read it — IMDashboard.jsx
     # is the only caller and it uses site_kpi, never kpi.
 
-    # Monthly target — projects where this IM is implementation_manager
     im_ph = ", ".join(["%s"] * len(im_identifiers))
-    monthly_target_rows = frappe.db.sql(
-        f"""
-        SELECT COALESCE(SUM(pcc.monthly_target), 0) AS total
-        FROM `tabProject Control Center` pcc
-        WHERE pcc.implementation_manager IN ({im_ph})
-        AND pcc.active_flag = 'Yes'
-        """,
-        tuple(im_identifiers),
-        as_dict=True,
-    )
-    monthly_target = flt(monthly_target_rows[0].total if monthly_target_rows else 0)
+    # Target and revenue for the range come from the IM Performance report's
+    # own row for this IM, so the IM sees exactly the figures their scorecard
+    # is rated on. The target used to be the sum of Project Control Center
+    # monthly_target over projects naming this IM — a field nothing fills,
+    # so it was 0 for every IM. The report scores every IM in one pass; it
+    # is cheap (well under a second) and only runs for this view.
+    monthly_target = 0.0
+    perf_row = None
+    try:
+        _im_name = frappe.db.get_value("IM Master", im_resolved, "full_name") or im_resolved
+        perf = get_im_performance_report(str(first_day), str(last_day))
+        perf_row = next((r for r in (perf.get("data") or []) if r.get("im") == _im_name), None)
+    except Exception:
+        perf_row = None
+    if perf_row:
+        monthly_target = flt(perf_row.get("target"))
+        revenue = flt(perf_row.get("revenue"))
     target_today = (
         (monthly_target * day_of_month) / days_in_month if days_in_month else 0.0
     )
@@ -22459,6 +22464,10 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
             "total_teams": len(teams),
             "team_count": len(teams),
             "planned_activities": planned_activities,
+            "target_source": (perf_row or {}).get("target_source") or "",
+            "im_name": frappe.db.get_value("IM Master", im_resolved, "full_name") or im_resolved,
+            "score": (perf_row or {}).get("score"),
+            "rating": (perf_row or {}).get("rating") or "",
         },
         "message": no_teams_note,
         "debug": debug_info,

@@ -52,7 +52,7 @@ function axisFmt(v, format) {
 export const TIP = {
   itemStyle: { color: "#0f1e36" },
   labelStyle: { color: "#5b6b82", fontWeight: 600 },
-  contentStyle: { borderRadius: 8, borderColor: "#e3e9f2", fontSize: 12 },
+  contentStyle: { borderRadius: 8, borderColor: "#e3e9f2", fontSize: 12, background: "#fff" },
 };
 
 // Long category names (team · lead) are cut on the axis; the tooltip has them whole.
@@ -174,7 +174,7 @@ function ChartBody({ chart }) {
               <Pie data={data} dataKey={valueKey} nameKey={x} innerRadius="64%" outerRadius="96%" startAngle={90} endAngle={-270} stroke="none">
                 {data.map((d, i) => <Cell key={d[x]} fill={d.color || PALETTE[i % PALETTE.length]} />)}
               </Pie>
-              <Tooltip {...TIP} formatter={(v, n) => [`${fmt(v, format)} · ${pct(v)}`, n]} />
+              <Tooltip {...TIP} wrapperStyle={{ zIndex: 10 }} formatter={(v, n) => [`${fmt(v, format)} · ${pct(v)}`, n]} />
             </PieChart>
           </ResponsiveContainer>
           <div className="rdash-donut-center"><b>{chart.center ?? (format === "money" ? axisFmt(total, "money") : fmt(total, format))}</b><span>{chart.centerLabel || ""}</span></div>

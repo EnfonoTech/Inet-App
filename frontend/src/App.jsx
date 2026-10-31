@@ -28,9 +28,7 @@ const TeamAllocationApprovals = lazy(() => import("./pages/admin/TeamAllocationA
 const AdminTeams              = lazy(() => import("./pages/admin/Teams"));
 const SubconReconcile         = lazy(() => import("./pages/admin/SubconReconcile"));
 const ExecutiveDashboard  = lazy(() => import("./pages/admin/ExecutiveDashboard"));
-const PMDashboard         = lazy(() => import("./pages/admin/PMDashboard"));
-const OpsDashboard        = lazy(() => import("./pages/admin/OpsDashboard"));
-const FinancialDashboard  = lazy(() => import("./pages/admin/FinancialDashboard"));
+const ProjectsOpsDashboard = lazy(() => import("./pages/admin/ProjectsOpsDashboard"));
 const IMDashboardView     = lazy(() => import("./pages/admin/IMDashboardView"));
 
 /* -- IM pages --------------------------------------------------- */
@@ -130,9 +128,12 @@ function AppContent() {
               {/* CEO View and Commercial were merged into Executive; old links land there. */}
               <Route path="/ceo-dashboard" element={<Navigate to="/executive-dashboard" replace />} />
               <Route path="/commercial-dashboard" element={<Navigate to="/executive-dashboard" replace />} />
-              <Route path="/pm-dashboard" element={<PMDashboard />} />
-              <Route path="/ops-dashboard" element={<OpsDashboard />} />
-              <Route path="/financial-dashboard" element={<FinancialDashboard />} />
+              <Route path="/projects-operations" element={<ProjectsOpsDashboard />} />
+              {/* PM View and Operations were merged into Projects & Operations. */}
+              <Route path="/pm-dashboard" element={<Navigate to="/projects-operations" replace />} />
+              <Route path="/ops-dashboard" element={<Navigate to="/projects-operations" replace />} />
+              {/* Financial was merged into PIC & Finance. */}
+              <Route path="/financial-dashboard" element={<Navigate to="/pic-dashboard" replace />} />
               <Route path="/im-dashboard-view" element={<IMDashboardView />} />
               <Route path="/projects" element={<Projects />} />
               <Route path="/projects/:projectCode" element={<ProjectDetail />} />

@@ -4,6 +4,8 @@ import { pmApi } from "../../services/api";
 import DateRangePicker from "../../components/DateRangePicker";
 import DashboardSwitcher from "../../components/DashboardSwitcher";
 import { money } from "../../utils/numberFormat";
+import { isoMonth } from "../../utils/months";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 // Was defined identically to `fmt` (0 decimals) — every SAR figure on this
@@ -108,6 +110,20 @@ export default function PICDashboard({ showSwitcher = false }) {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.from, range.to]);
+
+  // Where a stage's lines live — shared by the pipeline table and the
+  // not-yet-invoiced breakdown so both open the same page for a stage.
+  function openBucket(key) {
+    if (key === CANCELLED_BUCKET) {
+      navigate("/pic-cancelled");
+    } else if (PENDING_BUCKETS.has(key)) {
+      navigate("/pic-pending");
+    } else if (CLOSED_BUCKETS.has(key)) {
+      navigate("/pic-closed");
+    } else {
+      navigate(`/pic-tracker?pic_status=${encodeURIComponent(key)}&pic_ms2_status=${encodeURIComponent(key)}`);
+    }
+  }
 
   const buckets = data?.buckets || [];
   const bucketByKey = useMemo(() => Object.fromEntries(buckets.map((b) => [b.bucket, b])), [buckets]);
@@ -247,17 +263,7 @@ export default function PICDashboard({ showSwitcher = false }) {
               const tone = BUCKET_TONE[key];
               const dim = (row.line_count || 0) === 0;
               const clickable = bucketNavigable && !dim;
-              function handleClick() {
-                if (key === CANCELLED_BUCKET) {
-                  navigate("/pic-cancelled");
-                } else if (PENDING_BUCKETS.has(key)) {
-                  navigate("/pic-pending");
-                } else if (CLOSED_BUCKETS.has(key)) {
-                  navigate("/pic-closed");
-                } else {
-                  navigate(`/pic-tracker?pic_status=${encodeURIComponent(key)}&pic_ms2_status=${encodeURIComponent(key)}`);
-                }
-              }
+              function handleClick() { openBucket(key); }
               return (
                 <tr
                   key={key}
@@ -321,6 +327,7 @@ export default function PICDashboard({ showSwitcher = false }) {
             <Empty>No invoicing dates set yet.</Empty>
           ) : (
             <>
+              <MonthlyInvoicedChart monthly={monthly} />
               <div style={{ overflowX: "auto" }}>
               <table className="data-table" style={{ width: "100%" }}>
                 <thead>
@@ -368,6 +375,7 @@ export default function PICDashboard({ showSwitcher = false }) {
           ) : (
             <InetSubconSplitCard data={inetSubcon} />
           )}
+          {inetSubcon && <SplitDonuts data={inetSubcon} />}
         </Section>
       </div>
 
@@ -558,3 +566,82 @@ function InetSubconSplitCard({ data: d }) {
   );
 }
 
+
+/** The roll-up as a picture: invoiced per month, last 12, empty months shown as 0. */
+function MonthlyInvoicedChart({ monthly }) {
+  const byMonth = Object.fromEntries((monthly || []).map((m) => [String(m.invoice_month).slice(0, 7), m]));
+  const data = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 11 + i);
+    const key = isoMonth(d);
+    return {
+      label: d.toLocaleString("en", { month: "short", year: "2-digit" }),
+      ms1: Number(byMonth[key]?.ms1_invoiced) || 0,
+      ms2: Number(byMonth[key]?.ms2_invoiced) || 0,
+    };
+  });
+  const compact = (v) => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${Math.round(v / 1e3)}K` : String(v));
+  return (
+    <div style={{ height: 190, padding: "12px 14px 4px", borderBottom: "1px solid #f1f5f9" }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="#f1f5f9" />
+          <XAxis dataKey="label" tick={{ fontSize: 10.5, fill: "#64748b" }} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
+          <YAxis tickFormatter={compact} tick={{ fontSize: 10.5, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={42} />
+          <Tooltip formatter={(v, n) => [money.format(v), n]} itemStyle={{ color: "#0f172a" }} cursor={{ fill: "#f8fafc" }} />
+          <Bar dataKey="ms1" name="MS1" stackId="m" fill="#4338ca" />
+          <Bar dataKey="ms2" name="MS2" stackId="m" fill="#a5b4fc" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+
+/** The split table as two pictures: who earns it, and which milestone. */
+function SplitDonuts({ data: d }) {
+  const pies = [
+    { title: "INET vs Subcon", rows: [
+      { name: "INET", value: Number(d.inet_total) || 0, color: "#3b82f6" },
+      { name: "Subcon", value: Number(d.subcon_total) || 0, color: "#8b5cf6" },
+    ] },
+    { title: "MS1 vs MS2", rows: [
+      { name: "MS1", value: Number(d.total_ms1) || 0, color: "#4338ca" },
+      { name: "MS2", value: Number(d.total_ms2) || 0, color: "#a5b4fc" },
+    ] },
+  ];
+  const compact = (v) => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${Math.round(v / 1e3)}K` : fmt.format(v));
+  return (
+    <div style={{ borderTop: "1px solid #e2e8f0", padding: "14px 16px", display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+      {pies.map((p) => {
+        const total = p.rows.reduce((a, r) => a + r.value, 0);
+        return (
+          <div key={p.title} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "#0f172a" }}>{p.title}</div>
+            <div style={{ position: "relative", width: 150, height: 150 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={p.rows} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="96%" startAngle={90} endAngle={-270} stroke="none">
+                    {p.rows.map((r) => <Cell key={r.name} fill={r.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v, n) => [`${fmtMoney.format(v)} SAR`, n]} itemStyle={{ color: "#0f172a" }} wrapperStyle={{ zIndex: 10 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                <b style={{ fontSize: "1rem", color: "#0f172a" }}>{compact(total)}</b>
+                <span style={{ fontSize: "0.66rem", color: "#94a3b8" }}>SAR</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, fontSize: "0.74rem", color: "#334155", flexWrap: "wrap", justifyContent: "center" }}>
+              {p.rows.map((r) => (
+                <span key={r.name} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
+                  {r.name} <strong>{total ? Math.round((r.value / total) * 100) : 0}%</strong>
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

@@ -7,6 +7,9 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { money } from "../../utils/numberFormat";
+import { Tile } from "../../components/ReportDashboard";
+
+const fmtInt = (v) => new Intl.NumberFormat("en").format(Number(v) || 0);
 
 const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
 
@@ -56,35 +59,6 @@ function StatusBadge({ value }) {
       <span style={{ width: 6, height: 6, borderRadius: 999, background: t.dot }} />
       {value}
     </span>
-  );
-}
-
-function KpiTile({ icon, label, value, tone = "blue", suffix, sub }) {
-  const palettes = {
-    blue: { fg: "#1d4ed8", bg: "#eff6ff" },
-    green: { fg: "#047857", bg: "#ecfdf5" },
-    amber: { fg: "#b45309", bg: "#fffbeb" },
-    red: { fg: "#b91c1c", bg: "#fef2f2" },
-    indigo: { fg: "#3730a3", bg: "#eef2ff" },
-    slate: { fg: "#334155", bg: "#f1f5f9" },
-  };
-  const p = palettes[tone] || palettes.blue;
-  return (
-    <div style={{
-      background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10,
-      padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4,
-      boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.7rem", color: "#64748b", fontWeight: 600 }}>
-        <span style={{ color: p.fg }}>{icon}</span>
-        <span style={{ textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</span>
-      </div>
-      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a", lineHeight: 1.1, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
-        {money.format(value || 0)}
-        {suffix && <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "#64748b", marginLeft: 6 }}>{suffix}</span>}
-      </div>
-      {sub && <div style={{ fontSize: "0.66rem", color: "#94a3b8", fontWeight: 500 }}>{sub}</div>}
-    </div>
   );
 }
 
@@ -275,53 +249,25 @@ export default function IMDashboard({ overrideIm }) {
     if (!assignedTotal) return 0;
     return Math.round((achievedTotal / assignedTotal) * 100);
   }, [assignedTotal, achievedTotal]);
+  // Revenue and target are the IM Performance scorecard's own figures for
+  // this IM and range (get_im_dashboard reads them from that report).
+  const kp = data?.kpi || {};
+  const revPct = kp.monthly_target ? Math.round((Number(kp.revenue) / Number(kp.monthly_target)) * 1000) / 10 : 0;
 
   return (
     <div className="dashboard" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
       {/* ── Header ──────────────────────────────────────────── */}
-      <div style={{
-        background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
-        color: "#fff", borderRadius: 10, padding: "14px 18px",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
-      }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, letterSpacing: "0.01em" }}>
-            IM Dashboard <span style={{ opacity: 0.75, fontWeight: 500 }}>– INet Telecom</span>
-          </h1>
-          <div style={{ marginTop: 2, fontSize: "0.78rem", opacity: 0.85 }}>
-            {data?.im || imName || "Installation Manager"}
-            {fetchedAt && <> · Updated {relTime(fetchedAt)}</>}
+          <h1 className="page-title">IM View · {data?.kpi?.im_name || data?.im || imName || "Implementation Manager"}</h1>
+          <div className="page-subtitle">
+            Plans, teams, revenue against target, and what is waiting on you
+            {fetchedAt && <> · updated {relTime(fetchedAt)}</>}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
-          <button
-            type="button"
-            onClick={() => loadData(range)}
-            disabled={loading}
-            title="Refresh dashboard"
-            style={{
-              border: "1px solid rgba(255,255,255,0.4)",
-              background: "rgba(255,255,255,0.12)",
-              color: "#fff",
-              padding: "6px 12px",
-              borderRadius: 8,
-              fontSize: "0.78rem",
-              fontWeight: 600,
-              cursor: loading ? "default" : "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              opacity: loading ? 0.6 : 1,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ animation: loading ? "im-dash-spin 0.8s linear infinite" : "none" }}>
-              <path d="M21 12a9 9 0 1 1-3-6.7" />
-              <polyline points="21 4 21 10 15 10" />
-            </svg>
-            {loading ? "…" : "Refresh"}
-          </button>
-          <style>{`@keyframes im-dash-spin{to{transform:rotate(360deg)}}`}</style>
+          <button type="button" className="btn-secondary" onClick={() => loadData(range)} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>
 
@@ -342,15 +288,15 @@ export default function IMDashboard({ overrideIm }) {
           3x the real site count.
           The first four follow the date range above (matched on plan_date);
           the two "Today" tiles are always today, whatever range is picked. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
-        <KpiTile icon="📋" label="Assigned Plans"   value={k.total_assigned}  tone="slate"
-                 sub={k.distinct_sites ? `${k.distinct_sites} sites in range` : "in range"} />
-        <KpiTile icon="✓"  label="Completed Plans"  value={k.completed_total} tone="green" sub="in range" />
-        <KpiTile icon="⏱"  label="In Execution"     value={k.in_progress}     tone="blue" sub="in range" />
-        <KpiTile icon="⚠"  label="Delayed Plans"    value={k.delayed}         tone="red"
-                 sub="overdue + planning issue" />
-        <KpiTile icon="◎"  label="Today's Target"   value={k.today_target}    tone="indigo" suffix="Plans" sub="today" />
-        <KpiTile icon="✓"  label="Today Completed"  value={k.today_completed} tone="green" suffix="Plans" sub="today" />
+      <div className="rdash-tiles">
+        <Tile icon="planned" tone="grey" label="Assigned plans" value={fmtInt(k.total_assigned)}
+              sub={k.distinct_sites ? `${fmtInt(k.distinct_sites)} sites in range` : "in range"} />
+        <Tile icon="done" tone="green" label="Completed plans" value={fmtInt(k.completed_total)} sub="in range" />
+        <Tile icon="clock" tone="blue" label="In execution" value={fmtInt(k.in_progress)} sub="in range" />
+        <Tile icon="alert" tone={k.delayed ? "red" : "grey"} label="Delayed plans" value={fmtInt(k.delayed)} sub="overdue + planning issue" />
+        <Tile icon="target" tone="blue" label="Today" value={`${fmtInt(k.today_completed)} / ${fmtInt(k.today_target)}`} sub="plans completed of today's" />
+        <Tile icon="money" tone={revPct >= 90 ? "green" : "amber"} label="Revenue (SAR) · range" value={fmtInt(kp.revenue)}
+              sub={kp.monthly_target ? `${revPct}% of target ${fmtInt(kp.monthly_target)}` : "no target set"} />
       </div>
 
       {/* ── Row 2: Project Progress (2/3) + Team Performance (1/3) ── */}
@@ -392,7 +338,7 @@ export default function IMDashboard({ overrideIm }) {
               {team_perf.slice(0, 8).map((t, i) => (
                 <div key={t.team_id || i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: i === team_perf.length - 1 ? "none" : "1px solid #f1f5f9" }}>
                   <span style={{ fontSize: "0.82rem", color: "#1e293b" }}>{t.team_name}</span>
-                  <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>{fmt.format(t.sites_done)} <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: "0.72rem" }}>Sites</span></span>
+                  <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>{fmt.format(t.sites_done)} <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: "0.72rem" }}>plans done</span></span>
                 </div>
               ))}
             </div>
@@ -553,13 +499,23 @@ export default function IMDashboard({ overrideIm }) {
         <Section title="My Performance" icon="📈">
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
-              <span style={{ fontSize: "0.82rem", color: "#475569" }}>Monthly Target</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(assignedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>Sites</span></span>
+              <span style={{ fontSize: "0.82rem", color: "#475569" }}>Assigned</span>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(assignedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>plans + direct closes</span></span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
               <span style={{ fontSize: "0.82rem", color: "#475569" }}>Achieved</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(achievedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>Sites</span></span>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(achievedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>done</span></span>
             </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
+              <span style={{ fontSize: "0.82rem", color: "#475569" }}>Revenue vs target</span>
+              <span style={{ fontWeight: 700, color: "#0f172a" }}>{money.format(kp.revenue || 0)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>of {money.format(kp.monthly_target || 0)}</span></span>
+            </div>
+            {kp.rating && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
+                <span style={{ fontSize: "0.82rem", color: "#475569" }}>Scorecard</span>
+                <span style={{ fontWeight: 700, color: "#0f172a" }}>{kp.score != null ? `${kp.score}% · ` : ""}{kp.rating}</span>
+              </div>
+            )}
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontSize: "0.82rem", color: "#475569" }}>Performance</span>

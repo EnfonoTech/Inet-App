@@ -231,7 +231,7 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
                           <Pie data={status} dataKey="value" nameKey="name" innerRadius="64%" outerRadius="96%" startAngle={90} endAngle={-270} stroke="none">
                             {status.map((d) => <Cell key={d.name} fill={d.color} />)}
                           </Pie>
-                          <Tooltip {...TIP} formatter={(v, n) => [`${fmtInt(v)} · ${pctOf(v)}`, n]} />
+                          <Tooltip {...TIP} wrapperStyle={{ zIndex: 10 }} formatter={(v, n) => [`${fmtInt(v)} · ${pctOf(v)}`, n]} />
                         </PieChart>
                       </ResponsiveContainer>
                       <div className="rdash-donut-center"><b>{fmtInt(s.planned)}</b><span>team plans</span></div>

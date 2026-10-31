@@ -3,10 +3,8 @@ import { useNavigate, useLocation } from "react-router-dom";
 const TABS = [
   { id: "command", label: "Command", path: "/dashboard" },
   { id: "executive", label: "Executive", path: "/executive-dashboard" },
-  { id: "pm", label: "PM View", path: "/pm-dashboard" },
-  { id: "ops", label: "Operations", path: "/ops-dashboard" },
-  { id: "pic", label: "PIC Overview", path: "/pic-dashboard" },
-  { id: "financial", label: "Financial", path: "/financial-dashboard" },
+  { id: "projects-ops", label: "Projects & Operations", path: "/projects-operations" },
+  { id: "pic", label: "PIC & Finance", path: "/pic-dashboard" },
   { id: "im-view", label: "IM View", path: "/im-dashboard-view" },
 ];
 

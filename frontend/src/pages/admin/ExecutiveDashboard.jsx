@@ -4,6 +4,7 @@ import SearchableSelect from "../../components/SearchableSelect";
 import { Card, ChartCard, Tile, TopTable, fmt } from "../../components/ReportDashboard";
 import OrderToCashCharts from "../../components/OrderToCashCharts";
 import { pmApi } from "../../services/api";
+import { MONTH_OPTIONS as MONTHS, isoMonth, monthBounds, prevMonth, shortMonth as short } from "../../utils/months";
 
 /**
  * Executive — CEO View and Commercial merged into one page.
@@ -17,21 +18,6 @@ import { pmApi } from "../../services/api";
  * figure with nothing to tell them apart, read its cost from a key the
  * payload never had (always SAR 0), and coloured every alert red.
  */
-
-function isoMonth(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-function monthBounds(ym) {
-  const [y, m] = ym.split("-").map(Number);
-  return { from: `${ym}-01`, to: `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}` };
-}
-function prevMonth(ym) { const [y, m] = ym.split("-").map(Number); return isoMonth(new Date(y, m - 2, 1)); }
-const MONTHS = (() => {
-  const now = new Date();
-  return Array.from({ length: 24 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    return { id: isoMonth(d), label: d.toLocaleString("en", { month: "long", year: "numeric" }) };
-  });
-})();
-const short = (ym) => new Date(`${ym}-01T00:00:00`).toLocaleString("en", { month: "short" });
 
 const n = (v) => Number(v) || 0;
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
