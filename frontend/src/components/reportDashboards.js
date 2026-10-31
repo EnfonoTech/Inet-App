@@ -203,14 +203,14 @@ const BUILDERS = {
         tile("PO lines", totals?.total_lines ?? last.total_lines, "int", "in scope", "blue", "doc"),
         tile("Closed so far", last.closed_cumulative, "int", `${pct(n(last.closed_cumulative), n(last.total_lines))}% of lines`, "green", "done"),
         tile("Closed in period", sum(rows, "new_closures"), "int", `${rows.length} weeks`, "green", "up"),
+        tile("Planned in period", sum(rows, "planned_lines"), "int", `${n(last.planned_done).toLocaleString("en")} done · ${n(last.plan_adherence_pct)}%`, n(last.plan_adherence_pct) >= 90 ? "green" : "amber", "planned"),
         tile("Remaining", last.remaining_lines, "int", `target ${n(last.target_remaining).toLocaleString("en")}`, "amber", "clock"),
         tile("Progress", last.actual_pct, "pct", `target ${n(last.target_pct)}%`, n(last.actual_pct) >= n(last.target_pct) ? "green" : "red", "rate"),
-        tile("Re-scheduled", sum(rows, "reschedules"), "int", "plans moved", "grey", "planned"),
       ],
       charts: [
         chart("line", "Remaining lines vs target", rows, [["remaining_lines", "Remaining", "#1d5fd1"], ["target_remaining", "Target", "#e08a2c"]], "week"),
-        chart("bar", "New closures per week", rows, [["new_closures", "Closed", "#15803d"]], "week"),
-        chart("bar", "Re-scheduled per week", rows, [["reschedules", "Re-scheduled", "#e0a320"]], "week"),
+        chart("bar", "Planned vs closed per week", rows, [["planned_lines", "Planned", "#b9cdf3"], ["new_closures", "Closed", "#15803d"]], "week"),
+        chart("bar", "Re-scheduled per week", rows, [["reschedules", "Re-scheduled", "#e0a320"]], "week", "int", { sub: `${sum(rows, "reschedules")} in the period` }),
       ],
     };
   },

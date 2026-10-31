@@ -135,7 +135,7 @@ const REPORTS = [
     title: "Rollout Delivery Burn-Down",
     api: "reportRolloutBurnDown",
     // Default window is the last 8 weeks, not "this calendar month".
-    description: "Weekly burn-down of your own backlog vs an even-pace target — new closures and re-scheduled lines per week",
+    description: "Weekly burn-down of your own backlog vs the work you planned — lines planned, closed and re-scheduled per week",
     hasFilters: true,
     filterType: "dateonly",
   },

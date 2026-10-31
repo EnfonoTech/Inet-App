@@ -27,8 +27,7 @@ const PODump              = lazy(() => import("./pages/admin/PODump"));
 const TeamAllocationApprovals = lazy(() => import("./pages/admin/TeamAllocationApprovals"));
 const AdminTeams              = lazy(() => import("./pages/admin/Teams"));
 const SubconReconcile         = lazy(() => import("./pages/admin/SubconReconcile"));
-const CEODashboard        = lazy(() => import("./pages/admin/CEODashboard"));
-const CommercialDashboard = lazy(() => import("./pages/admin/CommercialDashboard"));
+const ExecutiveDashboard  = lazy(() => import("./pages/admin/ExecutiveDashboard"));
 const PMDashboard         = lazy(() => import("./pages/admin/PMDashboard"));
 const OpsDashboard        = lazy(() => import("./pages/admin/OpsDashboard"));
 const FinancialDashboard  = lazy(() => import("./pages/admin/FinancialDashboard"));
@@ -127,8 +126,10 @@ function AppContent() {
           {role === "admin" && (
             <>
               <Route path="/dashboard" element={<CommandDashboard />} />
-              <Route path="/ceo-dashboard" element={<CEODashboard />} />
-              <Route path="/commercial-dashboard" element={<CommercialDashboard />} />
+              <Route path="/executive-dashboard" element={<ExecutiveDashboard />} />
+              {/* CEO View and Commercial were merged into Executive; old links land there. */}
+              <Route path="/ceo-dashboard" element={<Navigate to="/executive-dashboard" replace />} />
+              <Route path="/commercial-dashboard" element={<Navigate to="/executive-dashboard" replace />} />
               <Route path="/pm-dashboard" element={<PMDashboard />} />
               <Route path="/ops-dashboard" element={<OpsDashboard />} />
               <Route path="/financial-dashboard" element={<FinancialDashboard />} />

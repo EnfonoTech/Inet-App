@@ -183,7 +183,7 @@ function ChartBody({ chart }) {
           {data.map((d, i) => (
             <li key={d[x]}>
               <span><i style={{ background: d.color || PALETTE[i % PALETTE.length] }} />{d[x]}</span>
-              <b>{fmt(d[valueKey], format)} <span className="rdash-muted">({pct(d[valueKey])})</span></b>
+              <b>{fmt(d[valueKey], format === "money" ? "int" : format)} <span className="rdash-muted">({pct(d[valueKey])})</span></b>
             </li>
           ))}
           {chart.note && <li className="rdash-legend-note">{chart.note}</li>}
@@ -237,6 +237,15 @@ function ChartBody({ chart }) {
         </Chart>
       </ResponsiveContainer>
     </div>
+  );
+}
+
+/** One chart in its card — for pages that lay out their own grid. */
+export function ChartCard({ chart }) {
+  return (
+    <Card title={chart.title} aside={chart.sub ? <span className="rdash-muted">{chart.sub}</span> : null}>
+      <ChartBody chart={chart} />
+    </Card>
   );
 }
 

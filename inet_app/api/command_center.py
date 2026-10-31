@@ -17401,9 +17401,10 @@ def _project_performance_report(im_ids=None):
 def get_rollout_burn_down_report(from_date=None, to_date=None, **kwargs):
     """Rollout Delivery Burn-Down — the workbook's Rollout_Progress sheet.
 
-    Company-wide PO-line backlog, burning down week by week against a
-    straight-line pace target (the same even-pace assumption behind Command
-    Dashboard's Target card).
+    Company-wide PO-line backlog, burning down week by week against the work
+    that was planned: a line is due in the week of its first rollout plan in
+    the period. (It used to be an even straight line to zero over the period,
+    which no range could ever meet.)
 
     Total Lines is every in-scope PO Dispatch line — the same "in scope"
     definition get_project_performance_report uses (has a project, not
@@ -17489,13 +17490,16 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
             fd = add_days(td, -55)
     else:
         fd, td = add_days(t, -55), t
-    period_len = (td - fd).days + 1
 
     per_line = frappe.db.sql(
         f"""
         SELECT pd.name AS pdname,
                (pd.dispatch_status IN ({_ph_done})) AS is_done,
-               DATE(COALESCE(ex.last_exec_date, wdd.wd_date, pd.modified)) AS closed_date
+               -- The day the work happened: latest execution, else first Work
+               -- Done. NOT pd.modified any more — any later edit (a PIC
+               -- status change, a remark) moved that date, so a line finished
+               -- in August counted as closed in whatever week someone touched it.
+               DATE(COALESCE(ex.last_exec_date, wdd.wd_date)) AS closed_date
         FROM `tabPO Dispatch` pd
         LEFT JOIN (
             SELECT rp.po_dispatch AS pdname, MAX(de.execution_date) AS last_exec_date
@@ -17515,6 +17519,10 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
 
     total_lines = len(per_line)
     closed_dates = [getdate(r.closed_date) for r in per_line if r.is_done and r.closed_date]
+    # Done lines with neither an execution nor a Work Done — mostly legacy
+    # lines imported already finished. Closed, but on no knowable day: they
+    # are part of the closed base, never of any week's closures.
+    undated_closed = sum(1 for r in per_line if r.is_done and not r.closed_date)
 
     revisit_rows = frappe.db.sql(
         f"""
@@ -17531,8 +17539,42 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
     ) or []
     revisit_by_date = {getdate(r.d): cint(r.c) for r in revisit_rows}
 
-    baseline_closed = sum(1 for d in closed_dates if d < fd)
+    baseline_closed = undated_closed + sum(1 for d in closed_dates if d < fd)
     open_backlog_at_start = max(total_lines - baseline_closed, 0)
+
+    # The TARGET is the work that was actually scheduled: a line open at the
+    # start of the window is due by the date of its first non-cancelled
+    # rollout plan inside the window. It used to be an even straight line to
+    # ZERO — the whole open backlog (6,889 lines in October) cleared by the
+    # last day — against which every range read as far behind, whatever the
+    # team did. Lines with no plan in the window carry no target here.
+    open_at_start = {
+        r.pdname for r in per_line
+        if not (r.is_done and (not r.closed_date or getdate(r.closed_date) < fd))
+    }
+    plan_rows = frappe.db.sql(
+        f"""
+        SELECT rp.po_dispatch AS pdname, MIN(rp.plan_date) AS first_plan
+        FROM `tabRollout Plan` rp
+        JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE rp.plan_date BETWEEN %s AND %s
+          AND IFNULL(rp.plan_status, '') <> 'Cancelled'
+          AND {scope_where}
+        GROUP BY rp.po_dispatch
+        """,
+        (fd, td, *_sp), as_dict=True,
+    ) or []
+    due_dates = [getdate(r.first_plan) for r in plan_rows if r.pdname in open_at_start]
+    # Of the planned lines, which got done and when — the like-for-like
+    # check of the plan. The backlog's own "closed" count is wider: it also
+    # moves when PIC takes an older line to Submitted / Closed, which is not
+    # field work done in the period.
+    line_by_name = {r.pdname: r for r in per_line}
+    due_done = []
+    for r in plan_rows:
+        line = line_by_name.get(r.pdname)
+        if r.pdname in open_at_start and line and line.is_done and line.closed_date:
+            due_done.append((getdate(r.first_plan), getdate(line.closed_date)))
 
     buckets = []
     cursor = fd
@@ -17545,11 +17587,13 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
 
     data = []
     for idx, wstart, wend in buckets:
-        cum = sum(1 for d in closed_dates if d <= wend)
+        cum = undated_closed + sum(1 for d in closed_dates if d <= wend)
         newc = sum(1 for d in closed_dates if wstart <= d <= wend)
         reschedules = sum(c for d, c in revisit_by_date.items() if wstart <= d <= wend)
-        days_elapsed = (wend - fd).days + 1
-        target_pct = round(min(days_elapsed / period_len, 1.0) * 100, 1) if period_len else 0.0
+        due_cum = sum(1 for d in due_dates if d <= wend)
+        due_new = sum(1 for d in due_dates if wstart <= d <= wend)
+        planned_done = sum(1 for due, closed in due_done if due <= wend and closed <= wend)
+        target_pct = round(due_cum / open_backlog_at_start * 100, 1) if open_backlog_at_start else 0.0
         actual_pct = (round((cum - baseline_closed) / open_backlog_at_start * 100, 1)
                       if open_backlog_at_start else 0.0)
         data.append({
@@ -17561,7 +17605,10 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
             "closed_cumulative": cum,
             "new_closures":     newc,
             "remaining_lines":  total_lines - cum,
-            "target_remaining": round(max(open_backlog_at_start * (1 - target_pct / 100), 0)),
+            "planned_lines":    due_new,
+            "planned_done":     planned_done,
+            "plan_adherence_pct": round(planned_done / due_cum * 100, 1) if due_cum else 0.0,
+            "target_remaining": max(total_lines - baseline_closed - due_cum, 0),
             "actual_pct":       actual_pct,
             "target_pct":       target_pct,
             "reschedules":      reschedules,
@@ -17576,6 +17623,12 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
         {"fieldname": "closed_cumulative", "label": "Closed (Cumulative)",   "fieldtype": "Int",     "no_total": True},
         {"fieldname": "new_closures",      "label": "New Closures",          "fieldtype": "Int"},
         {"fieldname": "remaining_lines",   "label": "Remaining Lines",       "fieldtype": "Int",     "no_total": True},
+        {"fieldname": "planned_lines",     "label": "Planned in Week",       "fieldtype": "Int",
+         "hint": "Open lines whose first rollout plan in this period falls in this week"},
+        {"fieldname": "planned_done",      "label": "Planned Done (Cumulative)", "fieldtype": "Int", "no_total": True,
+         "hint": "Of the lines planned so far in the period, how many are done"},
+        {"fieldname": "plan_adherence_pct", "label": "Plan Done %",          "fieldtype": "Percent",
+         "hint": "Planned done ÷ planned so far"},
         {"fieldname": "target_remaining",  "label": "Target Remaining",      "fieldtype": "Int",     "no_total": True},
         {"fieldname": "actual_pct",        "label": "Actual Progress %",     "fieldtype": "Percent"},
         {"fieldname": "target_pct",        "label": "Target Progress %",     "fieldtype": "Percent"},
@@ -17587,6 +17640,9 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
         "total_lines":       total_lines,
         "closed_cumulative": last.get("closed_cumulative", baseline_closed),
         "new_closures":      sum(r["new_closures"] for r in data),
+        "planned_lines":     sum(r["planned_lines"] for r in data),
+        "planned_done":      last.get("planned_done", 0),
+        "plan_adherence_pct": last.get("plan_adherence_pct", 0.0),
         "remaining_lines":   last.get("remaining_lines", total_lines - baseline_closed),
         "target_remaining":  last.get("target_remaining", open_backlog_at_start),
         "actual_pct":        last.get("actual_pct", 0.0),
@@ -17600,6 +17656,7 @@ def _rollout_burn_down_report(from_date=None, to_date=None, im_ids=None):
         "totals": totals,
         "chart": _report_chart(data, "week", "actual_pct", "Actual Progress %", top=len(data)),
         "open_backlog_at_start": open_backlog_at_start,
+        "undated_closed": undated_closed,
         "from_date": str(fd),
         "to_date": str(td),
     }

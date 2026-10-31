@@ -106,7 +106,7 @@ const REPORTS = [
     api: "reportRolloutBurnDown",
     // Default window is the last 8 weeks, not "this calendar month" — see
     // the backend docstring. An explicit range overrides it.
-    description: "Weekly backlog burn-down vs an even-pace target — actual vs target progress on the open backlog, new closures and re-scheduled lines per week",
+    description: "Weekly backlog burn-down vs the work planned — a line is due in the week of its first rollout plan; lines planned, closed and re-scheduled per week",
     hasFilters: true,
     filterType: "dateonly",
   },
