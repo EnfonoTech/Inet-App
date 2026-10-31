@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import DataTableWrapper from "./DataTableWrapper";
 import SearchableSelect from "./SearchableSelect";
+import { Card, TIP, Tile, TopTable, heat } from "./ReportDashboard";
 
 /**
  * Monthly Team Details as a dashboard: headline tiles, three charts, three
@@ -48,52 +49,6 @@ const MONTHS = (() => {
 const fmtInt = (v) => Number(v || 0).toLocaleString("en");
 const fmtPct = (v) => `${Number(v || 0).toFixed(1)}%`;
 
-// Same bands as the rest of the report catalog: ≥90 / ≥75 / ≥60 / below.
-function heat(v) {
-  const n = Number(v);
-  if (n >= 90) return "rdash-h4";
-  if (n >= 75) return "rdash-h3";
-  if (n >= 60) return "rdash-h2";
-  return "rdash-h1";
-}
-
-const ICONS = {
-  teams: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5" /><circle cx="17.5" cy="9" r="2.5" /><path d="M17 14.5c2.4.2 4 1.8 4.5 4.5" /></>,
-  planned: <><rect x="4" y="5" width="16" height="16" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></>,
-  done: <path d="M5 12.5l4.5 4.5L19 7.5" />,
-  rate: <><path d="M12 3a9 9 0 109 9h-9z" /><path d="M15 3.5A9 9 0 0120.5 9H15z" /></>,
-  avg: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
-  up: <><path d="M3 17l6-6 4 4 8-8" /><path d="M15 7h6v6" /></>,
-  down: <><path d="M3 7l6 6 4-4 8 8" /><path d="M15 17h6v-6" /></>,
-};
-
-function Tile({ icon, tone, label, value, sub }) {
-  return (
-    <div className={`rdash-tile tone-${tone}`}>
-      <div className="rdash-tile-ic">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[icon]}</svg>
-      </div>
-      <div className="rdash-tile-body">
-        <div className="rdash-tile-label">{label}</div>
-        <div className="rdash-tile-value">{value}</div>
-        {sub && <div className="rdash-tile-sub">{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-function Card({ title, aside, children, className = "" }) {
-  return (
-    <section className={`rdash-card ${className}`}>
-      <div className="rdash-card-hd">
-        <h2>{title}</h2>
-        {aside}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 function ImCell({ row }) {
   if (!row.im_name) return <span className="rdash-muted">—</span>;
   const others = row.im_others || [];
@@ -102,35 +57,6 @@ function ImCell({ row }) {
       {row.im_name}
       {others.length > 0 && <span className="rdash-more"> +{others.length}</span>}
     </span>
-  );
-}
-
-function TopTable({ rows, cols }) {
-  return (
-    <div className="rdash-table-scroll">
-    <table className="rdash-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          {cols.map((c) => <th key={c.key} className={c.num ? "num" : c.pct ? "pct" : ""}>{c.label}</th>)}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.length === 0 ? (
-          <tr><td colSpan={cols.length + 1} className="rdash-muted" style={{ textAlign: "center", padding: 18 }}>No teams</td></tr>
-        ) : rows.map((r, i) => (
-          <tr key={r.team}>
-            <td>{i + 1}</td>
-            {cols.map((c) => (
-              <td key={c.key} className={c.pct ? `pct ${heat(r[c.key])}` : c.num ? "num" : ""}>
-                {c.render ? c.render(r) : c.pct ? fmtPct(r[c.key]) : c.num ? fmtInt(r[c.key]) : (r[c.key] || "—")}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-    </div>
   );
 }
 
@@ -268,7 +194,7 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
                         <CartesianGrid vertical={false} stroke="#eef2f7" />
                         <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#5b6b82" }} axisLine={{ stroke: "#d5deeb" }} tickLine={false} />
                         <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11, fill: "#8a97a8" }} axisLine={false} tickLine={false} />
-                        <Tooltip formatter={(v, _n, p) => [`${v}% · ${p.payload.completed} of ${p.payload.planned}`, `${p.payload.from} → ${p.payload.to}`]} cursor={{ fill: "#f4f7fb" }} />
+                        <Tooltip {...TIP} formatter={(v, _n, p) => [`${v}% · ${p.payload.completed} of ${p.payload.planned}`, `${p.payload.from} → ${p.payload.to}`]} cursor={{ fill: "#f4f7fb" }} />
                         <Bar dataKey="pct" fill={C.blue} radius={[6, 6, 0, 0]} maxBarSize={56}>
                           <LabelList dataKey="pct" position="top" formatter={(v) => `${v}%`} style={{ fontSize: 12, fontWeight: 700, fill: "#0f1e36" }} />
                         </Bar>
@@ -284,8 +210,8 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
                         <CartesianGrid vertical={false} stroke="#eef2f7" />
                         <XAxis dataKey="label" tick={{ fontSize: 11.5, fill: "#5b6b82" }} axisLine={{ stroke: "#d5deeb" }} tickLine={false} interval={0} />
                         <YAxis tick={{ fontSize: 11, fill: "#8a97a8" }} axisLine={false} tickLine={false} />
-                        <Tooltip cursor={{ fill: "#f4f7fb" }} />
-                        <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} verticalAlign="top" align="right" height={24} />
+                        <Tooltip {...TIP} cursor={{ fill: "#f4f7fb" }} />
+                        <Legend formatter={(v) => <span style={{ color: "#33445e" }}>{v}</span>} iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} verticalAlign="top" align="right" height={24} />
                         <Bar dataKey="planned" name="Planned" fill={C.light} radius={[4, 4, 0, 0]} maxBarSize={34}>
                           <LabelList dataKey="planned" position="top" style={{ fontSize: 11, fontWeight: 700, fill: "#0f1e36" }} />
                         </Bar>
@@ -305,7 +231,7 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
                           <Pie data={status} dataKey="value" nameKey="name" innerRadius="64%" outerRadius="96%" startAngle={90} endAngle={-270} stroke="none">
                             {status.map((d) => <Cell key={d.name} fill={d.color} />)}
                           </Pie>
-                          <Tooltip formatter={(v, n) => [`${fmtInt(v)} · ${pctOf(v)}`, n]} />
+                          <Tooltip {...TIP} formatter={(v, n) => [`${fmtInt(v)} · ${pctOf(v)}`, n]} />
                         </PieChart>
                       </ResponsiveContainer>
                       <div className="rdash-donut-center"><b>{fmtInt(s.planned)}</b><span>team plans</span></div>
@@ -325,7 +251,7 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
 
               <div className="rdash-row rdash-row-3">
                 <Card title="Top 5 teams by utilization">
-                  <TopTable rows={derived?.topUtil || []} cols={[
+                  <TopTable rowKey="team" empty="No teams" rows={derived?.topUtil || []} cols={[
                     { key: "team_id", label: "Team" },
                     { key: "team_name", label: "Lead" },
                     { key: "im_name", label: "IM", render: (r) => <ImCell row={r} /> },
@@ -335,7 +261,7 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
                   ]} />
                 </Card>
                 <Card title="Top 5 teams by planned activities">
-                  <TopTable rows={derived?.topPlanned || []} cols={[
+                  <TopTable rowKey="team" empty="No teams" rows={derived?.topPlanned || []} cols={[
                     { key: "team_id", label: "Team" },
                     { key: "team_name", label: "Lead" },
                     { key: "total_planned", label: "Planned", num: true },
@@ -344,7 +270,7 @@ export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImO
                   ]} />
                 </Card>
                 <Card title="Top 5 teams by completed activities">
-                  <TopTable rows={derived?.topCompleted || []} cols={[
+                  <TopTable rowKey="team" empty="No teams" rows={derived?.topCompleted || []} cols={[
                     { key: "team_id", label: "Team" },
                     { key: "team_name", label: "Lead" },
                     { key: "total_completed", label: "Done", num: true },

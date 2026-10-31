@@ -1,34 +1,168 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { pmApi } from "../services/api";
 import MiniTable from "./MiniTable";
+import ReportDashboard, { Card } from "./ReportDashboard";
 import { money } from "../utils/numberFormat";
 
 const fmtDec = new Intl.NumberFormat("en", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 /**
- * "My Work Summary" — the bundle the IM Reports page used to BE, before that
- * page became a catalog: PO dispatch counts, project totals, mode breakdown,
- * rollout plans, month-to-date executions and work done.
+ * "My Work" — the IM's own PO lines, rollout plans, this month's executions
+ * and this month's Work Done, one section per catalog entry (`section`).
  *
- * Kept, and moved here rather than dropped: it is the only view of these
- * particular figures the IM has, and the catalog's other reports answer
- * different questions. It is already IM-scoped server-side — get_im_reports()
- * resolves the IM from the session, same as every endpoint in
- * api/im_reports.py.
- *
- * ONE SECTION PER RENDER, chosen by `section`. These four used to be a tab
- * strip inside this component, which put a THIRD row of tabs under the
- * catalog's own category tabs and report chips — three layers to read before
- * reaching any data. Each section is now its own catalog entry, so the chips
- * ARE this choice: two layers, the same as every other report, and each
- * section gets its own ?tab= deep link.
- *
- * The Commercial tab that used to sit alongside these is likewise its own
- * entry (key "commercial"), which is what keeps Rollout Planning's
- * "View commercial report" deep link working.
+ * Laid out like every other report: headline tiles, chart cards, then the
+ * detail. All four sections read ONE cached payload (get_im_reports), which
+ * is scoped server-side off the IM stamped on each record.
  */
+
+const n = (v) => Number(v) || 0;
+const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+const tile = (label, value, format = "int", sub, tone = "blue", icon = "avg") => ({ label, value, format, sub, tone, icon });
+const chart = (kind, title, data, series, x = "label", format = "int", extra = {}) => ({
+  kind, title, data, x, format, series: series.map(([key, label, color]) => ({ key, label, color })), ...extra,
+});
+const STATUS_COLORS = {
+  Completed: "#15803d", Closed: "#14652f", "Partially Closed": "#3f9b5c", Submitted: "#0e8a8a", "Partially Submitted": "#5fb3b3",
+  Dispatched: "#1d5fd1", Planned: "#9db8ea", "In Execution": "#1d5fd1", "In Progress": "#1d5fd1", Pending: "#e0a320",
+  "Planning with Issue": "#e08a2c", Overdue: "#b42318", "Not Attended": "#c2410c", Hold: "#94a3b8", Postponed: "#94a3b8",
+  Cancelled: "#c7d0dc", Invoiced: "#1d5fd1", Rollout: "#1d5fd1", "Direct / Backend close": "#6d4bd1",
+};
+const colored = (rows) => rows.map((r) => ({ ...r, color: STATUS_COLORS[r.label] }));
+const countOf = (rows, label) => n(rows.find((r) => r.status_key === label)?.cnt);
+// "Team-02 · Attaullah Khan" — the number and the name together, as everywhere else.
+const teamLabel = (rows) => (rows || []).map((r) => ({ ...r, team_label: r.team_name && r.team_name !== r.team ? `${r.team} · ${r.team_name}` : r.team }));
+
+function overviewDashboard(p) {
+  const d = p.dispatch_summary || {};
+  const projects = (d.by_project || []).map((g) => ({ ...g, done_pct: pct(g.done, g.lines) }));
+  return {
+    dashboard: {
+      tiles: [
+        tile("PO lines", d.total_lines, "int", "cancelled left out", "blue", "doc"),
+        tile("Line value", d.total_amount, "money", "SAR", "blue", "money"),
+        tile("Lines done", d.done_lines, "int", `${pct(n(d.done_lines), n(d.total_lines))}% of lines`, "green", "done"),
+        tile("Delivered value", d.done_amount, "money", `${pct(n(d.done_amount), n(d.total_amount))}% of value`, "green", "rate"),
+        tile("Cancelled", d.cancelled_lines, "int", `SAR ${money.format(n(d.cancelled_amount))}`, n(d.cancelled_lines) ? "red" : "grey", "alert"),
+        tile("Projects", projects.length, "int", null, "grey", "folder"),
+      ],
+      charts: [
+        chart("hbar", "Lines by status", colored(d.by_status || []), [["lines", "Lines"]]),
+        chart("hbar", "Value by project", projects.slice(0, 10), [["amount", "SAR"]], "label", "money", { sub: "top 10" }),
+        chart("donut", "Dispatch mode", (d.by_dispatch_mode || []).map((m, i) => ({ label: m.label, value: m.lines, color: ["#1d5fd1", "#e08a2c", "#94a3b8"][i] })), [["value", "Lines"]], "label", "int", { centerLabel: "lines" }),
+      ],
+      tops: [{
+        title: "Projects", sub: `${projects.length} projects`, rows: projects,
+        columns: [
+          { key: "label", label: "Project", format: "text" }, { key: "lines", label: "Lines", format: "int" },
+          { key: "done", label: "Done", format: "int" }, { key: "done_pct", label: "Done %", format: "pct" },
+          { key: "amount", label: "Value", format: "money" },
+        ],
+      }],
+    },
+  };
+}
+
+function rolloutDashboard(p) {
+  const st = p.rollout_status_counts || [];
+  const total = st.reduce((a, r) => a + n(r.cnt), 0);
+  const months = (p.plans_by_month || []).map((m) => ({ ...m, planned: n(m.planned) - n(m.cancelled) }));
+  return {
+    dashboard: {
+      tiles: [
+        tile("Plans", total, "int", "all dates", "blue", "planned"),
+        tile("Completed", countOf(st, "Completed"), "int", `${pct(countOf(st, "Completed"), total)}% of plans`, "green", "done"),
+        tile("In execution", countOf(st, "In Execution"), "int", null, "blue", "clock"),
+        tile("Planned", countOf(st, "Planned"), "int", "not started yet", "grey", "planned"),
+        tile("With issue", countOf(st, "Planning with Issue"), "int", "see Issues & Risks", countOf(st, "Planning with Issue") ? "amber" : "grey", "alert"),
+        tile("Cancelled", countOf(st, "Cancelled"), "int", null, "grey", "alert"),
+      ],
+      charts: [
+        chart("bar", "Plans by month", months, [["planned", "Planned", "#b9cdf3"], ["completed", "Completed", "#163a7a"]], "month", "int", { sub: "last 6 months, cancelled left out" }),
+        chart("hbar", "This month by team", teamLabel(p.plans_by_team).slice(0, 10), [["planned", "Planned", "#b9cdf3"], ["completed", "Completed", "#163a7a"]], "team_label"),
+        chart("donut", "Plans by status", colored(st.map((r) => ({ label: r.status_key, value: n(r.cnt) }))), [["value", "Plans"]], "label", "int", { centerLabel: "plans" }),
+      ],
+    },
+    table: {
+      title: "Recent plans", sub: "latest 80", key: "im-reports-recent-plans",
+      columns: [
+        { label: "Plan", key: "name" }, { label: "Date", key: "plan_date" }, { label: "Status", key: "plan_status" },
+        { label: "Team", key: "team_name" }, { label: "POID", key: "po_dispatch" }, { label: "Project", key: "project_code" },
+        { label: "Visit", key: "visit_type" },
+        { label: "Target", key: "target_amount", align: "right", render: (v) => fmtDec.format(n(v)) },
+      ],
+      rows: p.rollouts_recent || [],
+    },
+  };
+}
+
+function executionDashboard(p) {
+  const st = p.execution_status_counts || [];
+  const q = p.execution_quality || {};
+  const total = st.reduce((a, r) => a + n(r.cnt), 0);
+  return {
+    dashboard: {
+      tiles: [
+        tile("Executions", total, "int", `${n(q.teams)} teams this month`, "blue", "planned"),
+        tile("Completed", countOf(st, "Completed"), "int", `${pct(countOf(st, "Completed"), total)}% of executions`, "green", "done"),
+        tile("In progress", countOf(st, "In Progress"), "int", null, "blue", "clock"),
+        tile("QC pending", q.qc_pending, "int", "not yet passed", n(q.qc_pending) ? "amber" : "grey", "clock"),
+        tile("QC failed", q.qc_fail, "int", null, n(q.qc_fail) ? "red" : "grey", "alert"),
+        tile("CIAG open", q.ciag_open, "int", "waiting on approval", n(q.ciag_open) ? "amber" : "grey", "doc"),
+      ],
+      charts: [
+        chart("bar", "Executions by day", (p.executions_by_day || []).map((d) => ({ ...d, label: String(d.day).slice(5) })), [["executions", "Executions", "#b9cdf3"], ["completed", "Completed", "#163a7a"]]),
+        chart("hbar", "By team", teamLabel(p.executions_by_team).slice(0, 10), [["executions", "Executions", "#b9cdf3"], ["completed", "Completed", "#163a7a"]], "team_label"),
+        chart("donut", "By status", colored(st.map((r) => ({ label: r.status_key, value: n(r.cnt) }))), [["value", "Executions"]], "label", "int", { centerLabel: "executions" }),
+      ],
+    },
+    table: {
+      title: "Recent executions", sub: "this month, latest 60", key: "im-reports-recent-executions",
+      columns: [
+        { label: "Execution", key: "name" }, { label: "Date", key: "execution_date" }, { label: "Status", key: "execution_status" },
+        { label: "QC", key: "qc_status" }, { label: "CIAG", key: "ciag_status" }, { label: "Team", key: "team_name" },
+        { label: "Plan", key: "rollout_plan" }, { label: "POID", key: "po_dispatch" },
+      ],
+      rows: p.executions_recent || [],
+    },
+  };
+}
+
+function workDoneDashboard(p) {
+  const w = p.work_done_mtd || {};
+  const bill = w.by_billing || {};
+  const entry = (k) => bill[k] || { count: 0, revenue_sar: 0 };
+  const toRows = (obj, valueKey) => Object.entries(obj || {}).map(([label, o]) => ({ label, value: n(o[valueKey]), count: n(o.count), revenue: n(o.revenue_sar) }));
+  const src = w.by_source || {};
+  const direct = src["Direct / Backend close"] || { count: 0 };
+  return {
+    dashboard: {
+      tiles: [
+        tile("Work Done", w.count, "int", "this month", "blue", "done"),
+        tile("Revenue", w.revenue_sar, "money", "SAR", "green", "money"),
+        tile("Invoiced", entry("Invoiced").count, "int", `SAR ${money.format(entry("Invoiced").revenue_sar)}`, "blue", "doc"),
+        tile("Pending billing", entry("Pending").count, "int", `SAR ${money.format(entry("Pending").revenue_sar)}`, entry("Pending").count ? "amber" : "grey", "clock"),
+        tile("Closed", entry("Closed").count, "int", `SAR ${money.format(entry("Closed").revenue_sar)}`, "green", "rate"),
+        tile("Direct / Backend", direct.count, "int", `${pct(n(direct.count), n(w.count))}% of Work Done`, "grey", "box"),
+      ],
+      charts: [
+        chart("donut", "Revenue by billing status", colored(toRows(bill, "revenue_sar")), [["value", "SAR"]], "label", "money", { centerLabel: "SAR" }),
+        chart("hbar", "Revenue by project", toRows(w.by_project, "revenue_sar").sort((a, b) => b.value - a.value).slice(0, 10), [["value", "SAR"]], "label", "money", { sub: "top 10" }),
+        chart("donut", "Where it came from", colored(toRows(src, "count")), [["value", "Work Done"]], "label", "int", { centerLabel: "records" }),
+      ],
+      tops: [{
+        title: "By billing status", rows: toRows(bill, "count"),
+        columns: [
+          { key: "label", label: "Billing", format: "text" }, { key: "count", label: "Records", format: "int" },
+          { key: "revenue", label: "Revenue (SAR)", format: "money" },
+        ],
+      }],
+    },
+  };
+}
+
+const BUILD = { overview: overviewDashboard, rollouts: rolloutDashboard, executions: executionDashboard, work_done: workDoneDashboard };
+
 export default function IMWorkSummary({ imName, section = "overview" }) {
-  const activeTab = section;
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -43,10 +177,8 @@ export default function IMWorkSummary({ imName, section = "overview" }) {
     setLoading(true);
     setError(null);
     try {
-      // Cached: all four sections read ONE payload, and each is now a
-      // separate catalog entry, so moving between them remounts this
-      // component. Without the cache that is a fresh identical round trip
-      // per click, where the old in-component tab strip fetched once.
+      // Cached: all four sections read ONE payload, so moving between them
+      // (each remounts this component) does not refetch.
       setPayload(await pmApi.getIMReports());
     } catch (e) {
       setPayload(null);
@@ -58,20 +190,15 @@ export default function IMWorkSummary({ imName, section = "overview" }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Each section's MiniTables mount fresh whenever the catalog switches to a
-  // different entry, so React swaps the whole .data-table-wrapper subtree in
-  // one go and DataTablePro's own tbody observer never sees it. The in-
-  // component tab strip used to nudge it on click; now that the sections are
-  // separate catalog entries, the nudge belongs here — once the rows this
-  // section renders actually exist. Same pattern as switchTab() in
-  // IMMaterialRequest.jsx.
+  // The recent-rows MiniTable mounts fresh per section; nudge DataTablePro
+  // once its rows exist (same pattern as IMMaterialRequest's switchTab).
   useEffect(() => {
     if (!payload) return undefined;
     const t = setTimeout(() => document.dispatchEvent(new CustomEvent("tablepro:check")), 60);
     return () => clearTimeout(t);
   }, [payload, section]);
 
-  const ds = payload?.dispatch_summary;
+  const built = useMemo(() => (payload ? (BUILD[section] || overviewDashboard)(payload) : null), [payload, section]);
 
   if (error) {
     return (
@@ -103,183 +230,24 @@ export default function IMWorkSummary({ imName, section = "overview" }) {
 
   return (
     <div className="page-content">
-          {activeTab === "overview" && (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 22 }}>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #3b82f6" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>PO lines</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{ds?.total_lines ?? 0}</div>
-                </div>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #22c55e" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Line amount (sum)</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>SAR {money.format(ds?.total_amount ?? 0)}</div>
-                </div>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #6366f1" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Active teams</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{(payload.teams || []).length}</div>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                  <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By dispatch status</h3>
-                  {Object.keys(ds?.by_status || {}).length === 0 ? (
-                    <p style={{ color: "#94a3b8", fontSize: "0.82rem", margin: 0 }}>No rows.</p>
-                  ) : (
-                    Object.entries(ds.by_status).map(([k, v]) => (
-                      <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
-                        <span style={{ color: "#475569" }}>{k}</span>
-                        <span style={{ fontWeight: 700 }}>{v}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                  <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By project (amount)</h3>
-                  {Object.keys(ds?.by_project || {}).length === 0 ? (
-                    <p style={{ color: "#94a3b8", fontSize: "0.82rem", margin: 0 }}>No rows.</p>
-                  ) : (
-                    Object.entries(ds.by_project)
-                      .sort((a, b) => b[1] - a[1])
-                      .map(([k, v]) => (
-                        <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
-                          <span style={{ color: "#475569" }}>{k}</span>
-                          <span style={{ fontWeight: 700 }}>SAR {money.format(v)}</span>
-                        </div>
-                      ))
-                  )}
-                </div>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                  <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By dispatch mode</h3>
-                  {Object.keys(ds?.by_dispatch_mode || {}).length === 0 ? (
-                    <p style={{ color: "#94a3b8", fontSize: "0.82rem", margin: 0 }}>No rows.</p>
-                  ) : (
-                    Object.entries(ds.by_dispatch_mode).map(([k, v]) => (
-                      <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", fontSize: "0.84rem" }}>
-                        <span style={{ color: "#475569" }}>{k}</span>
-                        <span style={{ fontWeight: 700 }}>{v}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-
-          {activeTab === "rollouts" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Plans by status (all dates)</h3>
-                <MiniTable
-                  resizable
-                  tableKey="im-reports-rollout-status"
-                  columns={[
-                    { label: "Status", key: "status_key" },
-                    { label: "Count", key: "cnt", align: "right" },
-                  ]}
-                  rows={payload.rollout_status_counts || []}
-                  emptyText="No rollout plans for your teams."
-                />
-              </div>
-              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Recent plans (latest 80)</h3>
-                <MiniTable
-                  resizable
-                  tableKey="im-reports-recent-plans"
-                  columns={[
-                    { label: "Plan", key: "name" },
-                    { label: "Date", key: "plan_date" },
-                    { label: "Status", key: "plan_status" },
-                    { label: "Team", key: "team_name" },
-                    { label: "POID", key: "po_dispatch" },
-                    { label: "Visit", key: "visit_type" },
-                    { label: "Target", key: "target_amount", align: "right", render: (v) => fmtDec.format(Number(v) || 0) },
-                  ]}
-                  rows={payload.rollouts_recent || []}
-                  emptyText="No rollout rows."
-                />
-              </div>
+      <div className="rdash">
+        <ReportDashboard dashboard={built.dashboard} />
+        {built.table && (
+          <Card title={built.table.title} aside={<span className="rdash-muted">{built.table.sub}</span>}>
+            <div style={{ padding: "0 12px 12px" }}>
+              <MiniTable resizable tableKey={built.table.key} columns={built.table.columns} rows={built.table.rows} emptyText="Nothing this period." />
             </div>
-          )}
-
-          {activeTab === "executions" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Executions by status (MTD)</h3>
-                <MiniTable
-                  resizable
-                  tableKey="im-reports-execution-status"
-                  columns={[
-                    { label: "Status", key: "status_key" },
-                    { label: "Count", key: "cnt", align: "right" },
-                  ]}
-                  rows={payload.execution_status_counts || []}
-                  emptyText="No executions this month."
-                />
-              </div>
-              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>Recent executions (MTD, latest 60)</h3>
-                <MiniTable
-                  resizable
-                  tableKey="im-reports-recent-executions"
-                  columns={[
-                    { label: "Execution", key: "name" },
-                    { label: "Date", key: "execution_date" },
-                    { label: "Status", key: "execution_status" },
-                    { label: "QC", key: "qc_status" },
-                    { label: "Plan", key: "rollout_plan" },
-                    { label: "POID", key: "po_dispatch" },
-                  ]}
-                  rows={payload.executions_recent || []}
-                  emptyText="No execution rows."
-                />
-              </div>
-            </div>
-          )}
-
-          {activeTab === "work_done" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #0ea5e9" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Work done rows (MTD)</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{payload.work_done_mtd?.count ?? 0}</div>
-                </div>
-                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "18px 20px", borderLeft: "4px solid #22c55e" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#94a3b8", textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Revenue SAR (MTD)</div>
-                  <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#1e293b" }}>{money.format(payload.work_done_mtd?.revenue_sar ?? 0)}</div>
-                </div>
-              </div>
-              <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px" }}>
-                <h3 style={{ fontSize: "0.88rem", fontWeight: 700, marginBottom: 12, color: "#1e293b" }}>By billing status</h3>
-                <MiniTable
-                  resizable
-                  tableKey="im-reports-billing-status"
-                  columns={[
-                    { label: "Billing", key: "billing" },
-                    { label: "Rows", key: "count", align: "right" },
-                    { label: "Revenue SAR", key: "revenue_sar", align: "right", render: (v) => money.format(Number(v) || 0) },
-                  ]}
-                  rows={Object.entries(payload.work_done_mtd?.by_billing || {}).map(([billing, o]) => ({
-                    billing,
-                    count: o.count,
-                    revenue_sar: o.revenue_sar,
-                  }))}
-                  emptyText="No work done this month."
-                />
-              </div>
-            </div>
-          )}
-
-
-          {payload.last_updated && (
-            <p style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 20 }}>
-              Last updated: {(() => {
-                const d = new Date(String(payload.last_updated).replace(" ", "T"));
-                return Number.isNaN(d.getTime())
-                  ? String(payload.last_updated)
-                  : d.toLocaleString();
-              })()}
-            </p>
-          )}
+          </Card>
+        )}
+        {payload.last_updated && (
+          <p style={{ fontSize: "0.72rem", color: "#94a3b8", margin: 0 }}>
+            Last updated: {(() => {
+              const d = new Date(String(payload.last_updated).replace(" ", "T"));
+              return Number.isNaN(d.getTime()) ? String(payload.last_updated) : d.toLocaleString();
+            })()}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

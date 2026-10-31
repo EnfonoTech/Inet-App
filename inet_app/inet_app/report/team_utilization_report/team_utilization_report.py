@@ -25,7 +25,9 @@ def execute(filters=None):
     from_date = filters.get("from_date") or get_first_day(today)
     to_date = filters.get("to_date") or get_last_day(today)
 
-    wheres = ["rp.plan_date BETWEEN %s AND %s"]
+    # A cancelled plan is not work the team was given; counting it as
+    # planned-but-not-done marked teams down for visits taken off them.
+    wheres = ["rp.plan_date BETWEEN %s AND %s", "IFNULL(rp.plan_status, '') <> 'Cancelled'"]
     params = [from_date, to_date]
 
     team_vals = filters.get("team") or []
@@ -62,7 +64,9 @@ def execute(filters=None):
         SELECT
             it.team_id,
             COALESCE(it.team_name, rpteam.team) AS team_name,
-            {im_col} AS im_name,
+            -- Every IM the team worked for that day, not one picked at random
+            -- by a non-aggregated column under GROUP BY.
+            GROUP_CONCAT(DISTINCT {im_col} ORDER BY {im_col} SEPARATOR ', ') AS im_name,
             rp.plan_date,
             COUNT(DISTINCT rp.name) AS planned_activities,
             -- COUNT(DISTINCT ... rp.name), not SUM(CASE ... THEN 1): the LEFT
@@ -146,3 +150,4 @@ def execute(filters=None):
         )
 
     return columns, data, message
+

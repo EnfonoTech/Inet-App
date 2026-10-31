@@ -4,7 +4,8 @@ import DataTableWrapper from "./DataTableWrapper";
 import SearchableSelect from "./SearchableSelect";
 import DateRangePicker from "./DateRangePicker";
 import ExportExcelButton from "./ExportExcelButton";
-import ReportVisual from "./ReportVisual";
+import ReportDashboard from "./ReportDashboard";
+import { buildReportDashboard } from "./reportDashboards";
 
 /**
  * The report catalog both Reports pages render.
@@ -12,7 +13,7 @@ import ReportVisual from "./ReportVisual";
  * Extracted from pages/admin/Reports.jsx so the IM side could have the same
  * catalog without a second copy of it. Everything that is genuinely shared
  * lives here — category tabs, the report chips, the filter toolbar, the
- * {columns,data,totals,chart} table, the totals footer, Table/Chart views and
+ * {columns,data,totals} table with its dashboard (tiles, charts, top-N), the totals footer and
  * the single Export button. What differs between the two pages is passed in:
  *
  *   reports          the registry array. IDENTICAL SHAPE on both sides, so
@@ -50,6 +51,27 @@ function pctCellStyle(value) {
 function isPctCol(col) {
   return col.fieldtype === "Percent" || /^w[1-5]$/.test(col.fieldname || "");
 }
+
+// A share of the whole ("Lines %", "Value %", "% of Total") is not a score:
+// 0.3% of lines sitting at a stage is not a failure, so it gets no red/green.
+const SHARE_PCT = new Set(["lines_pct", "value_pct", "ms_pct", "pct", "target_pct"]);
+function isScoredPct(col) {
+  return isPctCol(col) && !SHARE_PCT.has(col.fieldname || "");
+}
+
+const moneyFmt = new Intl.NumberFormat("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const intFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+const floatFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+// Thousands separators by fieldtype; anything that is not a number is shown as sent.
+function fmtCell(col, raw) {
+  if (raw === null || raw === undefined || raw === "") return "—";
+  if (typeof raw !== "number") return raw;
+  if (col.fieldtype === "Currency") return moneyFmt.format(raw);
+  if (col.fieldtype === "Int") return intFmt.format(raw);
+  if (col.fieldtype === "Float") return floatFmt.format(raw);
+  return raw;
+}
+const isNumCol = (col) => ["Currency", "Int", "Float"].includes(col.fieldtype) && !isPctCol(col);
 
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function endOfMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
@@ -123,14 +145,13 @@ export default function ReportCatalog({
   // already-aggregated per-row percentages.
   const [totals, setTotals] = useState({});
   const [chart, setChart] = useState(null);
+  // Tiles / charts / top-N the server built over the same rows as the table.
+  const [dashboard, setDashboard] = useState(null);
   // A report may hand back a caveat about its own result — today, that a row
   // cap trimmed the oldest days off a too-wide range. It has to be SHOWN: a
   // truncation the reader can't see is exactly the silently-wrong total the
   // cap exists to prevent, and the totals row underneath still looks complete.
   const [message, setMessage] = useState(null);
-  // Table and Chart are separate VIEWS, not a chart stacked above a table.
-  // Resets to "table" on every report switch so a new report opens on data.
-  const [view, setView] = useState("table");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -166,7 +187,6 @@ export default function ReportCatalog({
   function openReport(key) {
     if (!key) return;
     setActiveKey(key);
-    setView("table");
     const r = reports.find((x) => x.key === key);
     if (r) setActiveCat(r.category);
     setSearchParams({ tab: key }, { replace: true });
@@ -235,12 +255,14 @@ export default function ReportCatalog({
       setData(result?.data || []);
       setTotals(result?.totals || {});
       setChart(result?.chart || null);
+      setDashboard(result?.dashboard || null);
       setMessage(result?.message || null);
     } catch (err) {
       setColumns([]);
       setData([]);
       setTotals({});
       setChart(null);
+      setDashboard(null);
       setMessage(null);
       setError(err?.message || "Failed to load report.");
     } finally {
@@ -277,6 +299,7 @@ export default function ReportCatalog({
     setData([]);
     setTotals({});
     setChart(null);
+    setDashboard(null);
     setMessage(null);
   }, [activeKey]);
 
@@ -349,6 +372,13 @@ export default function ReportCatalog({
     return out;
   }, [columns, displayData, totals]);
 
+  // The server may send its own dashboard; otherwise it is built here from
+  // the very rows the table shows (see reportDashboards.js).
+  const shownDashboard = useMemo(
+    () => dashboard || buildReportDashboard(active?.key, displayData, totals),
+    [dashboard, active?.key, displayData, totals],
+  );
+
   return (
     <div>
       <div className="page-header">
@@ -377,14 +407,6 @@ export default function ReportCatalog({
           )}
           {active && !isCustom && (
             <>
-              <div className="rpt-viewtoggle" role="group" aria-label="Report view">
-                <button type="button"
-                  className={`rpt-viewtoggle-btn${view === "table" ? " active" : ""}`}
-                  onClick={() => setView("table")}>Table</button>
-                <button type="button"
-                  className={`rpt-viewtoggle-btn${view === "chart" ? " active" : ""}`}
-                  onClick={() => setView("chart")}>Chart</button>
-              </div>
               <ExportExcelButton
                 rows={displayData}
                 columns={columns.map((c) => ({ key: c.fieldname || c.name, label: c.label }))}
@@ -599,9 +621,6 @@ export default function ReportCatalog({
           </div>
         )}
 
-        {view === "chart" && (
-          <ReportVisual columns={columns} data={displayData} totals={totals} chart={chart} />
-        )}
 
         {/* The table view keeps its own wrapper shell. This page used to render
             a chart ABOVE the table, which forced the PAGE to scroll rather
@@ -612,7 +631,9 @@ export default function ReportCatalog({
             shell div breaks that exact selector match, so .page-content falls
             back to normal block flow. Kept as-is: the shell is also what lets
             the chart view sit in a normally-scrolling page. */}
-        <div className="rpt-table-shell" hidden={view !== "table"}>
+        <ReportDashboard dashboard={shownDashboard} />
+
+        <div className="rpt-table-shell">
         {/* .data-table-wrapper's own base CSS caps it at min(92vh, 100dvh-5rem)
             as a fallback for pages outside the app's usual fixed-viewport
             table layout (which this page just opted out of, above) — without
@@ -691,10 +712,12 @@ export default function ReportCatalog({
                     const key = col.fieldname || col.name;
                     const raw = row?.[key];
                     const pct = isPctCol(col);
-                    const style = pct && raw != null ? { ...pctCellStyle(raw), textAlign: "center", borderRadius: 4 } : {};
+                    const style = pct && raw != null
+                      ? { ...(isScoredPct(col) ? pctCellStyle(raw) : {}), textAlign: "center", borderRadius: 4 }
+                      : isNumCol(col) ? { textAlign: "right", fontVariantNumeric: "tabular-nums" } : {};
                     const display = pct
                       ? (raw != null ? `${raw}%` : "—")
-                      : (raw === null || raw === undefined || raw === "" ? "—" : raw);
+                      : fmtCell(col, raw);
                     return (
                       <td key={col.fieldname || col.label} style={style}>
                         {display}
@@ -719,11 +742,12 @@ export default function ReportCatalog({
                     const val = footerValues[key];
                     if (val === undefined) return <td key={key} />;
                     const pct = isPctCol(col);
-                    const display = pct ? `${Number(val).toFixed(1)}%` : Math.round(val).toLocaleString();
+                    const display = pct ? `${Number(val).toFixed(1)}%`
+                      : col.fieldtype === "Currency" ? moneyFmt.format(val) : intFmt.format(Math.round(val));
                     // Match the body cells' own alignment for this column type
                     // — the totals row must line up under the values above it.
                     return (
-                      <td key={key} style={{ fontWeight: 700, padding: "8px 12px", color: "#0f172a", ...(pct ? { textAlign: "center" } : {}) }}>
+                      <td key={key} style={{ fontWeight: 700, padding: "8px 12px", color: "#0f172a", ...(pct ? { textAlign: "center" } : { textAlign: "right", fontVariantNumeric: "tabular-nums" }) }}>
                         {display}
                       </td>
                     );
