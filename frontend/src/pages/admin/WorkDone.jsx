@@ -367,7 +367,6 @@ export default function WorkDone() {
   // was dropped, so a tile reading 0 opened a list with rows in it.
   const [teamFilter, setTeamFilter] = useState(_navWD?.teamFilter ?? []);
   const [projectFilter, setProjectFilter] = useState([]);
-  const [duidFilter, setDuidFilter] = useState([]);
   // Accepts a subcontract list from dashboard drill-through (Sub-Contractor
   // block), matched against the POID's own `contract` link server-side.
   const [subconFilter, setSubconFilter] = useState(_navWD?.subconFilter ?? []);
@@ -736,7 +735,6 @@ export default function WorkDone() {
       if (imFilter.length) filters.im = imFilter;
       if (teamFilter.length) filters.team = teamFilter;
       if (projectFilter.length) filters.project_code = projectFilter;
-      if (duidFilter.length) filters.site_code = duidFilter;
       if (subconFilter.length) filters.subcontractor = subconFilter;
       if (contractModelFilter.length) filters.contract_model = contractModelFilter;
       if (domainFilter.length) filters.domain = domainFilter;
@@ -758,7 +756,7 @@ export default function WorkDone() {
       const colFilters = JSON.parse(columnFiltersDebounced);
       if (Object.keys(colFilters).length) filters.column_filters = colFilters;
       return filters;
-  }, [tab, poStatusFilter, imFilter, teamFilter, projectFilter, duidFilter, subconFilter,
+  }, [tab, poStatusFilter, imFilter, teamFilter, projectFilter, subconFilter,
       contractModelFilter, domainFilter, fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, submissionFilter,
       pipelineFilter, ageBandFilter, columnFiltersDebounced]);
 
@@ -812,7 +810,7 @@ export default function WorkDone() {
   // sets is the same predicate the tile counted with, server-side.
   function goToSlice(nextTab, { issueFlag = [], submission = [], pipeline = [],
                                 ageBand = [] } = {}) {
-    // The toolbar filters (IM, project, DUID, team, dates, search) are the
+    // The toolbar filters (IM, project, team, dates, search) are the
     // user's context and are LEFT ALONE — set an IM, click a card, and you
     // get that IM's slice of that card. Only the four tile dimensions are
     // reset, so two cards never silently stack into a filter nobody chose.
@@ -836,7 +834,6 @@ export default function WorkDone() {
     setImFilter([]);
     setTeamFilter([]);
     setProjectFilter([]);
-    setDuidFilter([]);
     setSubconFilter([]);
     setContractModelFilter([]);
     setDomainFilter([]);
@@ -886,7 +883,7 @@ export default function WorkDone() {
     setTimeout(() => setCopyNotice((n) => (n === result ? null : n)), result.ok ? 4500 : 6000);
   }
 
-  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || duidFilter.length || subconFilter.length || contractModelFilter.length || domainFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate || pipelineFilter.length || ageBandFilter.length);
+  const hasFilters = !!(searchDebounced || poStatusFilter.length || imFilter.length || teamFilter.length || projectFilter.length || subconFilter.length || contractModelFilter.length || domainFilter.length || issueFlagFilter.length || submissionFilter.length || workTypeFilter.length || fromDate || toDate || pipelineFilter.length || ageBandFilter.length);
 
   // What a Summary card put on the table. Shown as removable chips, because
   // clicking a card used to filter the list with nothing on screen saying
@@ -906,9 +903,8 @@ export default function WorkDone() {
       if (Array.isArray(opts)) setTeams(opts);
     }).catch(() => {});
   }, []);
-  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "site_code", "contract"]);
+  const { options: dispOpts } = useFilterOptions("PO Dispatch", ["project_code", "contract"]);
   const projects = dispOpts.project_code || [];
-  const duids = dispOpts.site_code || [];
   const subconOptions = (dispOpts.contract || []).filter(Boolean).map((v) => ({ id: v, label: v }));
   const { options: smOpts } = useFilterOptions("Subcontract Master", ["contract_model"]);
   const { options: domOpts } = useFilterOptions("Project Domain", ["name"]);
@@ -1053,15 +1049,6 @@ export default function WorkDone() {
         <SearchableSelect
               allowBlank
           multi
-          value={duidFilter}
-          onChange={setDuidFilter}
-          options={duids}
-          placeholder="All DUIDs"
-          minWidth={150}
-        />
-        <SearchableSelect
-              allowBlank
-          multi
           value={subconFilter}
           onChange={setSubconFilter}
           options={subconOptions}
@@ -1158,7 +1145,7 @@ export default function WorkDone() {
           <button
             className="btn-secondary"
             style={{ fontSize: "0.78rem", padding: "5px 12px" }}
-            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setDuidFilter([]); setSubconFilter([]); setContractModelFilter([]); setDomainFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); setPipelineFilter([]); setAgeBandFilter([]); }}
+            onClick={() => { setSearch(""); setPoStatusFilter([]); setImFilter([]); setTeamFilter([]); setProjectFilter([]); setSubconFilter([]); setContractModelFilter([]); setDomainFilter([]); setIssueFlagFilter([]); setSubmissionFilter([]); setWorkTypeFilter([]); setFromDate(""); setToDate(""); setPipelineFilter([]); setAgeBandFilter([]); }}
           >
             Clear
           </button>

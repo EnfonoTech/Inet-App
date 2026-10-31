@@ -683,9 +683,13 @@ export default function IMExecution() {
     setQcBusy(true);
     setQcErr(null);
     try {
+      // QC can be recorded at any point, but it only completes the
+      // execution once the team lead has finished — a QC result on work
+      // still in progress must not close it.
+      const tlDone = qcFor.execution_status === "Completed" || qcFor.tl_status === "Completed";
       await pmApi.updateExecution({
         name: qcFor.name,
-        execution_status: "Completed",
+        ...(tlDone ? { execution_status: "Completed" } : {}),
         qc_status: qcDecision,
         issue_category: qcDecision === "Fail" ? qcIssueCategory.trim() : undefined,
       });
@@ -981,6 +985,11 @@ export default function IMExecution() {
           <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
           <h4 style={{ margin: "0 0 12px" }}>Set QC: {qcFor.name}</h4>
           {qcErr && <div className="notice error" style={{ marginBottom: 10 }}>{qcErr}</div>}
+          {!(qcFor.execution_status === "Completed" || qcFor.tl_status === "Completed") && (
+            <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: "0.82rem", color: "#1e40af" }}>
+              The team lead has not finished yet. This records the QC result only — the execution stays {qcFor.execution_status || "In Progress"}.
+            </div>
+          )}
           <div className="form-group" style={{ marginBottom: 12 }}>
             <label>QC Result</label>
             <select value={qcDecision} onChange={(e) => setQcDecision(e.target.value)} style={{ padding: 8, minWidth: 220 }}>
@@ -1017,7 +1026,7 @@ export default function IMExecution() {
           <div style={{ width: "min(520px, 94vw)", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }} onClick={(e) => e.stopPropagation()}>
             <h4 style={{ margin: "0 0 12px" }}>Execution status: {execStatusFor.name}</h4>
             {execStatusErr && <div className="notice error" style={{ marginBottom: 10 }}>{execStatusErr}</div>}
-            {execStatusFor.is_dummy_po && execStatusPick === "Completed" && (
+            {!!Number(execStatusFor.is_dummy_po) && execStatusPick === "Completed" && (
               <div style={{ background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: "0.82rem", color: "#92400e" }}>
                 <strong>Dummy PO.</strong> You can complete this and record Work Done — the work happened and the record keeps its execution date. It cannot be confirmed to PIC, invoiced or subcontracted until the PO is mapped. Map it with <em>Map PO</em> and the amounts are re-costed against the real line.
               </div>
@@ -1773,8 +1782,6 @@ export default function IMExecution() {
                     <td>
                       {isNotRequired(e.qc_required) ? (
                         <StatusPill value="Not Applicable" />
-                      ) : !(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
-                        <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
                       ) : (
                         <button
                           type="button"
@@ -1794,8 +1801,6 @@ export default function IMExecution() {
                     <td>
                       {isNotRequired(e.ciag_required) ? (
                         <StatusPill value="Not Applicable" />
-                      ) : !(e.execution_status === "Completed" || e.tl_status === "Completed") ? (
-                        <span style={{ color: "#94a3b8", fontSize: "0.78rem" }}>—</span>
                       ) : (
                         <button
                           type="button"
