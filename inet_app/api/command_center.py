@@ -19458,7 +19458,10 @@ _DEX_SQL = """
            team             AS latest_exec_team,
            COUNT(*)                                         OVER w AS de_count,
            MAX(execution_status = 'Completed')              OVER w AS any_im_done,
-           MAX(tl_status = 'Completed')                     OVER w AS any_tl_done,
+           -- A cancelled execution's TL "done" waits on nobody: the IM
+           -- cannot confirm it, so it must not put the plan on the IM's list.
+           MAX(tl_status = 'Completed'
+               AND IFNULL(execution_status, '') <> 'Cancelled') OVER w AS any_tl_done,
            MAX(qc_status   IN ('Pass', 'Not Applicable'))   OVER w AS qc_ok,
            MAX(qc_status   = 'Fail')                        OVER w AS qc_fail,
            MAX(ciag_status IN ('Approved', 'Not Applicable')) OVER w AS ciag_ok,
@@ -20843,6 +20846,15 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
             " AND NOT (IFNULL(pd.is_internal_work, 0) = 1"
             " AND IFNULL(dex.any_im_done, 0) = 1)"
         )
+        # The IM-confirmation tiles count a plan once ANY team lead has
+        # finished, but only that team's execution is waiting on the IM. A
+        # two-team plan with one team still working listed both rows — 36
+        # rows behind IM-AJMAL's 34, every extra one a team still in progress.
+        if _bucket_ex in ("im_confirmation_pending", "im_confirmation_only"):
+            portal_clause += (
+                " AND de.tl_status = 'Completed'"
+                " AND IFNULL(de.execution_status, '') <> 'Cancelled'"
+            )
         future_planned_clause = ""
         extended_clause = ""
         # issue_block_clause is NOT cleared here. It was, to match an
