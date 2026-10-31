@@ -692,18 +692,12 @@ def report_daily_work_progress_report(filters=None):
 
 @frappe.whitelist()
 def report_monthly_team_details(filters=None):
-    from inet_app.inet_app.report.monthly_team_details.monthly_team_details import execute
+    from inet_app.inet_app.report.monthly_team_details.monthly_team_details import build, report_totals
 
-    columns, data = execute(_as_dict(filters or {}))
-    # utilization_pct is total_completed/total_planned in the report's own
-    # SQL. W-1..W-5 are per-week percentages with no denominator in the row,
-    # so they are left out rather than summed into a meaningless figure.
-    totals = _report_totals(
-        columns, data,
-        ratios={"utilization_pct": ("total_completed", "total_planned")},
-        skip=("w1", "w2", "w3", "w4", "w5"),
-    )
-    return {"columns": columns, "data": data, "totals": totals}
+    # Totals come from the report's own DISTINCT-plan summary, not from
+    # summing the rows: a plan worked by two teams is in both teams' rows.
+    columns, data, summary = build(_as_dict(filters or {}))
+    return {"columns": columns, "data": data, "totals": report_totals(summary), "summary": summary}
 
 
 def _item_meta(item_code):

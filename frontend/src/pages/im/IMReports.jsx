@@ -10,6 +10,7 @@ import { imReportsApi } from "../../services/api";
 const TeamIdleDomainReport    = lazy(() => import("../admin/TeamDomainReport"));
 const RolloutCommercialReport = lazy(() => import("../../components/RolloutCommercialReport"));
 const IMWorkSummary           = lazy(() => import("../../components/IMWorkSummary"));
+const MonthlyTeamDetailsReport = lazy(() => import("../../components/MonthlyTeamDetailsReport"));
 
 /* Same registry shape as the PM's Reports.jsx — adding a report stays one
    entry here, and one there.
@@ -76,10 +77,10 @@ const REPORTS = [
     key: "monthly_team_details",
     category: "Teams & Utilization",
     title: "Monthly Team Details",
-    api: "reportMonthlyTeamDetails",
+    // Dashboard layout with its own filters; scoped server-side like the rest.
+    component: MonthlyTeamDetailsReport,
+    componentProps: { api: imReportsApi, loadTeamOptions: () => imReportsApi.getTeamOptions() },
     description: "Monthly team utilization — weekly breakdown per team",
-    hasFilters: true,
-    filterType: "month",
   },
   {
     key: "team_pva",

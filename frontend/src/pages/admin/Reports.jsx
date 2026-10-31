@@ -6,6 +6,7 @@ import { pmApi } from "../../services/api";
    table. Lazily imported so a report's code only downloads when opened. */
 const TeamIdleDomainReport = lazy(() => import("./TeamDomainReport"));
 const RolloutCommercialReport = lazy(() => import("../../components/RolloutCommercialReport"));
+const MonthlyTeamDetailsReport = lazy(() => import("../../components/MonthlyTeamDetailsReport"));
 
 /* Every report declares a `category` purely for grouping in the catalog.
    Adding a report = one entry here; nothing else needs touching. */
@@ -22,10 +23,16 @@ const REPORTS = [
     key: "monthly_team_details",
     category: "Teams & Utilization",
     title: "Monthly Team Details",
-    api: "reportMonthlyTeamDetails",
+    // Dashboard layout (tiles, charts, top 5s, team table) with its own filters.
+    component: MonthlyTeamDetailsReport,
+    componentProps: {
+      api: pmApi,
+      loadTeamOptions: () => pmApi.getTeamOptions(),
+      loadImOptions: () => pmApi.listIMsForPicker("").then((rows) =>
+        (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.name, label: r.full_name || r.name }))
+      ),
+    },
     description: "Monthly team utilization — weekly breakdown per team",
-    hasFilters: true,
-    filterType: "month",
   },
   {
     key: "team_planning_report",

@@ -281,26 +281,17 @@ def report_team_utilization(filters=None):
 @frappe.whitelist()
 def report_monthly_team_details(filters=None):
     """Monthly Team Details, scoped to the IM's own plans."""
-    from inet_app.api.project_management import _report_totals
-    from inet_app.inet_app.report.monthly_team_details.monthly_team_details import execute
+    from inet_app.inet_app.report.monthly_team_details.monthly_team_details import build, report_totals
 
     _im, im_ids, team_ids = _im_session_scope()
     f = _filters(filters)
     fd, td = _range(f)
-    columns, data, message = _script_report(execute, {
+    columns, data, summary = build({
         "from_date": fd, "to_date": td,
         "im": im_ids,
         "team": _safe_teams(f, team_ids),
     })
-    totals = _report_totals(
-        columns, data,
-        ratios={"utilization_pct": ("total_completed", "total_planned")},
-        skip=("w1", "w2", "w3", "w4", "w5"),
-    )
-    out = {"columns": columns, "data": data, "totals": totals}
-    if message:
-        out["message"] = message
-    return out
+    return {"columns": columns, "data": data, "totals": report_totals(summary), "summary": summary}
 
 
 @frappe.whitelist()
