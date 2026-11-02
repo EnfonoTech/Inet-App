@@ -552,7 +552,10 @@ export default function CommandDashboard() {
               onClick={() => goTeams({ statFilter: { field: "today_status", value: "In Execution" } })} />
             <Stat label="Idle Teams"    value={fv(ts.idle ?? operational.idle_teams ?? 0)}
               color={(ts.idle ?? 0) > 0 ? "text-amber" : ""}
-              onClick={() => goTeams({ statFilter: { field: "today_status", value: "Idle" } })} />
+              // Active field teams only, as the count is (total_teams: Active,
+              // not Backend). The Teams page's "Idle" alone also listed backend
+              // and inactive teams — 26 rows against 20 on the copy.
+              onClick={() => goTeams({ statusFilter: ["Active"], categoryFilter: ["Field Team"], statFilter: { field: "today_status", value: "Idle" } })} />
           </div>
           <div style={{ flexShrink: 0 }}>
             <DonutChart value={activePct} label="Working" size="sm" />

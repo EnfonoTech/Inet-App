@@ -39,6 +39,14 @@ Interleaving safely:
 After editing doctypes / custom fields / patches / hooks:
 `bench --site inet migrate` (or at least `bench --site inet clear-cache`).
 
+## Dashboards: read docs/DASHBOARD_RULES.md first
+
+What every dashboard figure means, which date puts it in a period, how the
+company revenue/cost are composed, the named line sets (lines to plan, to
+forecast, still to do…), and the drill-through state each page accepts. The
+rule underneath all of it: a figure is the count of the page it opens, and
+that page opens already filtered to it.
+
 ## A feature is not finished when the feature works
 
 **Reports, dashboards and table columns do not follow a change on their own.**

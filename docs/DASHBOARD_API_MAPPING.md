@@ -1,5 +1,9 @@
 # Dashboard API Logic Mapping
 
+> **Outdated (May 2026).** Describes the CEO / Ops / Financial pages that were
+> merged into Executive, Projects & Operations and PIC & Finance. The current
+> rules are in [DASHBOARD_RULES.md](DASHBOARD_RULES.md).
+
 Each new dashboard card/chart maps to a real backend API. No dummy data.
 
 ## Shared API: `get_command_dashboard` (`command_center.py:5675`)
