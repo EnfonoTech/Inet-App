@@ -7404,7 +7404,10 @@ def list_dispatch_visits(po_dispatch=None, rollout_plan=None):
         (pd_name,), as_dict=True,
     ) or []
     if plans:
-        max_visit = max(p["visit_number"] for p in plans)
+        # The current visit is the latest one still alive — a cancelled
+        # follow-up does not take over from the visit before it.
+        live = [p["visit_number"] for p in plans if (p.get("plan_status") or "") != "Cancelled"]
+        max_visit = max(live) if live else max(p["visit_number"] for p in plans)
         for p in plans:
             p["is_current"] = (p["visit_number"] == max_visit)
     return plans
@@ -9240,6 +9243,10 @@ def _issue_risk_open_sql(alias="rp"):
         "  SELECT 1 FROM `tabRollout Plan` rp_later"
         f" WHERE rp_later.po_dispatch = {alias}.po_dispatch"
         f" AND IFNULL(rp_later.visit_number,0) > IFNULL({alias}.visit_number,0)"
+        # A CANCELLED follow-up resolves nothing. Without this, cancelling the
+        # re-visit raised from an issue hid the issue too, and the line showed
+        # on no workflow page at all (1011HG3692386-2840-5-1 / -6-1, Nov 2026).
+        "  AND IFNULL(rp_later.plan_status,'') <> 'Cancelled'"
         ")"
         " AND NOT EXISTS ("
         " SELECT 1 FROM `tabWork Done` wd_ir"
@@ -9401,6 +9408,8 @@ def _execution_superseded_exists_sql(alias="rp"):
         " SELECT 1 FROM `tabRollout Plan` rp_later"
         f" WHERE rp_later.po_dispatch = {alias}.po_dispatch"
         f" AND IFNULL(rp_later.visit_number, 0) > IFNULL({alias}.visit_number, 0)"
+        # Only a live later visit supersedes — see _issue_risk_open_sql.
+        " AND IFNULL(rp_later.plan_status, '') <> 'Cancelled'"
         ")"
     )
 
@@ -21187,7 +21196,9 @@ def list_im_daily_executions(im=None, execution_status=None, limit=500, portal_f
         "AND NOT EXISTS ("
         " SELECT 1 FROM `tabRollout Plan` rp_later"
         " WHERE rp_later.po_dispatch = rp.po_dispatch"
-        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0))"
+        " AND IFNULL(rp_later.visit_number, 0) > IFNULL(rp.visit_number, 0)"
+        # Only a live later visit supersedes — see _issue_risk_open_sql.
+        " AND IFNULL(rp_later.plan_status, '') <> 'Cancelled')"
     )
     issue_block_clause = "AND " + _issue_blocked_sql()
     # A cancelled PLAN is terminal — nothing un-cancels one, a re-attempt gets
