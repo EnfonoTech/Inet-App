@@ -2,14 +2,18 @@
 
 A Rollout Plan's date is when the work is planned. On a completed plan whose
 team executed in an EARLIER MONTH than that date, every plan-dated report puts
-the work in the wrong month. On the production copy (2 Nov 2026) 29 completed
-plans were like this — most of them made on 3-4 Oct and dated 3-5 Nov (the
-month picked wrong), executed on 3-6 Oct, which showed SAR 8,619 of Attaullah
+the work in the wrong month. On the production copy (2 Nov 2026) 15 completed
+plans were like this — 10 of them made on 3-4 Oct and dated 3-5 Nov (the
+month picked wrong), executed on 3-5 Oct, which showed SAR 8,619 of Attaullah
 Khan's October work in November's Top Teams report.
 
-Only plans that cross a month are touched (agreed 2 Nov 2026). A team starting
-a day early inside the same month (246 more on the copy) reports in the right
-month already, so those dates are left as the IM set them.
+Only plans that cross a month AND are more than one day out are touched
+(agreed 2 Nov 2026):
+  * a team starting a day early inside the same month (246 on the copy)
+    reports in the right month already;
+  * a plan for the 1st whose execution is dated the last day of the month
+    before (14 on the copy) has the right plan date — it is the execution
+    date that is a day off — so those are left as they are too.
 
 Only COMPLETED plans are corrected. Cancelled ones are not reported on, and a
 plan still open (Planning with Issue, Overdue, In Execution, Extended) may have
@@ -23,7 +27,7 @@ alone.
                    planned end.
 
 Each corrected plan gets an Info comment with the old and new dates.
-Idempotent: a corrected plan no longer has work in an earlier month.
+Idempotent: a corrected plan no longer has work before its date.
 """
 
 import frappe
@@ -43,7 +47,7 @@ def _candidates():
           AND de.execution_date IS NOT NULL
           AND IFNULL(de.execution_status, '') <> 'Cancelled'
         GROUP BY rp.name, rp.plan_date, rp.plan_end_date
-        HAVING MIN(de.execution_date) < rp.plan_date
+        HAVING DATEDIFF(rp.plan_date, MIN(de.execution_date)) > 1
            AND DATE_FORMAT(MIN(de.execution_date), '%Y-%m') <> DATE_FORMAT(rp.plan_date, '%Y-%m')
         """,
         as_dict=True,
