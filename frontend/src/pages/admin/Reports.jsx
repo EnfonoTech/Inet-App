@@ -87,7 +87,8 @@ const REPORTS = [
     // No date filter: target is line value and achieved is line status, and
     // neither has a usable date basis. Current-state, like the workbook.
     description: "Achieved vs target per project — achievement %, line completion and KPI rating",
-    hasFilters: false,
+    hasFilters: true,
+    filterType: "imonly",
   },
   {
     key: "project_profitability",

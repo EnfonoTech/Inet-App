@@ -61,9 +61,17 @@ function ImCell({ row }) {
 }
 
 export default function MonthlyTeamDetailsReport({ api, loadTeamOptions, loadImOptions, onExportReady }) {
-  const [month, setMonth] = useState(isoMonth(new Date()));
+  // ?month=YYYY-MM opens a given month (the IM dashboard links here).
+  const [month, setMonth] = useState(() => {
+    const m = new URLSearchParams(window.location.search).get("month");
+    return /^\d{4}-\d{2}$/.test(m || "") ? m : isoMonth(new Date());
+  });
   const [teamFilter, setTeamFilter] = useState([]);
-  const [imFilter, setImFilter] = useState([]);
+  // ?im= opens one IM's teams (IM View links here from the PM side).
+  const [imFilter, setImFilter] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get("im");
+    return v && loadImOptions ? [v] : [];
+  });
   const [teamOptions, setTeamOptions] = useState([]);
   const [imOptions, setImOptions] = useState([]);
   const [search, setSearch] = useState("");

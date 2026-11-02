@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import { pmApi } from "../../services/api";
 import ExportExcelButton from "../../components/ExportExcelButton";
@@ -27,6 +28,9 @@ function statusTone(status) {
 }
 
 export default function TeamAllocationApprovals() {
+  const location = useLocation();
+  // IM View opens this inbox narrowed to the IM it is showing.
+  const [imOnly, setImOnly] = useState(location.state?.imFilter ?? []);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("pending"); // "pending" | "history"
@@ -165,8 +169,11 @@ export default function TeamAllocationApprovals() {
     return row._type === "cancel" ? row.cancel_request_status : row.request_status;
   }
 
-  const pending = rows.filter((r) => PENDING_STATUSES.has(getStatus(r)));
-  const history = rows.filter((r) => !PENDING_STATUSES.has(getStatus(r)));
+  const scoped = imOnly.length
+    ? rows.filter((r) => [r.im, r.from_im, r.to_im].some((v) => v && imOnly.includes(v)))
+    : rows;
+  const pending = scoped.filter((r) => PENDING_STATUSES.has(getStatus(r)));
+  const history = scoped.filter((r) => !PENDING_STATUSES.has(getStatus(r)));
   const visible = tab === "pending" ? pending : history;
 
   return (
@@ -186,6 +193,13 @@ export default function TeamAllocationApprovals() {
         </div>
       </div>
 
+      {imOnly.length > 0 && (
+        <div className="notice info" style={{ margin: "0 16px 8px", display: "flex", alignItems: "center", gap: 10 }}>
+          <span>Showing only requests of {imOnly.join(", ")}, as counted on IM View.</span>
+          <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }}
+            onClick={() => setImOnly([])}>Show all</button>
+        </div>
+      )}
       <div role="tablist" style={{ display: "flex", gap: 4, padding: 4, background: "#f1f5f9", borderRadius: 8, border: "1px solid #e2e8f0", margin: "0 16px 8px", width: "fit-content" }}>
         {[
           { id: "pending", label: "Awaiting Approval", count: pending.length },

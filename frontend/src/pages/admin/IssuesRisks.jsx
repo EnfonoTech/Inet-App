@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQuery } from "../../hooks/usePublishedQuery";
@@ -79,6 +80,7 @@ function StatusPill({ value }) {
 
 export default function IssuesRisks() {
   const { rowLimit } = useTableRowLimit();
+  const location = useLocation();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -89,7 +91,8 @@ export default function IssuesRisks() {
   const [qcFilter, setQcFilter] = useState([]);
   const [ciagFilter, setCiagFilter] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
-  const [imFilter, setImFilter] = useState([]);
+  // IM View opens this page already narrowed to the IM it is showing.
+  const [imFilter, setImFilter] = useState(location.state?.imFilter ?? []);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");

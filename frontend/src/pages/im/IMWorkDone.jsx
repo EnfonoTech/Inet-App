@@ -372,8 +372,10 @@ export default function IMWorkDone() {
   const [subconFilter, setSubconFilter] = useState([]);
   const [contractModelFilter, setContractModelFilter] = useState([]);
   const [domainFilter, setDomainFilter] = useState([]);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // A dashboard link may open this page on a date range / route / tab so the
+  // figure it came from can be checked here (My Dashboard -> Work closed).
+  const [fromDate, setFromDate] = useState(_navWD?.fromDate ?? "");
+  const [toDate, setToDate] = useState(_navWD?.toDate ?? "");
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [copyNotice, setCopyNotice] = useState(null);
 
@@ -474,13 +476,13 @@ export default function IMWorkDone() {
   const [issueFlagBusy, setIssueFlagBusy] = useState(false);
   const [issueFlagErr, setIssueFlagErr] = useState(null);
   const [issueFlagFilter, setIssueFlagFilter] = useState(_navWD?.issueFlagFilter ?? []);
-  const [sourceFilter, setSourceFilter] = useState([]);
+  const [sourceFilter, setSourceFilter] = useState(_navWD?.sourceFilter ?? []);
   const [bulkIssueFlagOpen, setBulkIssueFlagOpen] = useState(false);
   const [bulkIssueFlagPick, setBulkIssueFlagPick] = useState("");
   const [bulkIssueFlagBusy, setBulkIssueFlagBusy] = useState(false);
   const [bulkIssueFlagErr, setBulkIssueFlagErr] = useState(null);
   const [bulkIssueFlagResult, setBulkIssueFlagResult] = useState(null);
-  const [tab, setTab] = useState("active"); // "all" | "active" | "confirmed" | "pic_rejected" | "legacy"
+  const [tab, setTab] = useState(_navWD?.tab ?? "active"); // "all" | "active" | "confirmed" | "pic_rejected" | "legacy"
   // "All" is stored per-path, not per-tab, so without this it silently
   // carries over to whichever tab you switch to next — re-triggering an
   // unlimited fetch+render for a tab the user never asked "All" for on this

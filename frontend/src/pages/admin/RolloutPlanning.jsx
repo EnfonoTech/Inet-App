@@ -139,7 +139,12 @@ export default function RolloutPlanning() {
   const searchDebounced = useDebounced(search, 300);
   const [metaRows, setMetaRows] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
-  const [imFilter, setImFilter] = useState([]);
+  // A figure clicked on IM View lands here with its IM, scope and the exact
+  // extra conditions it counted, so the list shows the same lines.
+  const _navPlan = location.state?.planFilters;
+  const [imFilter, setImFilter] = useState(_navPlan?.imFilter ?? []);
+  const [navPortal, setNavPortal] = useState(_navPlan?.portal ? { ..._navPlan.portal } : null);
+  const navLabel = _navPlan?.label || "";
   const [duidFilter, setDuidFilter] = useState([]);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -148,13 +153,18 @@ export default function RolloutPlanning() {
   // "open_dummy" = dummy POs — which ones exactly is controlled separately
   // by dummyFilter (open-only by default, with mapped/all as an in-tab
   // filter rather than their own top-level tabs).
-  const [planScope, setPlanScope] = useState(location.state?.planScope ?? "unplanned");
+  const [planScope, setPlanScope] = useState(_navPlan?.planScope ?? location.state?.planScope ?? "unplanned");
   // "table" is the dispatch table; "week" is the weekly planning dashboard.
   // Same component the IM page uses — with no IM passed it covers every IM,
   // which is the only difference between the two pages.
   const [view, setView] = useState("table");
   // "open" = is_dummy_po=1 (default) | "mapped" = was_dummy_po=1 | "all" = both
-  const [dummyFilter, setDummyFilter] = useState("open");
+  const [dummyFilter, setDummyFilter] = useState(_navPlan?.dummyFilter ?? "open");
+  // The extra conditions belong to the scope they were counted in.
+  useEffect(() => {
+    if (navPortal && planScope !== (_navPlan?.planScope ?? "unplanned")) setNavPortal(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planScope]);
 
   const [selected, setSelected] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
@@ -269,12 +279,13 @@ export default function RolloutPlanning() {
     if (planScope === "open_dummy") {
       portal.dummy_preset = dummyFilter === "mapped" ? "mapped_dummy" : dummyFilter === "all" ? "dummy_any" : "dummy";
     }
+    if (navPortal) Object.assign(portal, navPortal);
     const filters = planScope === "all" || planScope === "open_dummy"
       ? {}
       : { dispatch_status: "Dispatched" };
     return { portal, filters };
   }, [searchDebounced, columnFiltersDebounced, projectFilter, imFilter, duidFilter,
-      fromDate, toDate, planScope, dummyFilter]);
+      fromDate, toDate, planScope, dummyFilter, navPortal]);
 
   // Read by the column-options listener so it always sees the current query
   // without having to re-register on every keystroke.
@@ -670,6 +681,13 @@ export default function RolloutPlanning() {
       </div>
 
       {/* ── Notices ─────────────────────────────────────────── */}
+      {navPortal && (
+        <div className="notice info" style={{ margin: "0 28px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+          <span>Showing {navLabel || "the lines counted on IM View"}, as counted on IM View.</span>
+          <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }}
+            onClick={() => setNavPortal(null)}>Show all</button>
+        </div>
+      )}
       {successMsg && (
         <div className="notice success" style={{ margin: "0 28px 16px" }}>
           <span>✅</span> {successMsg}

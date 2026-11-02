@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import { money } from "../../utils/numberFormat";
-import { Tile } from "../../components/ReportDashboard";
+import { Card, ChartCard, Tile, TopTable, fmt } from "../../components/ReportDashboard";
 
-const fmtInt = (v) => new Intl.NumberFormat("en").format(Number(v) || 0);
-
-const fmt = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+/**
+ * IM Dashboard — one IM's range: their plans, the teams that worked them,
+ * their projects' delivery, their money against target, and what is waiting
+ * on them. Used by the IM (My Dashboard) and by the PM (IM View, with an IM
+ * picked — `overrideIm`).
+ *
+ * Everything is scoped off the IM stamped on the work (see get_im_dashboard).
+ * "Waiting on you" reads Execution Analytics for this IM, the same buckets
+ * and predicates as the IM's Execution Analytics page, so a count here opens
+ * exactly its own rows.
+ */
 
 function defaultRange() {
   const r = DATE_PRESETS.this_month.range(new Date());
@@ -19,518 +23,375 @@ function defaultRange() {
   return { from: iso(r.from), to: iso(r.to) };
 }
 
-function relTime(ts) {
-  if (!ts) return "—";
-  try {
-    const d = ts instanceof Date ? ts : new Date(String(ts).replace(" ", "T"));
-    if (Number.isNaN(d.getTime())) return "—";
-    const now = new Date();
-    const diffMin = Math.round((now - d) / 60000);
-    if (Math.abs(diffMin) < 1) return "just now";
-    if (diffMin < 0) return "just now"; // clock skew → never show "in the future"
-    if (diffMin < 60) return `${diffMin}m ago`;
-    if (diffMin < 60 * 24) return `${Math.round(diffMin / 60)}h ago`;
-    if (diffMin < 60 * 24 * 2) return "yesterday";
-    return d.toISOString().slice(0, 10);
-  } catch {
-    return "—";
-  }
-}
+const n = (v) => Number(v) || 0;
+const isoToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+const sar = (v) => `SAR ${fmt(v, "int")}`;
 
-function statusTone(s) {
-  const v = String(s || "").toLowerCase();
-  if (v === "completed") return { fg: "#047857", bg: "#ecfdf5", dot: "#10b981" };
-  if (v.includes("issue") || v === "delayed" || v === "cancelled") return { fg: "#b91c1c", bg: "#fef2f2", dot: "#ef4444" };
-  if (v.includes("execution") || v.includes("progress")) return { fg: "#1d4ed8", bg: "#eff6ff", dot: "#3b82f6" };
-  if (v === "planned") return { fg: "#a16207", bg: "#fefce8", dot: "#eab308" };
-  return { fg: "#475569", bg: "#f1f5f9", dot: "#64748b" };
-}
-
-function StatusBadge({ value }) {
-  if (!value) return <span style={{ color: "#94a3b8" }}>—</span>;
-  const t = statusTone(value);
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700,
-      textTransform: "uppercase", letterSpacing: "0.03em",
-      background: t.bg, color: t.fg,
-    }}>
-      <span style={{ width: 6, height: 6, borderRadius: 999, background: t.dot }} />
-      {value}
-    </span>
-  );
-}
-
-/* label · value list, used for the three breakdowns in the Direct & Backend
-   section. Long subcontractor names ellipsize rather than wrap, so the three
-   columns keep the same baseline. */
-function Breakdown({ title, rows }) {
-  return (
-    <div>
-      <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", marginBottom: 6 }}>
-        {title}
-      </div>
-      {rows.length === 0 ? (
-        <div style={{ fontSize: "0.78rem", color: "#94a3b8" }}>—</div>
-      ) : rows.map((r) => (
-        <div key={r.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "0.8rem", color: "#334155", padding: "3px 0", borderBottom: "1px solid #f8fafc" }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.label}>{r.label}</span>
-          <span style={{ fontWeight: 700, flex: "0 0 auto", fontVariantNumeric: "tabular-nums" }}>{r.right}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* Small figure block for the Direct & Backend section. Deliberately not a
-   KpiTile: those form the fixed six-across header row, and reusing one here
-   would make this section read as a seventh headline metric. */
-function MiniStat({ label, value, tone, wide }) {
-  return (
-    <div style={{
-      flex: wide ? "1 1 100%" : "1 1 0", minWidth: 0,
-      border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 10px",
-      background: "#fafbfd",
-    }}>
-      <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.02em" }}>
-        {label}
-      </div>
-      <div style={{ fontSize: "1.05rem", fontWeight: 700, color: tone || "#0f172a", fontVariantNumeric: "tabular-nums" }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, icon, action, children, style, subtitle }) {
-  return (
-    <div style={{
-      background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10,
-      boxShadow: "0 1px 2px rgba(15,23,42,0.04)", overflow: "hidden",
-      display: "flex", flexDirection: "column", ...style,
-    }}>
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "10px 14px", borderBottom: "1px solid #f1f5f9",
-        background: "linear-gradient(180deg,#fafbfd,#fff)",
-      }}>
-        <h3 style={{ margin: 0, fontSize: "0.82rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
-          {icon && <span aria-hidden style={{ fontSize: "1rem" }}>{icon}</span>}
-          {title}
-          {subtitle && (
-            <span style={{ fontWeight: 500, fontSize: "0.7rem", color: "#94a3b8" }}>· {subtitle}</span>
-          )}
-        </h3>
-        {action}
-      </div>
-      <div style={{ padding: 14, flex: 1, minHeight: 0 }}>{children}</div>
-    </div>
-  );
-}
-
-// Status-tinted CSS divIcon — avoids Leaflet's default 404'd marker images.
-const SITE_PIN_COLORS = {
-  completed: "#10b981",
-  "in execution": "#3b82f6",
-  "in progress": "#3b82f6",
-  "planning with issue": "#ef4444",
-  cancelled: "#ef4444",
-  hold: "#f59e0b",
-  postponed: "#eab308",
-  planned: "#a16207",
+const STATUS_COLORS = {
+  Completed: "#15803d", "In Execution": "#1d5fd1", Planned: "#9db8ea", Extended: "#6d4bd1",
+  Overdue: "#b42318", "Not Attended": "#c2410c", "Planning with Issue": "#e0a320", Cancelled: "#c7d0dc",
 };
-function sitePinIcon(status) {
-  const color = SITE_PIN_COLORS[String(status || "").toLowerCase()] || "#3b82f6";
-  return L.divIcon({
-    className: "im-site-pin",
-    html: `<div style="width:18px;height:18px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,0.35);"></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-    popupAnchor: [0, -9],
-  });
-}
 
-function FitBounds({ points }) {
-  const map = useMap();
-  useEffect(() => {
-    if (!points.length) return;
-    if (points.length === 1) {
-      map.setView([points[0].lat, points[0].lon], 11, { animate: false });
-      return;
-    }
-    const b = L.latLngBounds(points.map((p) => [p.lat, p.lon]));
-    map.fitBounds(b, { padding: [24, 24], maxZoom: 13 });
-  }, [points, map]);
-  return null;
-}
+// Execution Analytics buckets worth an IM's attention, in the order to act.
+const BUCKETS = [
+  { key: "im_confirmation_pending", label: "Confirm execution", tone: "amber" },
+  // The part of the above with nothing else open (QC / CIAG settled) — one click from done.
+  { key: "im_confirmation_only", label: "Only IM confirmation left", tone: "red" },
+  { key: "qc_failed", label: "QC failed", tone: "red" },
+  { key: "qc_pending", label: "QC pending", tone: "amber" },
+  { key: "ciag_pending", label: "CIAG pending", tone: "amber" },
+  { key: "work_done_missing", label: "Work Done not created", tone: "amber" },
+  { key: "overdue_by_date", label: "Overdue plans", tone: "red" },
+];
+const TONE = {
+  red: { bd: "#f3c7c3", bg: "#fff8f7", fg: "#b42318" },
+  amber: { bd: "#f6d4bf", bg: "#fffaf5", fg: "#b54708" },
+  grey: { bd: "#e3e9f2", bg: "#f8fafd", fg: "#475569" },
+};
 
-function ProgressBar({ pct, color = "#10b981" }) {
-  const v = Math.max(0, Math.min(100, Math.round(pct || 0)));
+function ActionRow({ count, label, sub, tone, onClick }) {
+  const t = TONE[n(count) ? tone : "grey"] || TONE.grey;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ flex: 1, height: 14, borderRadius: 999, background: "#f1f5f9", overflow: "hidden" }}>
-        <div style={{ width: `${v}%`, height: "100%", background: color, transition: "width 0.6s ease", borderRadius: 999 }} />
-      </div>
-      <span style={{ width: 44, textAlign: "right", fontWeight: 700, fontSize: "0.78rem", fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "#1e293b" }}>{v}%</span>
-    </div>
+    <button type="button" onClick={onClick} disabled={!onClick} style={{
+      display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left",
+      cursor: onClick ? "pointer" : "default", padding: "8px 12px", border: `1px solid ${t.bd}`,
+      background: t.bg, borderRadius: 9, font: "inherit", opacity: n(count) ? 1 : 0.65,
+    }}>
+      <span style={{ fontSize: "1.2rem", fontWeight: 800, color: t.fg, minWidth: 40 }}>{fmt(count, "int")}</span>
+      <span style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <b style={{ fontSize: "0.8rem", color: "#0f1e36" }}>{label}</b>
+        {sub && <span className="rdash-muted">{sub}</span>}
+      </span>
+    </button>
   );
 }
 
 export default function IMDashboard({ overrideIm }) {
+  const navigate = useNavigate();
   const { imName: authIm } = useAuth();
+  const isPmView = Boolean(overrideIm);
   const imName = overrideIm || authIm;
+  const [range, setRange] = useState(defaultRange);
   const [data, setData] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [range, setRange] = useState(defaultRange);
-  const [fetchedAt, setFetchedAt] = useState(null);
+  const [reload, setReload] = useState(0);
 
-  async function loadData(r = range) {
-    setError(null);
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    try {
-      const result = await pmApi.getIMDashboard(imName, {
-        from_date: r.from,
-        to_date: r.to,
-        etag: data?.etag || "",
-      });
-      // Short-circuit: if the server says nothing has changed, keep the
-      // existing payload and just refresh fetchedAt + last_updated.
-      if (result && result.unchanged) {
-        setData((prev) => (prev ? { ...prev, last_updated: result.last_updated } : prev));
-      } else {
-        setData(result);
-      }
-      // last_updated is now an offset-aware ISO string, but we still anchor
-      // "Updated Xm ago" to the client clock — it measures "how stale is what
-      // I'm looking at right now," which is a property of this client, not
-      // the server.
-      setFetchedAt(new Date());
-    } catch (err) {
-      setError(err.message || "Failed to load dashboard");
-    } finally {
-      setLoading(false);
-    }
+    setError(null);
+    pmApi.getIMDashboard(imName, { from_date: range.from, to_date: range.to })
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) { setData(null); setError(e?.message || "Failed to load dashboard"); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [imName, range.from, range.to, reload]);
+
+  // Live, not ranged: what is waiting on the IM right now.
+  useEffect(() => {
+    let cancelled = false;
+    setAnalytics(null);
+    pmApi.getExecutionAnalytics({ im: imName || "", portal_filters: {}, dimensions: [] })
+      .then((r) => { if (!cancelled) setAnalytics(r || null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [imName, reload]);
+
+  // Refresh every 5 minutes so the figures stay current.
+  useEffect(() => {
+    const t = setInterval(() => setReload((k) => k + 1), 5 * 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const k = data?.kpi || {};
+  const act = data?.action_items || {};
+  const wc = data?.work_closed || {};
+  const open = data?.open_lines || {};
+  const dummy = data?.dummy || {};
+  const buckets = useMemo(() => Object.fromEntries((analytics?.buckets || []).map((b) => [b.key, b])), [analytics]);
+
+  // Every figure opens the page or report it comes from, already filtered to
+  // the same IM, period and status, so it can be checked there row by row.
+  // An IM opens their own pages; the PM (no IM pages) the PM page behind it.
+  const today = isoToday();
+  const ym = range.from ? range.from.slice(0, 7) : today.slice(0, 7);
+  const imF = isPmView ? [overrideIm] : undefined;
+  const nav = (path, state) => () => navigate(path, state ? { state } : undefined);
+  const workDone = (from, to, sourceFilter) => isPmView
+    ? nav("/work-done", { workDoneFilters: { tab: "list", imFilter: imF, includeFinished: true, fromDate: from, toDate: to,
+        ...(sourceFilter ? { workTypeFilter: sourceFilter } : {}) } })
+    : nav("/im-work-done", { workDoneFilters: { tab: "all", fromDate: from, toDate: to, ...(sourceFilter ? { sourceFilter } : {}) } });
+  // The PM's Rollout Planning list takes the IM, scope and the exact extra
+  // conditions a figure counted (see RolloutPlanning.jsx `planFilters`).
+  const pmLines = (planScope, portal, label, extra) =>
+    nav("/planning", { planFilters: { imFilter: imF, planScope, portal, label, ...extra } });
+  const openStatuses = (open.by_status || []).map((s) => s.status);
+  const nextMonthStart = (() => {
+    if (!act.month_end) return "";
+    const [y, m] = act.month_end.split("-").map(Number);
+    return `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}-01`;
+  })();
+  const openLines = (statuses) => isPmView
+    ? pmLines("all", { dispatch_status: statuses }, `${statuses.length === 1 ? statuses[0] : "open"} lines (not done, not cancelled)`)
+    : nav("/im-po-intake", { tab: "overview", ovStatusFilter: statuses });
+  const plans = (from, to, statuses) => isPmView
+    ? nav("/execution", { execFilters: { planStatusFilter: statuses || [], fromDate: from, toDate: to, imFilter: imF, closure: "all", tab: "all" } })
+    : nav("/im-planning", { execFilters: { planStatusFilter: statuses || [], fromDate: from, toDate: to } });
+  // Every plan status that is real work — the "Plans in range" tile leaves cancelled out.
+  const LIVE = ["Planned", "In Execution", "Completed", "Overdue", "Not Attended", "Extended", "Planning with Issue"];
+  const to = {
+    workDone: workDone(range.from, range.to),
+    workDoneToday: workDone(today, today),
+    shortcuts: workDone(range.from, range.to, ["Direct Close", "Backend"]),
+    plans: plans(range.from, range.to, LIVE),
+    plansToday: plans(today, today, LIVE),
+    overdue: plans(range.from, range.to, ["Overdue", "Not Attended"]),
+    lines: openLines(openStatuses),
+    dummy: isPmView ? pmLines("open_dummy", null, "", { dummyFilter: "open" }) : nav("/im-po-intake", { tab: "dummy" }),
+    // Due = target month this month or earlier; later = forecast for a later month.
+    toPlan: isPmView
+      ? pmLines("unplanned", { has_target_month: "yes", internal_preset: "include", to_date: act.month_end },
+          "Dispatched lines due by this month (target month this month or earlier)")
+      : nav("/im-dispatch", { dispatchFilters: { toDate: act.month_end } }),
+    forecastLater: isPmView
+      ? pmLines("unplanned", { has_target_month: "yes", internal_preset: "include", from_date: nextMonthStart },
+          "Dispatched lines forecast for a later month")
+      : nav("/im-dispatch", { dispatchFilters: { fromDate: nextMonthStart } }),
+    awaitingMonth: isPmView
+      ? pmLines("all", { has_target_month: "no", dispatch_status: ["Pending", "Dispatched"] }, "lines with no target month yet")
+      : nav("/im-po-intake", { tab: "intake" }),
+    money: isPmView ? nav(`/reports?tab=im_performance&from=${range.from}&to=${range.to}`) : workDone(range.from, range.to),
+    teams: nav(isPmView ? `/reports?tab=monthly_team_details&month=${ym}&im=${encodeURIComponent(overrideIm)}`
+      : `/im-reports?tab=monthly_team_details&month=${ym}`),
+    projects: nav(isPmView ? `/reports?tab=project_performance&im=${encodeURIComponent(overrideIm)}` : "/im-reports?tab=project_performance"),
+    issues: isPmView ? nav("/issues-risks", { imFilter: imF }) : nav("/im-issues-risks"),
+    teamRequests: isPmView ? undefined : nav("/im-teams", { tab: "incoming" }),
+    cancelRequests: isPmView ? nav("/approvals", { imFilter: imF }) : undefined,
+  };
+  const More = ({ onClick, label = "Open" }) => <button type="button" className="rdash-link" onClick={onClick}>{label} →</button>;
+
+  function openBucket(b) {
+    const execFilters = { bucket: b.key, bucketLabel: b.label, planStatusFilter: [], closure: "all", visits: "current", tab: "all" };
+    if (isPmView) navigate("/execution", { state: { execFilters: { ...execFilters, imFilter: imF } } });
+    else navigate(b.target === "work_done" ? "/im-execution" : "/im-planning", { state: { execFilters } });
   }
 
-  // Initial + filter changes
-  useEffect(() => {
-    loadData(range);
+  const waiting = useMemo(() => {
+    if (!analytics) return [];
+    const rows = BUCKETS.map((b) => {
+      const bk = buckets[b.key];
+      return bk && { key: b.key, count: bk.value, label: b.label, tone: b.tone, sub: sar(bk.amount), onClick: () => openBucket(bk) };
+    }).filter(Boolean);
+    rows.push({ key: "issues", count: analytics.totals?.issues_open, label: "Open issues", tone: "red", sub: sar(analytics.totals?.issues_value), onClick: to.issues });
+    rows.push({ key: "dummy", count: dummy.count, label: "Dummy POs to map", tone: "amber", sub: "planned or not · PO Control › Dummy POs", onClick: to.dummy });
+    rows.push({ key: "toplan", count: act.to_plan, label: "Lines to plan", tone: n(act.to_plan_overdue) ? "amber" : "grey",
+      sub: `target month this month or earlier${n(act.to_plan_overdue) ? ` · ${fmt(act.to_plan_overdue, "int")} from past months` : ""} · Rollout Planning`,
+      onClick: to.toPlan });
+    rows.push({ key: "later", count: act.forecast_later, label: "Lines forecast for later", tone: "grey",
+      sub: "target month after this month · Rollout Planning", onClick: to.forecastLater });
+    rows.push({ key: "nomonth", count: act.awaiting_month, label: "Lines to forecast", tone: "grey", sub: "no target month yet · PO Intake", onClick: to.awaitingMonth });
+    rows.push({ key: "teamreq", count: act.team_requests, label: "Team requests to answer", tone: "amber",
+      sub: isPmView ? "the IM answers these in My Teams" : "My Teams › Incoming", onClick: to.teamRequests });
+    rows.push({ key: "cancelreq", count: act.cancel_requests, label: "Plan cancels awaiting PM", tone: "amber",
+      sub: isPmView ? "Approvals inbox" : "waiting for PM approval", onClick: to.cancelRequests });
+    return rows.filter((r) => n(r.count) > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imName, range.from, range.to]);
+  }, [analytics, buckets, dummy.count, act, isPmView, range.from, range.to]);
 
-  // Dashboards refresh every 5 minutes so KPIs stay current without manual
-  // clicks. List pages stay manual.
-  useEffect(() => {
-    const t = setInterval(() => loadData(range), 5 * 60_000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range.from, range.to, imName]);
+  const routeCount = (r) => n((wc.by_route || []).find((g) => g.route === r)?.count);
+  const rollout = routeCount("Rollout");
+  const shortcut = routeCount("Direct Close") + routeCount("Backend");
+  const closedDays = useMemo(() => (wc.by_day || []).map((d) => ({ ...d, label: String(d.day).slice(5) })), [wc]);
+  const planDays = useMemo(() => (data?.plans_by_day || []).map((d) => ({ ...d, label: String(d.day).slice(5) })), [data]);
+  const statuses = useMemo(() => (data?.plans_by_status || []).map((s) => ({ label: s.status, value: s.count, color: STATUS_COLORS[s.status] })), [data]);
+  const teams = useMemo(() => (data?.teams || []).map((t) => ({
+    ...t, label: t.team_name && t.team_name !== t.team_id ? `${t.team_id} · ${t.team_name}` : t.team_id,
+  })), [data]);
+  // Rows of the Project Performance report itself, biggest gap first.
+  const projects = useMemo(() => (data?.projects || []).slice(0, 8).map((p) => ({
+    ...p, lines_done: `${fmt(p.completed_lines, "int")} / ${fmt(p.total_lines, "int")}`,
+  })), [data]);
+  const dc = data?.direct_close || {};
 
-  const k = data?.site_kpi || {};
-  const team_perf = Array.isArray(data?.team_perf) ? data.team_perf : [];
-  const projects = Array.isArray(data?.project_progress) ? data.project_progress : [];
-  const sites = Array.isArray(data?.site_status) ? data.site_status : [];
-  const timeline = Array.isArray(data?.timeline) ? data.timeline : [];
-  const action = data?.action_items || {};
-  const site_locations = Array.isArray(data?.site_locations) ? data.site_locations : [];
-  const material_shortage = Number(data?.material_shortage || 0);
-  const directClose = data?.direct_close || null;
-
-  // An IM who only Direct Closes has no plans at all, so a plan-only
-  // measure scored them at zero on work they had finished and billed. A
-  // directly-closed line is both assigned to them and done by them, so it
-  // belongs on BOTH sides of this — counting it only in the numerator would
-  // push a pure Direct Close IM past 100%.
-  const assignedTotal = (k.total_assigned || 0) + (k.direct_closed || 0);
-  const achievedTotal = (k.completed_total || 0) + (k.direct_closed || 0);
-  const myPerformancePct = useMemo(() => {
-    if (!assignedTotal) return 0;
-    return Math.round((achievedTotal / assignedTotal) * 100);
-  }, [assignedTotal, achievedTotal]);
-  // Revenue and target are the IM Performance scorecard's own figures for
-  // this IM and range (get_im_dashboard reads them from that report).
-  const kp = data?.kpi || {};
-  const revPct = kp.monthly_target ? Math.round((Number(kp.revenue) / Number(kp.monthly_target)) * 1000) / 10 : 0;
+  const revPct = pct(n(k.revenue), n(k.target));
+  // Against the period before: the month before for a whole month, else the
+  // same number of days just before the range.
+  const prev = data?.previous;
+  const prevLabel = useMemo(() => {
+    if (!prev?.from) return "";
+    const f = new Date(`${prev.from}T00:00:00`);
+    const t = new Date(`${prev.to}T00:00:00`);
+    const wholeMonths = f.getDate() === 1 && new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1).getDate() === 1;
+    const mon = (d) => d.toLocaleString("en", { month: "short" });
+    if (f.getMonth() === t.getMonth() && f.getFullYear() === t.getFullYear()) {
+      return wholeMonths ? mon(f) : `${f.getDate()}–${t.getDate()} ${mon(f)}`;
+    }
+    return `${f.getDate()} ${mon(f)} – ${t.getDate()} ${mon(t)}`;
+  }, [prev?.from, prev?.to]);
+  const delta = (now, before, money) => {
+    if (!prev) return undefined;
+    const b = n(before);
+    const was = money ? `SAR ${fmt(b, "int")}` : fmt(b, "int");
+    if (!b) return { text: `${was} in ${prevLabel}`, dir: "flat" };
+    const ch = ((n(now) - b) / b) * 100;
+    return { text: `${ch >= 0 ? "▲" : "▼"} ${Math.abs(ch).toFixed(0)}% vs ${prevLabel} (${was})`, dir: Math.abs(ch) < 0.5 ? "flat" : ch > 0 ? "up" : "down" };
+  };
+  const title = isPmView ? "IM View" : "My Dashboard";
+  // Rollout detail only for an IM who has live plans in the range — a Direct
+  // Close IM with a few cancelled plans gets no empty rollout section.
+  const hasPlans = n(k.plans) > 0;
+  const todayCells = [
+    { label: "Work closed today", value: data?.work_closed_today, sub: "every route", onClick: to.workDoneToday },
+    { label: "Planned today", value: k.today_planned, sub: "rollout plans", onClick: to.plansToday },
+    { label: "Completed today", value: k.today_completed, sub: "of today's plans", onClick: to.plansToday },
+    { label: "Teams working today", value: k.teams_today, sub: "with an execution today" },
+    { label: "Direct / Backend today", value: dc.today, sub: "closed without a plan", onClick: to.workDoneToday },
+  ];
 
   return (
-    <div className="dashboard" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* ── Header ──────────────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+    <div className="nd-dashboard" style={{ padding: isPmView ? 0 : 16 }}>
+      <div className="page-header" style={{ padding: 0, marginBottom: 12 }}>
         <div>
-          <h1 className="page-title">IM View · {data?.kpi?.im_name || data?.im || imName || "Implementation Manager"}</h1>
-          <div className="page-subtitle">
-            Plans, teams, revenue against target, and what is waiting on you
-            {fetchedAt && <> · updated {relTime(fetchedAt)}</>}
-          </div>
+          <h1 className="page-title">{title}{data?.im_name ? ` · ${data.im_name}` : ""}</h1>
+          <div className="page-subtitle">All the work — rollout, Direct Close and Backend — and what is waiting. Click any figure to open its list.</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="page-actions" style={{ gap: 8 }}>
           <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
-          <button type="button" className="btn-secondary" onClick={() => loadData(range)} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
+          <button type="button" className="btn-secondary" disabled={loading} onClick={() => setReload((x) => x + 1)}>{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </div>
 
-      {error && (
-        <div className="notice error" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>⚠</span> {error}
-          <button type="button" className="btn-secondary" style={{ marginLeft: 10 }} onClick={() => { setLoading(true); loadData(); }}>Retry</button>
+      {error && <div className="notice error"><span>⚠</span> {error}</div>}
+      {data?.message && <div className="notice warning"><span>⚠</span> {data.message}</div>}
+      {!data && loading && <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading dashboard…</div>}
+
+      {data?.kpi && (
+        <div className="rdash">
+          {/* ── Today first — whatever the range picked above ── */}
+          <section className="rdash-card" aria-label="Today">
+            <div className="rdash-card-hd"><h2>Today · {today}</h2><span className="rdash-muted">whatever the range</span></div>
+            <div style={{ padding: "0 14px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+              {todayCells.map((c) => (
+                <button key={c.label} type="button" onClick={c.onClick} disabled={!c.onClick} className="rdash-tile rdash-tile-link"
+                  style={{ display: "block", cursor: c.onClick ? "pointer" : "default", background: "#f8fafd" }}>
+                  <div className="rdash-tile-label">{c.label}</div>
+                  <div className="rdash-tile-value">{fmt(c.value, "int")}</div>
+                  <div className="rdash-tile-sub">{c.sub}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* ── The range: every route of work, the money, the backlog ── */}
+          <div className="rdash-tiles">
+            <Tile icon="done" tone="green" label="Work closed" value={fmt(wc.total, "int")} onClick={to.workDone}
+              sub={`${fmt(rollout, "int")} rollout · ${fmt(shortcut, "int")} direct / backend`}
+              delta={delta(wc.total, prev?.work_closed)} />
+            <Tile icon="money" tone={revPct >= 90 ? "green" : "amber"} label="Revenue (SAR)" value={fmt(k.revenue, "int")} onClick={to.money}
+              sub={k.target ? `${fmt(revPct, "pct")} of target ${fmt(k.target, "int")}` : "no target for this range"}
+              delta={delta(k.revenue, prev?.revenue, true)} />
+            <Tile icon="star" tone="blue" label="Scorecard" value={k.score != null ? fmt(k.score, "pct") : "—"} onClick={isPmView ? to.money : undefined}
+              sub={k.rating || "IM Performance rating"} />
+            <Tile icon="planned" tone="grey" label="Plans in range" value={fmt(k.plans, "int")} onClick={to.plans}
+              sub={hasPlans ? `${fmt(pct(n(k.completed), n(k.plans)), "pct")} completed · ${fmt(k.in_execution, "int")} in execution` : "no rollout plans in range"} />
+            <Tile icon="alert" tone={n(k.delayed) ? "red" : "grey"} label="Overdue / not attended" value={fmt(k.delayed, "int")} onClick={to.overdue}
+              sub="plans dated in range" />
+            <Tile icon="doc" tone="amber" label="Open PO lines" value={fmt(open.count, "int")} onClick={to.lines}
+              sub={`SAR ${fmt(open.value, "int")} not done yet`} />
+          </div>
+
+          <div className="rdash-row rdash-row-3">
+            <ChartCard chart={{
+              kind: "bar", stacked: true, title: "Work closed by day", sub: "by route", x: "label", data: closedDays,
+              series: [
+                { key: "Rollout", label: "Rollout", color: "#1d5fd1" },
+                { key: "Direct Close", label: "Direct Close", color: "#6d4bd1" },
+                { key: "Backend", label: "Backend", color: "#e08a2c" },
+              ],
+            }} />
+            <ChartCard chart={{
+              kind: "donut", title: "How the work was closed", sub: "in range", x: "label", centerLabel: "lines",
+              data: (wc.by_route || []).map((g) => ({ label: g.route, value: g.count, color: { Rollout: "#1d5fd1", "Direct Close": "#6d4bd1", Backend: "#e08a2c" }[g.route] })),
+              series: [{ key: "value", label: "Lines" }],
+              note: (wc.by_route || []).map((g) => `${g.route} SAR ${fmt(g.revenue, "int")}`).join(" · "),
+            }} />
+            <ChartCard chart={{
+              kind: "hbar", title: "Open PO lines by status", sub: "all time · click a bar", x: "label",
+              data: (open.by_status || []).slice(0, 8).map((s) => ({ label: s.status, count: s.count })),
+              series: [{ key: "count", label: "Lines", color: "#e08a2c" }],
+              onBarClick: (row) => row?.label && openLines([row.label])(),
+            }} />
+          </div>
+
+          {/* Full width, its rows in a grid — as one tall column it left the
+              cards beside it half empty. */}
+          <Card title="Waiting on you" aside={<span className="rdash-muted">live · click to open</span>}>
+            <div style={{ padding: "4px 14px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 8 }}>
+              {!analytics && <div className="rdash-muted">Loading…</div>}
+              {waiting.map((w) => <ActionRow key={w.key} {...w} />)}
+              {analytics && waiting.length === 0 && <div className="rdash-muted" style={{ padding: "8px 2px" }}>Nothing waiting on you.</div>}
+            </div>
+          </Card>
+
+          {(() => {
+            // Projects always; Direct Close & Backend when the IM has any; Teams
+            // when there is rollout work (or nothing else to show beside Projects).
+            const cards = [
+              <Card key="projects" title="Projects" aside={<More onClick={to.projects} label="Project Performance" />}>
+                <TopTable rowKey="project_code" rows={projects} empty="No PO lines" cols={[
+                  { key: "project_code", label: "Project" }, { key: "lines_done", label: "Lines done", render: (r) => r.lines_done },
+                  { key: "completion_pct", label: "Done %", pct: true }, { key: "gap", label: "Gap (SAR)", num: true },
+                ]} />
+              </Card>,
+            ];
+            if (shortcut > 0) cards.push(
+              <Card key="direct" title="Direct Close & Backend" aside={<More onClick={to.shortcuts} label="Work Done" />}>
+                <div style={{ padding: "0 14px 10px", display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                  {[["Lines", fmt(dc.count, "int")], ["Revenue (SAR)", fmt(dc.revenue, "int")], ["Avg / line", fmt(dc.avg_revenue, "int")]].map(([l, v]) => (
+                    <div key={l} style={{ background: "#f8fafd", border: "1px solid #e3e9f2", borderRadius: 10, padding: "10px 12px" }}>
+                      <div className="rdash-tile-label">{l}</div>
+                      <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#0f1e36" }}>{v}</div>
+                    </div>
+                  ))}
+                  <div className="rdash-muted" style={{ gridColumn: "1 / -1" }}>
+                    {(dc.by_source || []).map((x) => `${x.source} ${fmt(x.count, "int")}`).join(" · ")}
+                    {" · "}MS1 only {fmt(dc.milestones?.ms1_only, "int")} · MS2 only {fmt(dc.milestones?.ms2_only, "int")} · full line {fmt(dc.milestones?.full_line, "int")}
+                  </div>
+                </div>
+                <TopTable rowKey="subcontractor" rows={dc.by_subcontractor || []} cols={[
+                  { key: "subcontractor", label: "Subcontractor" }, { key: "count", label: "Lines", num: true },
+                  { key: "revenue", label: "Revenue", num: true },
+                ]} />
+              </Card>,
+            );
+            if (hasPlans || shortcut === 0) cards.push(
+              <Card key="teams" title="Teams" aside={<More onClick={to.teams} label="Monthly Team Details" />}>
+                <TopTable rowKey="team" rows={teams} empty="No team worked these plans in this range" cols={[
+                  { key: "label", label: "Team" }, { key: "plans", label: "Plans", num: true },
+                  { key: "completed", label: "Done", num: true }, { key: "pct", label: "Util. %", pct: true },
+                ]} />
+              </Card>,
+            );
+            return <div className={`rdash-row rdash-row-${cards.length === 1 ? 2 : cards.length}`}>{cards}</div>;
+          })()}
+
+          {hasPlans && (
+            <div className="rdash-row rdash-row-2">
+              <ChartCard chart={{
+                kind: "bar", title: "Rollout plans by day", sub: "planned vs completed", x: "label", data: planDays,
+                series: [{ key: "planned", label: "Planned", color: "#b9cdf3" }, { key: "completed", label: "Completed", color: "#163a7a" }],
+              }} />
+              <ChartCard chart={{
+                kind: "donut", title: "Rollout plans by status", sub: "in range", x: "label", centerLabel: "plans",
+                data: statuses, series: [{ key: "value", label: "Plans" }],
+              }} />
+            </div>
+          )}
+          {data.last_updated && <div className="rdash-muted">Last updated {String(data.last_updated).replace("T", " ").slice(0, 16)}</div>}
         </div>
       )}
-      {loading && !data && (
-        <div style={{ padding: 32, textAlign: "center", color: "#94a3b8" }}>Loading dashboard…</div>
-      )}
-
-      {/* ── KPI tiles ───────────────────────────────────────────────────
-          These count ROLLOUT PLANS (one per planned visit), not distinct
-          sites — a site replanned 3 times is 3 plans, and about a third of
-          plans here are re-visits, so the old "…Sites" labels read roughly
-          3x the real site count.
-          The first four follow the date range above (matched on plan_date);
-          the two "Today" tiles are always today, whatever range is picked. */}
-      <div className="rdash-tiles">
-        <Tile icon="planned" tone="grey" label="Assigned plans" value={fmtInt(k.total_assigned)}
-              sub={k.distinct_sites ? `${fmtInt(k.distinct_sites)} sites in range` : "in range"} />
-        <Tile icon="done" tone="green" label="Completed plans" value={fmtInt(k.completed_total)} sub="in range" />
-        <Tile icon="clock" tone="blue" label="In execution" value={fmtInt(k.in_progress)} sub="in range" />
-        <Tile icon="alert" tone={k.delayed ? "red" : "grey"} label="Delayed plans" value={fmtInt(k.delayed)} sub="overdue + planning issue" />
-        <Tile icon="target" tone="blue" label="Today" value={`${fmtInt(k.today_completed)} / ${fmtInt(k.today_target)}`} sub="plans completed of today's" />
-        <Tile icon="money" tone={revPct >= 90 ? "green" : "amber"} label="Revenue (SAR) · range" value={fmtInt(kp.revenue)}
-              sub={kp.monthly_target ? `${revPct}% of target ${fmtInt(kp.monthly_target)}` : "no target set"} />
-      </div>
-
-      {/* ── Row 2: Project Progress (2/3) + Team Performance (1/3) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-        {/* Rollout-plan basis: completed planned visits / planned visits
-            (cancelled excluded). Not the same as the PM dashboard's Top
-            Projects %, which counts PO lines. */}
-        <Section title="Project Progress" icon="📊" subtitle="planned rollout visits completed">
-          {projects.length === 0 ? (
-            <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No project data for this window.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {projects.map((p, i) => (
-                <div key={p.project_code || i} style={{ display: "grid", gridTemplateColumns: "120px 1fr 78px", alignItems: "center", gap: 12 }}>
-                  <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#1e293b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={p.project_name || p.project_code}>
-                    {p.project_name || p.project_code}
-                  </div>
-                  {p.has_plans === false ? (
-                    <div style={{ fontSize: "0.78rem", color: "#94a3b8", fontStyle: "italic" }}>No rollout plans yet</div>
-                  ) : (
-                    <ProgressBar
-                      pct={p.pct}
-                      color={p.pct >= 70 ? "#10b981" : p.pct >= 40 ? "#f59e0b" : "#3b82f6"}
-                    />
-                  )}
-                  <div style={{ fontSize: "0.72rem", color: "#64748b", textAlign: "right", whiteSpace: "nowrap" }}>
-                    {p.has_plans === false ? "—" : `${p.done ?? 0}/${p.total ?? 0} visits`}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Section>
-        <Section title="Team Performance" icon="👥">
-          {team_perf.length === 0 ? (
-            <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No team data.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {team_perf.slice(0, 8).map((t, i) => (
-                <div key={t.team_id || i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: i === team_perf.length - 1 ? "none" : "1px solid #f1f5f9" }}>
-                  <span style={{ fontSize: "0.82rem", color: "#1e293b" }}>{t.team_name}</span>
-                  <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>{fmt.format(t.sites_done)} <span style={{ color: "#94a3b8", fontWeight: 500, fontSize: "0.72rem" }}>plans done</span></span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Section>
-      </div>
-
-      {/* ── Row 3: Site Status (2/3) + Issues & Escalations (1/3) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-        <Section title="Site Status" icon="📌" action={<Link to="/im-execution" style={{ fontSize: "0.72rem", color: "#1d4ed8", fontWeight: 600 }}>View all →</Link>}>
-          {sites.length === 0 ? (
-            <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No sites yet.</div>
-          ) : (
-            <table className="data-table" style={{ width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left" }}>Site ID</th>
-                  <th style={{ textAlign: "left" }}>Location</th>
-                  <th style={{ textAlign: "left" }}>Project</th>
-                  <th style={{ textAlign: "left" }}>Status</th>
-                  <th style={{ textAlign: "left" }}>Last Update</th>
-                  <th style={{ textAlign: "left" }}>Issue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sites.map((s) => (
-                  <tr key={s.site_id}>
-                    <td style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: "0.78rem" }}>{s.site_id}</td>
-                    <td style={{ fontSize: "0.82rem" }}>{s.location || "—"}</td>
-                    <td style={{ fontSize: "0.82rem" }}>{s.project || "—"}</td>
-                    <td><StatusBadge value={s.status} /></td>
-                    <td style={{ fontSize: "0.78rem", color: "#64748b" }}>{relTime(s.last_update)}</td>
-                    <td style={{ fontSize: "0.78rem", color: s.issue ? "#b91c1c" : "#94a3b8" }}>{s.issue || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Section>
-        <Section title="Issues & Escalations" icon="❗">
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#b91c1c", fontSize: "0.85rem", fontWeight: 600 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#ef4444" }} /> Critical Issues
-              </span>
-              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(k.delayed || 0)}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#b45309", fontSize: "0.85rem", fontWeight: 600 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#f59e0b" }} /> Pending Approvals
-              </span>
-              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.pending_approvals || 0)}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#7c3aed", fontSize: "0.85rem", fontWeight: 600 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#8b5cf6" }} /> Open Dummy POs
-              </span>
-              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.open_dummy_pos || 0)}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#047857", fontSize: "0.85rem", fontWeight: 600 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: "#10b981" }} /> QC Fail Needs Action
-              </span>
-              <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0f172a" }}>{fmt.format(action.qc_fail_needs_action || 0)}</span>
-            </div>
-          </div>
-        </Section>
-      </div>
-
-      {/* ── Direct / Backend closes — work that never had a plan, so none of
-             the plan-based rows above can show it. Rendered only when there
-             is some, which keeps the layout identical for an IM who plans
-             everything. Its own full-width row: dropping it into an existing
-             2fr/1fr row would have re-flowed that row's columns. ── */}
-      {directClose && directClose.count > 0 && (
-        <Section title="Direct & Backend Closes" icon="⚡"
-                 subtitle={`closed ${directClose.range_from} to ${directClose.range_to} — no rollout plan`}>
-          <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-            <MiniStat label="Lines closed"  value={fmt.format(directClose.count)} tone="#4338ca" />
-            <MiniStat label="Closed today"  value={fmt.format(directClose.today)} tone="#0d9488" />
-            <MiniStat label="Revenue (SAR)" value={money.format(directClose.revenue || 0)} tone="#15803d" />
-            <MiniStat label="Avg / line"    value={money.format(directClose.avg_revenue || 0)} tone="#334155" />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 18 }}>
-            <Breakdown title="By route"
-                       rows={(directClose.by_source || []).map((b) => ({
-                         key: b.source, label: b.source,
-                         right: `${fmt.format(b.count)} · ${money.format(b.revenue || 0)}`,
-                       }))} />
-            <Breakdown title="By subcontractor"
-                       rows={(directClose.by_subcontractor || []).map((b) => ({
-                         key: b.subcontractor, label: b.subcontractor,
-                         right: `${fmt.format(b.count)} · ${money.format(b.revenue || 0)}`,
-                       }))} />
-            <Breakdown title="By milestone"
-                       rows={[
-                         { key: "ms1", label: "MS1 only",  right: fmt.format(directClose.milestones?.ms1_only || 0) },
-                         { key: "ms2", label: "MS2 only",  right: fmt.format(directClose.milestones?.ms2_only || 0) },
-                         { key: "full", label: "Full line", right: fmt.format(directClose.milestones?.full_line || 0) },
-                       ]} />
-          </div>
-        </Section>
-      )}
-
-      {/* ── Row 4: Activity Timeline (1/3) + placeholder map (1/3) + My Performance (1/3) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Section title="Activity Timeline" icon="🕒">
-          {timeline.length === 0 ? (
-            <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>No recent activity.</div>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-              {timeline.map((e, i) => (
-                <li key={e.exec_id || i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 999, background: "#3b82f6", marginTop: 6, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>{relTime(e.ts)}</div>
-                    <div style={{ fontSize: "0.82rem", color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.label}>{e.label}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-        <Section title="Site Map" icon="🗺">
-          {site_locations.length === 0 ? (
-            <div style={{ height: 240, borderRadius: 8, background: "linear-gradient(180deg, #ecfeff 0%, #f0f9ff 100%)", border: "1px dashed #bae6fd", display: "flex", alignItems: "center", justifyContent: "center", color: "#0369a1", fontSize: "0.82rem", padding: 12, textAlign: "center" }}>
-              <div>
-                <div style={{ fontSize: "1.6rem" }}>📍</div>
-                <div style={{ marginTop: 6, fontWeight: 600 }}>No coordinates yet</div>
-                <div style={{ marginTop: 4, fontSize: "0.72rem", color: "#0284c7" }}>Add latitude/longitude on DUID Master to plot sites here.</div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ height: 240, borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0" }}>
-              <MapContainer center={[24.7136, 46.6753]} zoom={6} style={{ height: "100%", width: "100%" }} scrollWheelZoom={false}>
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-                <FitBounds points={site_locations} />
-                {site_locations.map((p) => (
-                  <Marker key={`${p.site_code}`} position={[p.lat, p.lon]} icon={sitePinIcon(p.status)}>
-                    <Popup>
-                      <div style={{ fontSize: "0.78rem", lineHeight: 1.45 }}>
-                        <div style={{ fontWeight: 700, color: "#0f172a" }}>{p.site_name}</div>
-                        {p.site_code && p.site_code !== p.site_name && <div style={{ fontFamily: "ui-monospace, monospace", color: "#64748b" }}>{p.site_code}</div>}
-                        {p.project_code && <div>Project: <span style={{ fontFamily: "ui-monospace, monospace" }}>{p.project_code}</span></div>}
-                        <div style={{ marginTop: 4 }}><StatusBadge value={p.status} /></div>
-                        {p.last_update && <div style={{ color: "#64748b", fontSize: "0.72rem", marginTop: 4 }}>Updated {relTime(p.last_update)}</div>}
-                      </div>
-                    </Popup>
-                  </Marker>
-                ))}
-              </MapContainer>
-            </div>
-          )}
-        </Section>
-        <Section title="My Performance" icon="📈">
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
-              <span style={{ fontSize: "0.82rem", color: "#475569" }}>Assigned</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(assignedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>plans + direct closes</span></span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
-              <span style={{ fontSize: "0.82rem", color: "#475569" }}>Achieved</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{fmt.format(achievedTotal)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>done</span></span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
-              <span style={{ fontSize: "0.82rem", color: "#475569" }}>Revenue vs target</span>
-              <span style={{ fontWeight: 700, color: "#0f172a" }}>{money.format(kp.revenue || 0)} <span style={{ color: "#94a3b8", fontSize: "0.72rem", fontWeight: 500 }}>of {money.format(kp.monthly_target || 0)}</span></span>
-            </div>
-            {kp.rating && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
-                <span style={{ fontSize: "0.82rem", color: "#475569" }}>Scorecard</span>
-                <span style={{ fontWeight: 700, color: "#0f172a" }}>{kp.score != null ? `${kp.score}% · ` : ""}{kp.rating}</span>
-              </div>
-            )}
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <span style={{ fontSize: "0.82rem", color: "#475569" }}>Performance</span>
-                <span style={{ fontWeight: 800, color: "#047857", fontSize: "1.1rem" }}>{myPerformancePct}%</span>
-              </div>
-              <ProgressBar pct={myPerformancePct} color="#10b981" />
-            </div>
-            <div style={{ display: "flex", gap: 14, fontSize: "0.72rem", color: "#475569" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 999, background: "#10b981" }} /> Completed</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 999, background: "#3b82f6" }} /> In Progress</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 999, background: "#ef4444" }} /> Delayed</span>
-            </div>
-          </div>
-        </Section>
-      </div>
     </div>
   );
 }

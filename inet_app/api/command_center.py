@@ -15908,75 +15908,79 @@ def resolve_im_for_session(im=None):
 
 
 def im_action_counts(im_identifiers):
-    """Counts for IM dashboard action strip (PM→IM→execution workflow)."""
+    """Backlog counts for the IM dashboard's "Waiting" card.
+
+    Each count is the row count of the page its row opens, built on that
+    page's own conditions, so it can be checked there:
+      * to_plan — IM Dispatch (Rollout Planning), "Unplanned": Dispatched
+        lines whose target month is this month or already past, internal
+        work included. A line forecast for a later month is not due yet.
+      * forecast_later — the same list, target month after this month.
+      * awaiting_month — PO Control > PO Intake: Pending / Dispatched lines
+        with NO target month yet (still to forecast), internal work
+        excluded. Here the IM sets the month (or Direct Closes / sends to
+        Backend).
+      * team_requests — allocation requests for this IM's teams, waiting for
+        this IM's answer (My Teams > Incoming).
+      * cancel_requests — this IM's plan cancellations waiting for the PM.
+
+    "Lines to plan" used to be every Dispatched line (1,270 for Majid) while
+    the page it opened showed 102: the other 1,168 have no target month, and
+    sit in PO Intake, not in planning.
+    """
+    zero = {"to_plan": 0, "to_plan_overdue": 0, "forecast_later": 0, "awaiting_month": 0,
+            "team_requests": 0, "cancel_requests": 0, "month_start": "", "month_end": ""}
     if not im_identifiers:
-        return {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0, "pending_approvals": 0, "open_dummy_pos": 0}
+        return zero
     ph = ", ".join(["%s"] * len(im_identifiers))
     params = tuple(im_identifiers)
-    pending = frappe.db.sql(
+    has_internal = frappe.db.has_column("PO Dispatch", "is_internal_work")
+    not_internal = "AND IFNULL(is_internal_work, 0) = 0" if has_internal else ""
+    # PO Intake's own list of statuses that have left intake (IMPOIntake.jsx).
+    intake_done = ("Planned", "Backend Assigned", "Closed", "Cancelled", "Cancelled (in System)",
+                   "Completed", "Partially Submitted", "Submitted", "Partially Closed")
+    month_start = get_first_day(nowdate())
+    month_end = get_last_day(nowdate())
+    lines = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS c FROM `tabPO Dispatch`
-        WHERE im IN ({ph}) AND dispatch_status = 'Dispatched'
+        SELECT
+          SUM(dispatch_status = 'Dispatched' AND IFNULL(target_month, '') <> ''
+              AND target_month <= %s) AS to_plan,
+          SUM(dispatch_status = 'Dispatched' AND IFNULL(target_month, '') <> ''
+              AND target_month < %s) AS to_plan_overdue,
+          SUM(dispatch_status = 'Dispatched' AND IFNULL(target_month, '') <> ''
+              AND target_month > %s) AS forecast_later,
+          SUM(IFNULL(dispatch_status, '') NOT IN ({", ".join(["%s"] * len(intake_done))})
+              AND IFNULL(target_month, '') = '' {not_internal}) AS awaiting_month
+        FROM `tabPO Dispatch`
+        WHERE im IN ({ph})
         """,
-        params,
-        as_dict=True,
-    )[0].c
-    qc_open = frappe.db.sql(
+        (month_end, month_start, month_end) + intake_done + params, as_dict=True,
+    )[0]
+    team_requests = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS c FROM `tabDaily Execution` de
-        INNER JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE pd.im IN ({ph}) AND de.qc_status = 'Fail'
-        AND de.execution_status NOT IN ('Cancelled')
-        """,
-        params,
-        as_dict=True,
-    )[0].c
-    planned_exec = frappe.db.sql(
-        f"""
-        SELECT COUNT(*) AS c FROM `tabRollout Plan` rp
-        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE pd.im IN ({ph}) AND rp.plan_status IN ('Planned', 'Extended')
-        """,
-        params,
-        as_dict=True,
-    )[0].c
-    # All pending approvals relevant to this IM:
-    # - Team Allocation Requests awaiting this IM's response (Pending Source IM)
-    # - Plan Cancel Requests for this IM's plans awaiting PM approval
-    pending_team = frappe.db.sql(
-        f"""
-        SELECT COUNT(*) AS c FROM `tabTeam Allocation Request`
+        SELECT COUNT(*) FROM `tabTeam Allocation Request`
         WHERE from_im IN ({ph}) AND request_status = 'Pending Source IM'
         """,
         params,
-        as_dict=True,
-    )[0].c
-    pending_cancel = frappe.db.sql(
+    )[0][0]
+    # Rollout Plan.im — the field the PM's Approvals inbox shows and filters on.
+    cancel_requests = frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS c FROM `tabRollout Plan` rp
-        INNER JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE pd.im IN ({ph}) AND rp.cancel_request_status = 'Pending PM Approval'
+        SELECT COUNT(*) FROM `tabRollout Plan`
+        WHERE IFNULL(im, '') IN ({ph}) AND cancel_request_status = 'Pending PM Approval'
         """,
         params,
-        as_dict=True,
-    )[0].c
-    pending_approvals = cint(pending_team) + cint(pending_cancel)
-    # Open dummy POs for this IM
-    open_dummies = frappe.db.sql(
-        f"""
-        SELECT COUNT(*) AS c FROM `tabPO Dispatch`
-        WHERE im IN ({ph}) AND IFNULL(is_dummy_po, 0) = 1
-        """,
-        params,
-        as_dict=True,
-    )[0].c
+    )[0][0]
     return {
-        "pending_plan_dispatches": cint(pending),
-        "qc_fail_needs_action": cint(qc_open),
-        "planned_ready_execution": cint(planned_exec),
-        "pending_approvals": cint(pending_approvals),
-        "open_dummy_pos": cint(open_dummies),
+        "to_plan": cint(lines.to_plan),
+        "to_plan_overdue": cint(lines.to_plan_overdue),
+        "forecast_later": cint(lines.forecast_later),
+        "month_start": str(month_start),
+        "month_end": str(month_end),
+        "awaiting_month": cint(lines.awaiting_month),
+        "team_requests": cint(team_requests),
+        "cancel_requests": cint(cancel_requests),
     }
 
 
@@ -17278,8 +17282,18 @@ def get_project_performance_report(from_date=None, to_date=None, **kwargs):
     has a usable date basis here (target_month is set on 95 of 17,449 lines),
     and filtering one side only made every percentage collapse.
     """
-    # Never scoped from the browser — see get_po_dispatch_status_report.
-    return _project_performance_report()
+    # Never WIDENED from the browser — see get_po_dispatch_status_report. An
+    # `im` here can only narrow the PM's own unscoped view to one IM (IM View
+    # links here to verify its Projects card); an IM's catalog still goes
+    # through im_reports with its session scope.
+    im_vals = kwargs.get("im")
+    if isinstance(im_vals, str):
+        im_vals = frappe.parse_json(im_vals) if im_vals.strip().startswith("[") else [im_vals]
+    im_ids = []
+    for v in (im_vals or []):
+        rec = frappe.db.get_value("IM Master", v, ["name", "full_name", "email"], as_dict=True)
+        im_ids.extend(x for x in ([rec.name, rec.full_name, rec.email] if rec else [v]) if x and x not in im_ids)
+    return _project_performance_report(im_ids=im_ids or None)
 
 
 def _project_performance_report(im_ids=None):
@@ -21857,38 +21871,49 @@ def backfill_rollout_and_execution_im():
 
 @frappe.whitelist()
 def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
-    """
-    Filtered dashboard for a single IM.
-    Resolves the IM Master record name in multiple ways so mismatched
-    im/full_name values don't silently return empty data.
+    """One IM's dashboard: their plans, teams, projects and money for a range.
 
-    Optional ``from_date`` / ``to_date`` (ISO YYYY-MM-DD) override the
-    default month window for date-scoped metrics.
+    Rebuilt 31 Oct 2026 after an audit; each rule below fixes a measured fault.
 
-    If the caller passes an ``etag`` matching the current data version,
-    short-circuits with ``{"unchanged": True, "etag": ...}``.
+    Scope is the IM STAMPED on the work (PO Dispatch.im OR Rollout Plan.im —
+    the rule every other IM page uses), never INET Team.im:
+      * Teams are the teams that worked this IM's plans in the range. They
+        were INET Team.im + status Active — the team's CURRENT manager — so a
+        team on vacation vanished, and a team moved to another IM took its
+        whole history with it.
+      * Projects are the projects of this IM's own PO lines. They came from
+        Project Control Center.implementation_manager, set on 4 of 75
+        projects, so most IMs had no project section at all.
+      * Project progress is LINE delivery (done lines and value of this IM's
+        lines), not a count of rollout plans that mixed re-visits into it.
+
+    Only a PM-level user may ask for another IM; an IM always gets their own
+    dashboard (it used to honour any `im` passed). The viewer's own name is
+    no longer added to the IM's identifiers when a PM views an IM.
+
+    Dropped: the site map (200-row lat/lon query), the latest-8 "site status"
+    list, the activity timeline and the material-shortage count — none
+    answered a question an IM acts on, and the last was never shown.
     """
-    current_etag = _dashboard_etag("im", im or "", from_date, to_date)
+    roles = set(frappe.get_roles(frappe.session.user))
+    if im and not (roles & PM_LEVEL_ROLES):
+        im = None
+    current_etag = _dashboard_etag("im", im or frappe.session.user, from_date, to_date)
     if etag and etag == current_etag:
         return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
-    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
-    if not im_identifiers:
-        return {
-            "im": None,
-            "teams": [],
-            "projects": [],
-            "kpi": {},
-            "action_items": {"pending_plan_dispatches": 0, "qc_fail_needs_action": 0, "planned_ready_execution": 0, "pending_approvals": 0, "open_dummy_pos": 0},
-            "debug": {"error": "Could not resolve IM from session or parameter"},
-            "etag": current_etag,
-            "last_updated": _iso_now(),
-        }
 
-    im = im_resolved
-    action_items = im_action_counts(im_identifiers)
+    im_resolved, im_identifiers, _ = resolve_im_for_session(im)
+    rec = frappe.db.get_value("IM Master", im_resolved, ["name", "full_name", "email"], as_dict=True) \
+        if im_resolved and frappe.db.exists("IM Master", im_resolved) else None
+    if rec:
+        # Exactly the IM's own identifiers — not the viewer's name as well.
+        im_identifiers = [v for v in {rec.name, rec.full_name, rec.email} if v]
+    if not im_identifiers:
+        return {"im": None, "kpi": {}, "etag": current_etag, "last_updated": _iso_now(),
+                "message": "Could not work out which IM this is. Link your user to an IM Master."}
+    im_name = (rec.full_name if rec else None) or im_resolved
 
     today_str = nowdate()
-    today = getdate(today_str)
     first_day, last_day, _ = _month_bounds()
     if from_date:
         try: first_day = getdate(from_date)
@@ -21896,231 +21921,205 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
     if to_date:
         try: last_day = getdate(to_date)
         except Exception: pass
-    days_in_month = _days_in_month(today)
-    day_of_month = min(today.day, 30)   # month basis = 30; cost capped at 30 days
 
-    # Teams belonging to this IM — match any known identifier value
-    teams = frappe.get_all(
-        "INET Team",
-        filters={"im": ["in", im_identifiers], "status": "Active"},
-        fields=["name", "team_id", "team_name", "team_type", "daily_cost", "status"],
+    ph = ", ".join(["%s"] * len(im_identifiers))
+    ids = tuple(im_identifiers)
+    scope = f"(IFNULL(pd.im, '') IN ({ph}) OR IFNULL(rp.im, '') IN ({ph}))"
+    rng = (first_day, last_day)
+    team_names = {r.name: r for r in frappe.get_all("INET Team", fields=["name", "team_id", "team_name"])}
+
+    # ── Plans: read off the IM's own Rollout Execution list ───────────────
+    # The same endpoint, filters and exclusions as the page the tile opens
+    # (list_im_rollout_plans), so the IM can verify every count there. Plans
+    # parked on an issue are not on that page — they live on Issues & Risks
+    # and are counted there.
+    def _plans(fd, td):
+        rows = list_im_rollout_plans(im=im_resolved, limit=0, portal_filters={"from_date": str(fd), "to_date": str(td)})
+        return rows if isinstance(rows, list) else (rows or {}).get("rows") or []
+
+    plan_rows = _plans(first_day, last_day)
+    st = {}
+    by_day_map = {}
+    for r in plan_rows:
+        status = r.get("plan_status") or "No status"
+        st[status] = st.get(status, 0) + 1
+        if status != "Cancelled":
+            d = by_day_map.setdefault(str(r.get("plan_date")), {"day": str(r.get("plan_date")), "planned": 0, "completed": 0})
+            d["planned"] += 1
+            d["completed"] += 1 if status == "Completed" else 0
+    live = sum(v for k2, v in st.items() if k2 != "Cancelled")
+    kp = frappe._dict(
+        plans=live, completed=st.get("Completed", 0), in_execution=st.get("In Execution", 0),
+        not_started=st.get("Planned", 0) + st.get("Extended", 0),
+        delayed_cnt=st.get("Overdue", 0) + st.get("Not Attended", 0),
+        cancelled=st.get("Cancelled", 0),
+        sites=len({r.get("site_code") for r in plan_rows if r.get("site_code") and r.get("plan_status") != "Cancelled"}),
     )
-    team_ids = [t.name for t in teams]
+    by_status = [frappe._dict(status=k2, count=v) for k2, v in sorted(st.items(), key=lambda kv: -kv[1])]
+    by_day = [frappe._dict(day=d["day"], planned=d["planned"], completed=d["completed"]) for d in sorted(by_day_map.values(), key=lambda d: d["day"])]
 
-    # Projects assigned to this IM — match any known identifier value
-    projects = frappe.get_all(
-        "Project Control Center",
-        filters={"implementation_manager": ["in", im_identifiers]},
-        fields=["name", "project_code", "project_name", "project_status", "customer"],
-        order_by="modified desc",
-        limit=50,
-    )
-    # Normalize field names for frontend. completion_pct/budget used to come
-    # from the dead completion_percentage/budget_amount fields (nothing
-    # writes them) — dropped rather than replaced since this "projects" list
-    # itself isn't rendered anywhere (IM Dashboard reads project_progress,
-    # computed separately below from real Rollout Plan completion counts).
-    for p in projects:
-        p["status"] = p.pop("project_status", "Active") or "Active"
-
-    debug_info = {
-        "im_resolved": im_resolved,
-        "im_identifiers": im_identifiers,
-        "teams_found": len(team_ids),
-        "projects_found": len(projects),
-        "action_items": action_items,
-    }
-
-    # Having no team is a normal way to work, not a dead end. An IM who only
-    # Direct Closes or milestone-closes never needs one — and used to get a
-    # dashboard of zeros, because this returned a stub before anything was
-    # computed, including the Direct Close revenue immediately below it that
-    # is scoped by pd.im and needs no team at all. The advisory survives as a
-    # note; the bail-out does not.
-    no_teams_note = None
-    if not team_ids:
-        no_teams_note = (
-            f"No active INET Teams for this IM "
-            f"(searched: {', '.join(im_identifiers)}). Plan-based figures are "
-            f"empty; Direct Close and Backend work is still counted. To see "
-            f"team figures, set 'Implementation Manager' on an INET Team."
-        )
-
-    # `IN ()` is a syntax error in MariaDB, so a teamless IM gets a sentinel
-    # that matches no team. The team-scoped figures then come out zero, which
-    # is the right answer for them, while every IM-scoped figure still runs.
-    team_ids_sql = team_ids or [""]
-    placeholders = ", ".join(["%s"] * len(team_ids_sql))
-
-    # Revenue this month
-    revenue_rows = frappe.db.sql(
+    # ── Today, whatever the range ─────────────────────────────────────────
+    today_rows = [r for r in _plans(today_str, today_str) if r.get("plan_status") != "Cancelled"]
+    today = frappe._dict(planned=len(today_rows),
+                         completed=sum(1 for r in today_rows if r.get("plan_status") == "Completed"))
+    teams_today = cint(frappe.db.sql(
         f"""
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue
-        FROM `tabWork Done` wd
-        JOIN `tabDaily Execution` exe ON exe.name = wd.execution
-        JOIN `tabRollout Plan` rp ON rp.name = exe.rollout_plan
-        WHERE rp.team IN ({placeholders})
-        AND exe.execution_date BETWEEN %s AND %s
+        SELECT COUNT(DISTINCT de.team) FROM `tabDaily Execution` de
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        WHERE IFNULL(pd.im, '') IN ({ph}) AND de.execution_date = %s
+          AND IFNULL(de.execution_status, '') <> 'Cancelled'
         """,
-        tuple(team_ids_sql) + (first_day, last_day),
-        as_dict=True,
-    )
-    revenue = flt(revenue_rows[0].revenue if revenue_rows else 0)
+        ids + (today_str,),
+    )[0][0])
 
-    # Direct Close / Backend revenue for this IM — wd.execution is blank for
-    # these (no Daily Execution/Rollout Plan, no team), so the team-scoped
-    # query above never sees them; scoped by pd.im instead, dated by
-    # wd.creation since there's no execution date. Without this, an IM who
-    # only direct-closes/backend-closes showed 0 here even after the same
-    # gap was fixed on the IM Performance Scorecard.
-    _direct_ph = ", ".join(["%s"] * len(im_identifiers))
-    direct_revenue_rows = frappe.db.sql(
-        f"""
-        SELECT COALESCE(SUM(wd.revenue_sar), 0) AS revenue
-        FROM `tabWork Done` wd
-        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
-        WHERE IFNULL(wd.execution, '') = ''
-          AND DATE(wd.creation) BETWEEN %s AND %s
-          AND pd.im IN ({_direct_ph})
-        """,
-        (first_day, last_day) + tuple(im_identifiers),
-        as_dict=True,
-    )
-    revenue += flt(direct_revenue_rows[0].revenue if direct_revenue_rows else 0)
+    # ── Teams: the Monthly Team Details report's own rows ─────────────────
+    # Built by the report itself with the same filters its IM page sends
+    # (the IM's identifiers, and for an IM their own teams), so a team's
+    # planned / completed here is exactly that report's row for the month.
+    from inet_app.inet_app.report.monthly_team_details.monthly_team_details import build as _mtd_build
+    _mtd_filters = {"from_date": str(first_day), "to_date": str(last_day), "im": list(im_identifiers)}
+    if not (roles & PM_LEVEL_ROLES):
+        _mtd_filters["team"] = _im_team_ids_all()
+    _cols, mtd_rows, _summary = _mtd_build(_mtd_filters)
+    teams = sorted([{
+        "team": r["team"], "team_id": r["team_id"], "team_name": r["team_name"],
+        "plans": cint(r["total_planned"]), "completed": cint(r["total_completed"]),
+        "pct": flt(r["utilization_pct"]),
+    } for r in mtd_rows], key=lambda t: -t["plans"])
 
-    # "cost" and "profit" are gone from the kpi block below, and the expense
-    # claim query that also fed them went with them. Two of its three terms
-    # were SUM(wd.total_cost_sar); dropping those would have left a figure
-    # still called "cost" that silently meant "expense claims only", with
-    # profit jumping upward across the board. Nothing read it — IMDashboard.jsx
-    # is the only caller and it uses site_kpi, never kpi.
+    # ── Projects: the Project Performance report's own rows ───────────────
+    # Same builder the IM's Project Performance report uses, so the figures
+    # match that report line for line. All time — the report has no range.
+    projects = sorted(_project_performance_report(im_ids=list(im_identifiers)).get("data") or [],
+                      key=lambda p: -flt(p.get("gap")))
+    done_ph = ", ".join(["%s"] * len(LINE_DONE_STATUSES))
 
-    im_ph = ", ".join(["%s"] * len(im_identifiers))
-    # Target and revenue for the range come from the IM Performance report's
-    # own row for this IM, so the IM sees exactly the figures their scorecard
-    # is rated on. The target used to be the sum of Project Control Center
-    # monthly_target over projects naming this IM — a field nothing fills,
-    # so it was 0 for every IM. The report scores every IM in one pass; it
-    # is cheap (well under a second) and only runs for this view.
-    monthly_target = 0.0
+    # ── Money: the IM's own scorecard row for the range ───────────────────
+    # Target, revenue and score are what the IM Performance report rates
+    # them on. The old target summed Project Control Center monthly_target,
+    # which nothing fills, so it was 0 for every IM.
     perf_row = None
     try:
-        _im_name = frappe.db.get_value("IM Master", im_resolved, "full_name") or im_resolved
         perf = get_im_performance_report(str(first_day), str(last_day))
-        perf_row = next((r for r in (perf.get("data") or []) if r.get("im") == _im_name), None)
+        perf_row = next((r for r in (perf.get("data") or []) if r.get("im") == im_name), None)
     except Exception:
         perf_row = None
-    if perf_row:
-        monthly_target = flt(perf_row.get("target"))
-        revenue = flt(perf_row.get("revenue"))
-    target_today = (
-        (monthly_target * day_of_month) / days_in_month if days_in_month else 0.0
-    )
-    gap_today = target_today - revenue
 
-    # Active teams today
-    active_today_rows = frappe.db.sql(
-        f"""
-        SELECT COUNT(DISTINCT team) AS cnt FROM `tabDaily Execution`
-        WHERE team IN ({placeholders})
-        AND execution_date = %s
-        """,
-        tuple(team_ids_sql) + (today_str,),
-        as_dict=True,
-    )
-    active_today = cint(active_today_rows[0].cnt if active_today_rows else 0)
+    # ── Work closed in the range, by route ────────────────────────────────
+    # An IM works through rollout plans, through Direct Close / Backend, or
+    # both — so the headline is every Work Done of theirs, whichever route
+    # closed it, dated by its execution (rollout) or its creation (the
+    # shortcuts, which have no execution). Same dating as the scorecard.
+    def _closed(fd, td):
+        return frappe.db.sql(
+            f"""
+            SELECT COALESCE(exe.execution_date, DATE(wd.creation)) AS day,
+                   CASE WHEN IFNULL(wd.execution, '') <> '' THEN 'Rollout'
+                        WHEN IFNULL(wd.source, '') = 'Backend' THEN 'Backend'
+                        ELSE 'Direct Close' END AS route,
+                   COUNT(*) AS cnt, COALESCE(SUM(wd.revenue_sar), 0) AS rev
+            FROM `tabWork Done` wd
+            JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id
+            LEFT JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+            LEFT JOIN `tabRollout Plan` rp ON rp.name = exe.rollout_plan
+            LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+            -- The Work Done page's own IM scope and date basis, so its "All"
+            -- tab with this date range lists exactly these rows.
+            WHERE (IFNULL(pd.im, '') IN ({ph}) OR IFNULL(rp.im, '') IN ({ph}) OR IFNULL(pd_sys.im, '') IN ({ph}))
+              AND COALESCE(exe.execution_date, DATE(wd.creation)) BETWEEN %s AND %s
+            GROUP BY 1, 2 ORDER BY 1
+            """,
+            ids * 3 + (fd, td), as_dict=True,
+        )
 
-    # Planned activities — match the Planning page: every Rollout Plan whose
-    # PO Dispatch belongs to this IM (or whose rp.im column points at this IM)
-    # and is in `Planned` status. Counting by team missed plans that weren't
-    # team-assigned yet or that were on teams outside the active list, which
-    # made the dashboard KPI disagree with the Planning table.
-    im_ph = ", ".join(["%s"] * len(im_identifiers))
-    rp_im_clause = ""
-    rp_im_params = []
-    if frappe.db.has_column("Rollout Plan", "im"):
-        rp_im_clause = f" OR IFNULL(rp.im,'') IN ({im_ph})"
-        rp_im_params = list(im_identifiers)
-    planned_rows = frappe.db.sql(
+    wd_rows = _closed(first_day, last_day)
+
+    # ── The period before, for the "vs" on Work closed and Revenue ────────
+    # Like for like: a range starting on the 1st compares with the same days
+    # of the month(s) before — October with September, and "this month" so
+    # far (1-2 Nov) with 1-2 Oct, never a part month with a whole one. Any
+    # other range compares with the same number of days just before it. A
+    # range running past today is measured to today only.
+    fd0 = getdate(first_day)
+    td0 = min(getdate(last_day), getdate(today_str))
+    if td0 < fd0:
+        td0 = fd0
+    if fd0.day == 1:
+        months = (td0.year - fd0.year) * 12 + td0.month - fd0.month + 1
+        prev_from = add_months(fd0, -months)
+        prev_to = get_last_day(add_months(td0, -months)) if td0 == get_last_day(td0) \
+            else add_months(td0, -months)
+    else:
+        span = (td0 - fd0).days + 1
+        prev_from, prev_to = add_days(fd0, -span), add_days(fd0, -1)
+    prev_wd = _closed(prev_from, prev_to)
+    prev_perf = None
+    try:
+        pp = get_im_performance_report(str(prev_from), str(prev_to))
+        prev_perf = next((r for r in (pp.get("data") or []) if r.get("im") == im_name), None)
+    except Exception:
+        prev_perf = None
+    previous = {
+        "from": str(prev_from), "to": str(prev_to),
+        "work_closed": sum(cint(r.cnt) for r in prev_wd),
+        "revenue": flt((prev_perf or {}).get("revenue")),
+    }
+
+    routes = {}
+    closed_by_day = {}
+    for r in wd_rows:
+        g = routes.setdefault(r.route, {"route": r.route, "count": 0, "revenue": 0.0})
+        g["count"] += cint(r.cnt)
+        g["revenue"] += flt(r.rev)
+        d = closed_by_day.setdefault(str(r.day), {"day": str(r.day), "Rollout": 0, "Direct Close": 0, "Backend": 0})
+        d[r.route] += cint(r.cnt)
+
+    # Work closed today, every route — the same rule as the range above.
+    work_closed_today = cint(frappe.db.sql(
         f"""
-        SELECT COUNT(*) AS cnt
-        FROM `tabRollout Plan` rp
+        SELECT COUNT(*) FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd_sys ON pd_sys.name = wd.system_id
+        LEFT JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+        LEFT JOIN `tabRollout Plan` rp ON rp.name = exe.rollout_plan
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE rp.plan_status IN ('Planned', 'Extended')
-        AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+        WHERE (IFNULL(pd.im, '') IN ({ph}) OR IFNULL(rp.im, '') IN ({ph}) OR IFNULL(pd_sys.im, '') IN ({ph}))
+          AND COALESCE(exe.execution_date, DATE(wd.creation)) = %s
         """,
-        tuple(im_identifiers) + tuple(rp_im_params),
-        as_dict=True,
-    )
-    planned_activities = cint(planned_rows[0].cnt if planned_rows else 0)
+        ids * 3 + (today_str,),
+    )[0][0])
 
-    # ── Rollout-plan KPIs ────────────────────────────────────────────────
-    # These count ROLLOUT PLANS (one per planned visit), not distinct sites —
-    # a site replanned three times is three plans. They used to be labelled
-    # "…Sites" in the UI, which read ~3x the real site count because a third
-    # of plans are re-visits. The tiles are named after plans now; use
-    # `distinct_sites` if a true site count is ever wanted.
-    #
-    # The four period tiles honour the dashboard's date range, matched on the
-    # plan's own plan_date. The range condition sits inside each CASE rather
-    # than in the WHERE so that the two "Today" tiles stay anchored to the
-    # actual today — they are labelled "Today", so they must not read zero
-    # just because the selected range happens to exclude it. Plans with no
-    # plan_date fall outside every range and so are not counted.
-    site_kpi_rows = frappe.db.sql(
+    # ── This IM's PO lines still open, and their dummy POs ────────────────
+    # A dummy PO waits on mapping whether or not it was ever planned, so it
+    # is counted off the line itself (open, not cancelled) and opens PO
+    # Control — not Execution Analytics' bucket, which only sees planned ones.
+    # Internal work is left out, as on PO Control's All POIDs list (and the
+    # PM's Rollout Planning) that this count and its bars open.
+    _not_internal = "AND IFNULL(pd.is_internal_work, 0) = 0" \
+        if frappe.db.has_column("PO Dispatch", "is_internal_work") else ""
+    open_rows = frappe.db.sql(
         f"""
-        SELECT
-            -- A cancelled plan is not assigned work; it used to be counted.
-            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
-                      AND IFNULL(rp.plan_status, '') <> 'Cancelled'
-                     THEN 1 ELSE 0 END) AS total_assigned,
-            COUNT(DISTINCT CASE WHEN rp.plan_date BETWEEN %s AND %s
-                                THEN NULLIF(pd.site_code, '') END) AS distinct_sites,
-            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
-                      AND rp.plan_status = 'Completed'
-                     THEN 1 ELSE 0 END) AS completed_total,
-            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
-                      AND rp.plan_status = 'In Execution'
-                     THEN 1 ELSE 0 END) AS in_progress_cnt,
-            -- 'Overdue' is the bigger delayed group and was ignored entirely,
-            -- so this tile only ever showed 'Planning with Issue'.
-            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
-                      AND rp.plan_status IN ('Overdue', 'Planning with Issue')
-                     THEN 1 ELSE 0 END) AS delayed_cnt,
-            SUM(CASE WHEN rp.plan_date BETWEEN %s AND %s
-                      AND rp.plan_status = 'Cancelled'
-                     THEN 1 ELSE 0 END) AS cancelled_cnt,
-            SUM(CASE WHEN rp.plan_date = %s THEN 1 ELSE 0 END) AS today_target_cnt,
-            -- Completed today, dated by the execution's own execution_date.
-            -- This was `rp.modified >= today`, the last-edited timestamp, so
-            -- re-saving any old completed plan inflated "Today Completed".
-            COUNT(DISTINCT CASE
-                WHEN rp.plan_status = 'Completed' AND de_today.rollout_plan IS NOT NULL
-                THEN rp.name END) AS today_completed_cnt
-        FROM `tabRollout Plan` rp
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        LEFT JOIN (
-            SELECT DISTINCT rollout_plan
-            FROM `tabDaily Execution`
-            WHERE execution_date = %s AND IFNULL(rollout_plan, '') <> ''
-        ) de_today ON de_today.rollout_plan = rp.name
-        WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
+        SELECT IFNULL(NULLIF(pd.dispatch_status, ''), 'No status') AS status,
+               COUNT(*) AS cnt, COALESCE(SUM(pd.line_amount), 0) AS val
+        FROM `tabPO Dispatch` pd
+        WHERE pd.im IN ({ph}) {_not_internal}
+          AND IFNULL(pd.dispatch_status, '') NOT IN ({done_ph}, 'Cancelled')
+        GROUP BY 1 ORDER BY cnt DESC
         """,
-        (first_day, last_day) * 6 + (today_str, today_str)
-        + tuple(im_identifiers) + tuple(rp_im_params),
-        as_dict=True,
+        ids + tuple(LINE_DONE_STATUSES), as_dict=True,
     )
-    # Lines this IM closed WITHOUT a plan — Direct Close and Backend. The
-    # query above is entirely FROM `tabRollout Plan`, so an IM who works this
-    # way scored zero on every tile even though the work and its revenue are
-    # theirs. Counted separately rather than folded into the plan counts:
-    # those tiles say "Plans", and a Direct Close is not one.
-    #
-    # Dated by wd.creation to agree with the Direct Close revenue figure
-    # above, which uses the same basis. ms1_closed_at / ms2_closed_at hold
-    # the business closing date and would be the truer basis for both — worth
-    # changing together, not one at a time, or the count and the money would
-    # describe different months.
+    dummy = frappe.db.sql(
+        f"""
+        SELECT COUNT(*) AS cnt, COALESCE(SUM(line_amount), 0) AS val
+        FROM `tabPO Dispatch`
+        WHERE im IN ({ph}) AND IFNULL(is_dummy_po, 0) = 1
+          AND IFNULL(dispatch_status, '') <> 'Cancelled'
+        """,
+        ids, as_dict=True,
+    )[0]
+
+    # ── Direct Close / Backend: lines closed without a plan ───────────────
+    _direct_ph = ph
     _dc_src = "IFNULL(wd.source, '')" if frappe.db.has_column("Work Done", "source") else "''"
     _dc_ms = frappe.db.has_column("Work Done", "ms1_closed")
     direct_rows = frappe.db.sql(
@@ -22186,291 +22185,44 @@ def get_im_dashboard(im=None, from_date=None, to_date=None, etag=None):
         "range_from": str(first_day),
         "range_to": str(last_day),
     }
-    dr = {"closed_cnt": len(direct_rows), "today_cnt": _today_cnt}
 
-    skr = (site_kpi_rows[0] if site_kpi_rows else {}) or {}
-    site_kpi = {
-        "direct_closed": cint(dr.get("closed_cnt") or 0),
-        "today_direct_closed": cint(dr.get("today_cnt") or 0),
-        "total_assigned": cint(skr.get("total_assigned") or 0),
-        "distinct_sites": cint(skr.get("distinct_sites") or 0),
-        "completed_total": cint(skr.get("completed_total") or 0),
-        "in_progress": cint(skr.get("in_progress_cnt") or 0),
-        "delayed": cint(skr.get("delayed_cnt") or 0),
-        "cancelled": cint(skr.get("cancelled_cnt") or 0),
-        "today_target": cint(skr.get("today_target_cnt") or 0),
-        "today_completed": cint(skr.get("today_completed_cnt") or 0),
-        # The window the four period tiles describe, so the UI can label it
-        # rather than leaving the reader to guess.
-        "range_from": str(first_day),
-        "range_to": str(last_day),
-    }
-
-    # ── Team performance: completed sites per team in the date window ────
-    team_perf = []
-    if team_ids:
-        team_perf_rows = frappe.db.sql(
-            f"""
-            SELECT t.team_id AS team_id,
-                   COALESCE(t.team_name, t.team_id) AS team_name,
-                   COUNT(rp.name) AS sites_done
-            FROM `tabINET Team` t
-            LEFT JOIN `tabRollout Plan` rp
-                ON (
-                    EXISTS (
-                        SELECT 1 FROM `tabRollout Plan Team` rpt
-                        WHERE rpt.parent = rp.name AND rpt.team = t.name
-                    )
-                    -- Legacy plans with no multi-team split rows at all fall
-                    -- back to the plan's own lead team, same as before this
-                    -- multi-team-aware attribution was added.
-                    OR (
-                        rp.team = t.name
-                        AND NOT EXISTS (SELECT 1 FROM `tabRollout Plan Team` rpt2 WHERE rpt2.parent = rp.name)
-                    )
-                )
-                AND rp.plan_status = 'Completed'
-                AND rp.plan_date BETWEEN %s AND %s
-            WHERE t.name IN ({placeholders})
-            GROUP BY t.name, t.team_id, t.team_name
-            ORDER BY sites_done DESC, team_name ASC
-            """,
-            (first_day, last_day) + tuple(team_ids),
-            as_dict=True,
-        )
-        team_perf = [
-            {"team_id": r.team_id, "team_name": r.team_name, "sites_done": cint(r.sites_done or 0)}
-            for r in (team_perf_rows or [])
-        ]
-
-    # ── Project progress: planned rollout visits completed, per project ──
-    # This is deliberately a PLANNING metric — "how much of the rollout work
-    # I planned is done" — measured in Rollout Plans, not PO lines. It is
-    # therefore NOT the same number as the PM dashboard's Top Projects
-    # completion %, which is line-based; see get_project_line_completion in
-    # project_management.dashboard_charts.
-    #
-    # Cancelled plans are excluded from the denominator (a cancelled visit is
-    # not outstanding work), and the exclusion sits in the CASE rather than
-    # the WHERE so projects with no plans at all still come back with a row.
-    project_progress = []
-    if projects:
-        project_codes = [p["project_code"] for p in projects if p.get("project_code")]
-        if project_codes:
-            ph_pr = ", ".join(["%s"] * len(project_codes))
-            prog_rows = frappe.db.sql(
-                f"""
-                SELECT pd.project_code AS project_code,
-                       SUM(CASE WHEN rp.name IS NOT NULL
-                                 AND IFNULL(rp.plan_status, '') <> 'Cancelled'
-                                THEN 1 ELSE 0 END) AS total,
-                       SUM(CASE WHEN rp.plan_status = 'Completed' THEN 1 ELSE 0 END) AS done,
-                       SUM(CASE WHEN rp.plan_status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled
-                FROM `tabPO Dispatch` pd
-                LEFT JOIN `tabRollout Plan` rp ON rp.po_dispatch = pd.name
-                WHERE pd.project_code IN ({ph_pr})
-                AND IFNULL(pd.im,'') IN ({im_ph})
-                GROUP BY pd.project_code
-                """,
-                tuple(project_codes) + tuple(im_identifiers),
-                as_dict=True,
-            )
-            prog_map = {r.project_code: r for r in (prog_rows or [])}
-            # Show the projects that actually have rollout activity, not
-            # whichever six were touched most recently — a project modified
-            # today with no plans used to occupy a slot at a flat 0%.
-            ranked = sorted(
-                projects,
-                key=lambda p: cint((prog_map.get(p.get("project_code")) or {}).get("total")),
-                reverse=True,
-            )
-            for p in ranked[:6]:
-                pc = p.get("project_code")
-                row = prog_map.get(pc)
-                total = cint(row.total) if row else 0
-                done = cint(row.done) if row else 0
-                pct = int(round((done / total) * 100)) if total > 0 else 0
-                project_progress.append({
-                    "project_code": pc,
-                    "project_name": p.get("project_name") or pc,
-                    "total": total,
-                    "done": done,
-                    "cancelled": cint(row.cancelled) if row else 0,
-                    "pct": pct,
-                    # Lets the UI say "no plans yet" instead of showing a
-                    # project with zero plans as though it were 0% complete.
-                    "has_plans": total > 0,
-                    "basis": "rollout_plans",
-                })
-
-    # ── Site status table: latest rollout plans for this IM ──────────────
-    # Site ID = DUID code from PO Dispatch (joins to DUID Master).
-    # Location = Area Master.area_name via DUID Master.area. No fallback to
-    # center_area / site_name — if the DUID has no Area set, the cell stays
-    # empty so it's obvious where the master data is missing.
-    site_status = frappe.db.sql(
-        f"""
-        SELECT pd.site_code AS site_id,
-               am.area_name AS location,
-               pd.project_code AS project,
-               rp.plan_status AS status,
-               rp.modified AS last_update,
-               rp.issue_category AS issue
-        FROM `tabRollout Plan` rp
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        LEFT JOIN `tabDUID Master` dm ON dm.name = pd.site_code
-        LEFT JOIN `tabArea Master` am ON am.name = dm.area
-        WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
-        ORDER BY rp.modified DESC
-        LIMIT 8
-        """,
-        tuple(im_identifiers) + tuple(rp_im_params),
-        as_dict=True,
-    )
-    site_status = [
-        {
-            "site_id": r.site_id or "—",
-            "location": r.location or "—",
-            "project": r.project or "—",
-            "status": r.status or "—",
-            "last_update": str(r.last_update) if r.last_update else "",
-            "issue": r.issue or "",
-        }
-        for r in (site_status or [])
-    ]
-
-    # ── Material shortage: rollout plans / executions tagged with that issue
-    material_categories = ("Material Shortage", "Spare Parts Pending")
-    mat_ph = ", ".join(["%s"] * len(material_categories))
-    mat_rows = frappe.db.sql(
-        f"""
-        SELECT COUNT(*) AS cnt FROM (
-            SELECT rp.name FROM `tabRollout Plan` rp
-            LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-            WHERE rp.issue_category IN ({mat_ph})
-            AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
-            UNION
-            SELECT de.name FROM `tabDaily Execution` de
-            LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-            LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-            WHERE de.issue_category IN ({mat_ph})
-            AND (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
-        ) AS u
-        """,
-        tuple(material_categories) + tuple(im_identifiers) + tuple(rp_im_params)
-        + tuple(material_categories) + tuple(im_identifiers) + tuple(rp_im_params),
-        as_dict=True,
-    )
-    material_shortage = cint(mat_rows[0].cnt if mat_rows else 0)
-
-    # ── Site locations: lat/lon from DUID Master joined via PO Dispatch ──
-    site_locations = []
-    has_lat = frappe.db.has_column("DUID Master", "latitude")
-    has_lon = frappe.db.has_column("DUID Master", "longitude")
-    if has_lat and has_lon:
-        site_loc_rows = frappe.db.sql(
-            f"""
-            SELECT
-                pd.site_code AS site_code,
-                COALESCE(pd.site_name, pd.site_code) AS site_name,
-                pd.project_code AS project_code,
-                d.latitude AS lat,
-                d.longitude AS lon,
-                MAX(rp.modified) AS last_update,
-                /* Status: latest rollout plan's status if any, else 'Planned' */
-                SUBSTRING_INDEX(GROUP_CONCAT(rp.plan_status ORDER BY rp.modified DESC), ',', 1) AS status
-            FROM `tabPO Dispatch` pd
-            INNER JOIN `tabDUID Master` d ON d.name = pd.site_code
-            LEFT JOIN `tabRollout Plan` rp ON rp.po_dispatch = pd.name
-            WHERE IFNULL(pd.im,'') IN ({im_ph})
-              AND IFNULL(d.latitude, 0) <> 0
-              AND IFNULL(d.longitude, 0) <> 0
-            GROUP BY pd.site_code, pd.site_name, pd.project_code, d.latitude, d.longitude
-            ORDER BY last_update DESC
-            LIMIT 200
-            """,
-            tuple(im_identifiers),
-            as_dict=True,
-        )
-        for r in (site_loc_rows or []):
-            try:
-                lat = float(r.lat)
-                lon = float(r.lon)
-            except (TypeError, ValueError):
-                continue
-            site_locations.append({
-                "site_code": r.site_code,
-                "site_name": r.site_name or r.site_code,
-                "project_code": r.project_code,
-                "lat": lat,
-                "lon": lon,
-                "status": r.status or "Planned",
-                "last_update": str(r.last_update) if r.last_update else "",
-            })
-
-    # ── Activity timeline: recent Daily Execution events ─────────────────
-    timeline_rows = frappe.db.sql(
-        f"""
-        SELECT de.name AS exec_id,
-               de.execution_date,
-               de.modified AS ts,
-               de.execution_status,
-               de.rollout_plan,
-               COALESCE(pd.site_code, pd.site_name) AS site
-        FROM `tabDaily Execution` de
-        LEFT JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
-        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
-        WHERE (IFNULL(pd.im,'') IN ({im_ph}){rp_im_clause})
-        ORDER BY de.modified DESC
-        LIMIT 8
-        """,
-        tuple(im_identifiers) + tuple(rp_im_params),
-        as_dict=True,
-    )
-    timeline = []
-    for r in (timeline_rows or []):
-        verb = (
-            "completed" if (r.execution_status or "").lower() == "completed"
-            else "delay reported" if (r.execution_status or "").lower() in ("hold", "cancelled", "postponed")
-            else "work started" if (r.execution_status or "").lower() == "in progress"
-            else "updated"
-        )
-        site = r.site or r.rollout_plan or "—"
-        timeline.append({
-            "ts": str(r.ts) if r.ts else "",
-            "label": f"Site {site} {verb}",
-            "exec_id": r.exec_id,
-        })
-
+    action_items = im_action_counts(im_identifiers)
     return {
         "im": im_resolved,
-        "teams": teams,
-        "projects": projects,
-        "action_items": action_items,
-        "site_kpi": site_kpi,
-        "direct_close": direct_close,
-        "team_perf": team_perf,
-        "project_progress": project_progress,
-        "site_status": site_status,
-        "timeline": timeline,
-        "material_shortage": material_shortage,
-        "site_locations": site_locations,
+        "im_name": im_name,
+        "range": {"from": str(first_day), "to": str(last_day)},
         "kpi": {
-            "monthly_target": monthly_target,
-            "target_today": target_today,
-            "revenue": revenue,
-            "gap_today": gap_today,
-            "active_teams_today": active_today,
-            "total_teams": len(teams),
-            "team_count": len(teams),
-            "planned_activities": planned_activities,
-            "target_source": (perf_row or {}).get("target_source") or "",
-            "im_name": frappe.db.get_value("IM Master", im_resolved, "full_name") or im_resolved,
+            "plans": cint(kp.plans), "completed": cint(kp.completed),
+            "in_execution": cint(kp.in_execution), "not_started": cint(kp.not_started),
+            "delayed": cint(kp.delayed_cnt),
+            "cancelled": cint(kp.cancelled), "sites": cint(kp.sites),
+            "today_planned": cint(today.planned), "today_completed": cint(today.completed),
+            "teams_today": teams_today, "teams": len(teams),
+            "direct_closed": len(direct_rows),
+            "revenue": flt((perf_row or {}).get("revenue")),
+            "target": flt((perf_row or {}).get("target")),
             "score": (perf_row or {}).get("score"),
             "rating": (perf_row or {}).get("rating") or "",
         },
-        "message": no_teams_note,
-        "debug": debug_info,
+        "work_closed": {
+            "total": sum(g["count"] for g in routes.values()),
+            "by_route": sorted(routes.values(), key=lambda g: -g["count"]),
+            "by_day": list(closed_by_day.values()),
+        },
+        "open_lines": {
+            "count": sum(cint(r.cnt) for r in open_rows),
+            "value": flt(sum(flt(r.val) for r in open_rows), 2),
+            "by_status": [{"status": r.status, "count": cint(r.cnt), "value": flt(r.val, 2)} for r in open_rows],
+        },
+        "dummy": {"count": cint(dummy.cnt), "value": flt(dummy.val, 2)},
+        "plans_by_status": [{"status": r.status, "count": cint(r.count)} for r in by_status],
+        "plans_by_day": [{"day": str(r.day), "planned": cint(r.planned), "completed": cint(r.completed)} for r in by_day],
+        "work_closed_today": work_closed_today,
+        "previous": previous,
+        "teams": teams,
+        "projects": projects,
+        "direct_close": direct_close,
+        "action_items": action_items,
         "last_updated": _iso_now(),
         "etag": current_etag,
     }

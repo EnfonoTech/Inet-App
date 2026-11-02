@@ -361,7 +361,10 @@ export default function WorkDone() {
   const [search, setSearch] = useState("");
   const searchDebounced = useDebounced(search, 300);
   const [poStatusFilter, setPoStatusFilter] = useState([]);
-  const [imFilter, setImFilter] = useState([]);
+  const [imFilter, setImFilter] = useState(_navWD?.imFilter ?? []);
+  // Opened from IM View: include finished rows too, so the list holds every
+  // Work Done the dashboard counted. No toolbar control — cleared with the notice.
+  const [includeFinished, setIncludeFinished] = useState(Boolean(_navWD?.includeFinished));
   // Accepts a team list from dashboard drill-through (Command dashboard's
   // INET Achieved / Sub-Con Revenue tiles). Without this the passed filter
   // was dropped, so a tile reading 0 opened a list with rows in it.
@@ -387,7 +390,7 @@ export default function WorkDone() {
   // Accepts a work type from dashboard drill-through (Command dashboard's
   // Direct Close section), same as fromDate/toDate above.
   const [workTypeFilter, setWorkTypeFilter] = useState(_navWD?.workTypeFilter ?? []);
-  const [tab, setTab] = useState("operational");
+  const [tab, setTab] = useState(_navWD?.tab ?? "operational");
 
   // The single <DataTableWrapper> below is always mounted — List and
   // Summary both render as its children, switched by tab, so its inner
@@ -733,6 +736,7 @@ export default function WorkDone() {
       };
       if (poStatusFilter.length) filters.dispatch_status = poStatusFilter;
       if (imFilter.length) filters.im = imFilter;
+      if (includeFinished) filters.include_finished = 1;
       if (teamFilter.length) filters.team = teamFilter;
       if (projectFilter.length) filters.project_code = projectFilter;
       if (subconFilter.length) filters.subcontractor = subconFilter;
@@ -758,7 +762,7 @@ export default function WorkDone() {
       return filters;
   }, [tab, poStatusFilter, imFilter, teamFilter, projectFilter, subconFilter,
       contractModelFilter, domainFilter, fromDate, toDate, searchDebounced, workTypeFilter, issueFlagFilter, submissionFilter,
-      pipelineFilter, ageBandFilter, columnFiltersDebounced]);
+      pipelineFilter, ageBandFilter, columnFiltersDebounced, includeFinished]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1187,6 +1191,13 @@ export default function WorkDone() {
       </div>
 
       <div className="page-content">
+        {includeFinished && (
+          <div className="notice info" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <span>Showing finished Work Done too, as counted on IM View.</span>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }}
+              onClick={() => setIncludeFinished(false)}>Hide finished</button>
+          </div>
+        )}
         {error && (
           <div className="notice error" style={{ marginBottom: 16 }}>
             <span>⚠</span> {error}

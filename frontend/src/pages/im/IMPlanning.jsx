@@ -86,8 +86,8 @@ export default function IMPlanning() {
   const [duidFilter, setDuidFilter] = useState([]);
   const attr = useLineAttributeFilters();
   const [dummyFilter, setDummyFilter] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(_navExec?.fromDate ?? "");
+  const [toDate, setToDate] = useState(_navExec?.toDate ?? "");
   const searchDebounced = useDebounced(search, 300);
   const [detailRow, setDetailRow] = useState(null);
   const [executionModalOpen, setExecutionModalOpen] = useState(false);

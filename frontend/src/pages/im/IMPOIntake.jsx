@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { usePublishedQueries } from "../../hooks/usePublishedQuery";
@@ -191,7 +192,9 @@ export default function IMPOIntake() {
   const { rowLimit, setRowLimit } = useTableRowLimit();
 
   // ── Tab ─────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState("intake"); // "intake" | "dummy" | "overview"
+  // A dashboard link may open a tab directly (My Dashboard -> Dummy POs).
+  const location = useLocation();
+  const [tab, setTab] = useState(location.state?.tab || "intake"); // "intake" | "dummy" | "overview"
   // "All" is stored per-path, not per-tab. "intake" fetches unconditionally
   // in the background regardless of active tab (see "Intake load" effect
   // below), so it always just uses the raw preference — but "dummy" and
@@ -468,7 +471,7 @@ export default function IMPOIntake() {
   const ovSearchDebounced = useDebounced(ovSearch, 300);
   const [ovProjectFilter, setOvProjectFilter] = useState([]);
   const [ovDomainFilter, setOvDomainFilter] = useState([]);
-  const [ovStatusFilter, setOvStatusFilter] = useState([]);
+  const [ovStatusFilter, setOvStatusFilter] = useState(location.state?.ovStatusFilter ?? []);
   const [ovModeFilter, setOvModeFilter] = useState("all"); // kept for API but hidden from UI
   const [ovPlanStatusFilter, setOvPlanStatusFilter] = useState([]);
   const [ovDuidFilter, setOvDuidFilter] = useState([]);

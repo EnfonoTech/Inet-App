@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import { useAuth } from "../../context/AuthContext";
@@ -113,13 +114,14 @@ const EMPTY_MEMBER = { employee: "", employee_name: "", designation: "", is_team
 
 export default function IMTeams() {
   const { imName, user } = useAuth();
+  const location = useLocation();
   const today = new Date().toISOString().slice(0, 10);
 
   const [teams, setTeams] = useState([]);
   const [allTeams, setAllTeams] = useState([]);
   const [imLabels, setImLabels] = useState({});
   const [requests, setRequests] = useState([]);
-  const [tab, setTab] = useState("my");
+  const [tab, setTab] = useState(location.state?.tab || "my");
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");

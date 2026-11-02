@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import DataTableWrapper from "./DataTableWrapper";
 import SearchableSelect from "./SearchableSelect";
@@ -157,8 +157,18 @@ export default function ReportCatalog({
 
   // Shared filters
   const [teamFilter, setTeamFilter] = useState([]);
-  const [imFilter, setImFilter] = useState([]);
-  const [dateRange, setDateRange] = useState(DEFAULT_RANGE);
+  const [imFilter, setImFilter] = useState(() => {
+    const v = searchParams.get("im");
+    return v && showImFilter ? [v] : [];
+  });
+  // A link may open a report on a period (?from=&to=, ?month=) so the figure
+  // it came from can be checked here — used by the IM dashboard.
+  const urlRange = (searchParams.get("from") || searchParams.get("to"))
+    ? { from: searchParams.get("from") || "", to: searchParams.get("to") || "" } : null;
+  const urlMonth = searchParams.get("month") || null;
+  const urlIm = searchParams.get("im") || null;
+  const urlPeriodUsed = useRef(false);
+  const [dateRange, setDateRange] = useState(urlRange || DEFAULT_RANGE);
   const [selectedMonth, setSelectedMonth] = useState(DEFAULT_MONTH);
   const [teamDate, setTeamDate] = useState({ from: DEFAULT_DATE, to: DEFAULT_DATE });
   // Site Sign/Verify filters — applied client-side over the already-fetched
@@ -281,9 +291,12 @@ export default function ReportCatalog({
     setCustomExport(null);
     if (!activeKey) return;
     setTeamFilter([]);
-    setImFilter([]);
-    setDateRange(DEFAULT_RANGE);
-    setSelectedMonth(DEFAULT_MONTH);
+    // The first report opened from a link keeps the link's period and IM.
+    const keepUrl = !urlPeriodUsed.current;
+    urlPeriodUsed.current = true;
+    setImFilter(keepUrl && urlIm && showImFilter ? [urlIm] : []);
+    setDateRange(keepUrl && urlRange ? urlRange : DEFAULT_RANGE);
+    setSelectedMonth(keepUrl && urlMonth ? urlMonth : DEFAULT_MONTH);
     setTeamDate({ from: DEFAULT_DATE, to: DEFAULT_DATE });
     setSiteStatusFilter("");
     setSiteSearch("");
@@ -311,7 +324,9 @@ export default function ReportCatalog({
     if (active.hasFilters) {
       if (teamFilter.length) f.team = teamFilter;
       if (showImFilter && imFilter.length) f.im = imFilter;
-      if (active.filterType === "month") {
+      if (active.filterType === "imonly") {
+        // Current-state report: the IM is its only filter.
+      } else if (active.filterType === "month") {
         const range = monthToRange(selectedMonth);
         f.from_date = range.from;
         f.to_date = range.to;
@@ -471,6 +486,15 @@ export default function ReportCatalog({
               value={teamDate}
               onChange={({ from, to }) => setTeamDate({ from, to })}
             />
+          ) : active.filterType === "imonly" ? (
+            showImFilter ? (
+              <>
+                <SearchableSelect multi value={imFilter} onChange={setImFilter} options={imOptions} placeholder="All IMs" minWidth={180} />
+                {imFilter.length > 0 && (
+                  <button className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }} onClick={() => setImFilter([])}>Clear</button>
+                )}
+              </>
+            ) : null
           ) : active.filterType === "dateonly" ? (
             <DateRangePicker
               value={dateRange}

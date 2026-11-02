@@ -98,9 +98,12 @@ export const ICONS = {
   star: <path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z" />,
 };
 
-export function Tile({ icon = "avg", tone = "blue", label, value, sub }) {
+export function Tile({ icon = "avg", tone = "blue", label, value, sub, onClick, title, delta }) {
+  // With onClick the tile opens the page its figure comes from.
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className={`rdash-tile tone-${tone}`}>
+    <Tag type={onClick ? "button" : undefined} onClick={onClick} title={title}
+      className={`rdash-tile tone-${tone}${onClick ? " rdash-tile-link" : ""}`}>
       <div className="rdash-tile-ic">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[icon] || ICONS.avg}</svg>
       </div>
@@ -108,8 +111,10 @@ export function Tile({ icon = "avg", tone = "blue", label, value, sub }) {
         <div className="rdash-tile-label">{label}</div>
         <div className="rdash-tile-value">{value}</div>
         {sub && <div className="rdash-tile-sub">{sub}</div>}
+        {/* delta = { text, dir: "up" | "down" | "flat" } — the change against an earlier period. */}
+        {delta && <div className={`rdash-tile-delta ${delta.dir || "flat"}`}>{delta.text}</div>}
       </div>
-    </div>
+    </Tag>
   );
 }
 
@@ -161,6 +166,10 @@ function ChartBody({ chart }) {
   const domain = format === "pct" && !hasNeg ? [0, 100] : hasNeg ? ["auto", "auto"] : [0, "auto"];
   const label = { fontSize: 11, fontWeight: 700, fill: "#0f1e36" };
   const tip = (v, n) => [fmt(v, format), n];
+  // onBarClick(row) makes each bar open the list behind it.
+  const barClick = chart.onBarClick
+    ? { onClick: (d) => chart.onBarClick(d?.payload || d), style: { cursor: "pointer" } }
+    : {};
 
   if (kind === "donut") {
     const valueKey = series[0]?.key || "value";
@@ -203,7 +212,7 @@ function ChartBody({ chart }) {
             <Tooltip {...TIP} formatter={tip} cursor={{ fill: "#f4f7fb" }} />
             {series.length > 1 && <Legend formatter={(v) => <span style={{ color: "#33445e" }}>{v}</span>} iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} verticalAlign="top" align="right" height={24} />}
             {series.map((s, i) => (
-              <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color || PALETTE[i]} radius={[0, 5, 5, 0]} maxBarSize={16} stackId={stacked ? "s" : undefined}>
+              <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color || PALETTE[i]} radius={[0, 5, 5, 0]} maxBarSize={16} stackId={stacked ? "s" : undefined} {...barClick}>
                 {!stacked && <LabelList dataKey={s.key} content={(p) => <HbarLabel {...p} format={format} />} />}
               </Bar>
             ))}
@@ -230,7 +239,7 @@ function ChartBody({ chart }) {
           {series.map((s, i) => (kind === "line" ? (
             <Line key={s.key} dataKey={s.key} name={s.label} stroke={s.color || PALETTE[i]} strokeWidth={2.5} dot={{ r: 3 }} />
           ) : (
-            <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color || PALETTE[i]} radius={stacked ? 0 : [5, 5, 0, 0]} maxBarSize={44} stackId={stacked ? "s" : undefined}>
+            <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color || PALETTE[i]} radius={stacked ? 0 : [5, 5, 0, 0]} maxBarSize={44} stackId={stacked ? "s" : undefined} {...barClick}>
               {!stacked && data.length * series.length <= 10 && <LabelList dataKey={s.key} position="top" formatter={(v) => (format === "money" ? axisFmt(v, format) : fmt(v, format))} style={label} />}
             </Bar>
           )))}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import DataTableWrapper from "../../components/DataTableWrapper";
 import PageSummary from "../../components/PageSummary";
 import RolloutWeeklyPlan from "../../components/RolloutWeeklyPlan";
@@ -197,8 +198,10 @@ export default function IMDispatch() {
   const [projectFilter, setProjectFilter] = useState([]);
   const [teamFilter, setTeamFilter] = useState([]);
   const [duidFilter, setDuidFilter] = useState([]);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // The dashboard opens this on a target-month window (to plan now / later).
+  const _navDispatch = useLocation().state?.dispatchFilters;
+  const [fromDate, setFromDate] = useState(_navDispatch?.fromDate ?? "");
+  const [toDate, setToDate] = useState(_navDispatch?.toDate ?? "");
   // Workflow #2: "Unplanned" hides POIDs that already have a plan (default).
   // "All POIDs (re-plan)" shows them so the IM can pick one and create the
   // next sequential visit (visit_number auto-increments).
