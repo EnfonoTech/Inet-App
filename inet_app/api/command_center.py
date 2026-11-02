@@ -8015,9 +8015,14 @@ def update_execution(payload):
     # alone: those 10 exist on this bench already, and refusing every later
     # edit would mean nobody could pass QC on them or close them out. The rule
     # stops new ones; it does not strand the old.
-    if "execution_date" in payload and doc.get("rollout_plan"):
+    #
+    # Creating one counts as setting the date even when the payload has none:
+    # the field defaults to Today, and that default is how 275 completed plans
+    # came to be executed before their date (Nov-dated plans worked in Oct).
+    if ("execution_date" in payload or doc.is_new()) and doc.get("rollout_plan"):
         _plan_date = frappe.db.get_value("Rollout Plan", doc.rollout_plan, "plan_date")
-        _exec_date = getdate(doc.execution_date) if doc.get("execution_date") else None
+        _exec_date = getdate(doc.execution_date) if doc.get("execution_date") else (
+            getdate(nowdate()) if doc.is_new() else None)
         if _plan_date and _exec_date and _exec_date < getdate(_plan_date):
             frappe.throw(
                 f"This plan starts on {getdate(_plan_date)}, so work cannot be "
@@ -10527,10 +10532,18 @@ def list_work_done_rows(filters=None, limit=500, _options=None, _summary=None, _
             # Gated on confirmed_qty so it only ever re-opens lines this
             # feature touched. Legacy rows that happen to be part-invoiced —
             # four on this site, all long since closed by PIC — stay hidden.
+            #
+            # A remainder the IM has decided is not to be worked — Cancelled,
+            # or "to be invoiced" (billed without delivery, which the unbilled
+            # test below already covers) — is not work left: remaining_qty
+            # keeps its value after that decision, so it kept the line open
+            # here for ever.
             + (
                 " OR (IFNULL(COALESCE(pd.confirmed_qty, pd_sys.confirmed_qty), 0) > 0"
                 "     AND ("
-                "       IFNULL(COALESCE(pd.remaining_qty, pd_sys.remaining_qty), 0) > 0"
+                "       (IFNULL(COALESCE(pd.remaining_qty, pd_sys.remaining_qty), 0) > 0"
+                "        AND IFNULL(COALESCE(pd.remaining_qty_action, pd_sys.remaining_qty_action), '')"
+                "            NOT IN ('Cancelled', 'Pending \u2013 to be invoiced'))"
                 "       OR (IFNULL(COALESCE(pd.ms1_invoiced, pd_sys.ms1_invoiced), 0) > 0"
                 "           AND IFNULL(COALESCE(pd.ms1_unbilled, pd_sys.ms1_unbilled), 0) > 0.005)"
                 "       OR (IFNULL(COALESCE(pd.ms2_invoiced, pd_sys.ms2_invoiced), 0) > 0"
@@ -14583,6 +14596,14 @@ def get_commercial_dashboard(etag=None):
     current_etag = _dashboard_etag("commercial")
     if etag and etag == current_etag:
         return {"unchanged": True, "etag": current_etag, "last_updated": _iso_now()}
+    # Keyed by the etag, like get_command_dashboard: any change to the tables
+    # it hashes lands on a new key. The payload takes ~6 s to build and the
+    # Executive page asks for it on every visit; the TTL bounds staleness
+    # from Subcontract Master edits, which the etag does not hash.
+    _cache_key = f"inet_commercial_dashboard::{current_etag}"
+    _cached = frappe.cache().get_value(_cache_key, expires=True)
+    if _cached:
+        return _cached
 
     pic = pic_dashboard_payload()
     kpi = pic.get("kpi") or {}
@@ -14721,7 +14742,7 @@ def get_commercial_dashboard(etag=None):
     backlog = flt(t.get("backlog") or 0, 2)
     booked = total_invoiced + backlog
 
-    return {
+    payload = {
         "kpi": {
             "total_invoiced": total_invoiced,
             "invoiced_ms1": flt(t.get("invoiced_ms1") or 0, 2),
@@ -14754,6 +14775,191 @@ def get_commercial_dashboard(etag=None):
         "etag": current_etag,
         "last_updated": _iso_now(),
     }
+    frappe.cache().set_value(_cache_key, payload, expires_in_sec=300)
+    return payload
+
+
+@frappe.whitelist()
+def get_executive_extras(from_date=None, to_date=None):
+    """The Executive page's figures that the Command payload does not carry.
+
+    Unguarded like get_command_dashboard, whose audience it shares.
+
+      * revenue_by_im — Command's Total Revenue split by IM, built from the
+        SAME four terms (INET teams' work, Direct Close and Backend on INET's
+        side, subcontracted work at invoice), so the rows add up to the
+        Revenue tile instead of being a second definition beside it. Cost is
+        the same split of Command's cost: salary by im_team_cost_attribution,
+        the subcontractor payout and payout deductions Paid Out.
+      * invoiced — the PIC computation for the range (customer invoices dated
+        inside it), the figure PIC & Finance shows; and its INET / subcon
+        split for the donut.
+      * po_received — PO line value published in the range, on the order-to-
+        cash chart's own date rule.
+    """
+    from inet_app.api.pic import pic_dashboard_payload
+    from inet_app.api.subcon_po import subcon_payout_events_sql
+
+    fd = getdate(from_date) if from_date else getdate(get_first_day(nowdate()))
+    td = getdate(to_date) if to_date else getdate(get_last_day(nowdate()))
+    current_etag = _dashboard_etag("exec_extras", fd, td)
+    _cache_key = f"inet_exec_extras::{current_etag}"
+    _cached = frappe.cache().get_value(_cache_key, expires=True)
+    if _cached:
+        return _cached
+
+    by_im = {}
+
+    def _row(im):
+        return by_im.setdefault(cstr(im or ""), frappe._dict(
+            inet_work=0.0, shortcut_inet=0.0, subcon=0.0,
+            salary=0.0, payout=0.0, paid_out=0.0))
+
+    # 1. INET teams' own work — get_command_dashboard's inet_achieved, by IM.
+    for r in frappe.db.sql(
+        f"""
+        SELECT IFNULL(pd.im, '') AS im,
+               COALESCE(SUM(({billable_amount_sql('pd')}) * ({ALLOC_SHARE_SQL})), 0) AS total
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+        JOIN `tabINET Team` it ON it.name = exe.team
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        {ALLOC_JOIN_SQL}
+        LEFT JOIN `tabSubcontract Master` sm
+               ON sm.name = COALESCE(NULLIF(alloc.subcontractor, ''), pd.contract)
+        WHERE it.team_type = 'INET'
+        AND IFNULL(it.team_category, '') != 'Backend Team'
+        AND IFNULL(sm.sub_payout_pct, 0) = 0
+        AND exe.execution_date BETWEEN %s AND %s
+        GROUP BY IFNULL(pd.im, '')
+        """, (fd, td), as_dict=True):
+        _row(r.im).inet_work += flt(r.total)
+
+    # 2. Direct Close + Backend, INET side — its direct_close / backend legs.
+    for r in frappe.db.sql(
+        f"""
+        SELECT IFNULL(pdl.im, '') AS im, COALESCE(SUM(leg.revenue), 0) AS total
+        FROM ({WORK_DONE_SUPPLIER_LEG_SQL}) leg
+        LEFT JOIN `tabPO Dispatch` pdl ON pdl.name = leg.po_dispatch
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = leg.subcontractor
+        WHERE leg.execution = ''
+          AND leg.source IN ('Direct Close', 'Backend')
+          AND leg.created_on BETWEEN %s AND %s
+          AND IFNULL(sm.sub_payout_pct, 0) = 0
+        GROUP BY IFNULL(pdl.im, '')
+        """, (fd, td), as_dict=True):
+        _row(r.im).shortcut_inet += flt(r.total)
+
+    # 3. Subcontracted work at invoice — its sub_revenue / sub_expense.
+    for r in frappe.db.sql(
+        f"""
+        SELECT IFNULL(pde.im, '') AS im,
+               COALESCE(SUM(ev.revenue), 0) AS revenue,
+               COALESCE(SUM(ev.payout), 0) AS payout,
+               COALESCE(SUM(ev.paid_out), 0) AS paid_out
+        FROM ({subcon_payout_events_sql()}) ev
+        LEFT JOIN `tabPO Dispatch` pde ON pde.name = ev.po_dispatch
+        WHERE ev.event_date BETWEEN %s AND %s
+        GROUP BY IFNULL(pde.im, '')
+        """, (fd, td), as_dict=True):
+        b = _row(r.im)
+        b.subcon += flt(r.revenue)
+        b.payout += flt(r.payout)
+        b.paid_out += flt(r.paid_out)
+
+    # Deductions Paid Out on INET-crew work — its inet_paid_out, by IM.
+    for r in frappe.db.sql(
+        f"""
+        SELECT IFNULL(pd.im, '') AS im,
+               COALESCE(SUM({paid_out_sql(None, "1", sm_name="sm_l.name")}), 0) AS paid
+        FROM `tabWork Done` wd
+        JOIN `tabPO Dispatch` pd ON pd.name = wd.system_id
+        LEFT JOIN `tabDaily Execution` exe ON exe.name = wd.execution
+        {ALLOC_JOIN_SQL}
+        LEFT JOIN `tabSubcontract Master` sm_l
+               ON sm_l.name = COALESCE(NULLIF(alloc.subcontractor, ''), NULLIF(pd.contract, ''))
+        WHERE IFNULL(sm_l.sub_payout_pct, 0) = 0
+          AND IFNULL(pd.is_internal_work, 0) = 0
+          AND EXISTS (SELECT 1 FROM `tabPO Payout Deduction` d0
+                       WHERE d0.parent = pd.name AND d0.settlement = 'Paid Out')
+          AND COALESCE(DATE(exe.execution_date), DATE(wd.ms1_closed_at),
+                       DATE(wd.ms2_closed_at), DATE(wd.creation)) BETWEEN %s AND %s
+        GROUP BY IFNULL(pd.im, '')
+        """, (fd, td), as_dict=True):
+        _row(r.im).paid_out += flt(r.paid)
+
+    # Salary by IM: used days to the IM whose lines were worked, idle days to
+    # whoever held the team — the IM Performance report's own split.
+    _cost = im_team_cost_attribution(fd, td)
+    for im, v in (_cost.get("used") or {}).items():
+        _row(im).salary += flt(v)
+    for im, v in (_cost.get("idle") or {}).items():
+        _row(im).salary += flt(v)
+
+    _lbl = im_display_names(list(by_im))
+    rows = []
+    for im, b in by_im.items():
+        revenue = b.inet_work + b.shortcut_inet + b.subcon
+        cost = b.salary + b.payout + b.paid_out
+        if not (round(revenue, 2) or round(cost, 2)):
+            continue
+        rows.append({
+            "im": im, "im_full_name": _lbl.get(im) or im or "No IM on the line",
+            "inet_work": round(b.inet_work, 2), "shortcut_inet": round(b.shortcut_inet, 2),
+            "subcon": round(b.subcon, 2), "revenue": round(revenue, 2),
+            "salary": round(b.salary, 2), "payout": round(b.payout + b.paid_out, 2),
+            "cost": round(cost, 2), "profit": round(revenue - cost, 2),
+        })
+    rows.sort(key=lambda r: -r["revenue"])
+
+    # Invoiced in the range — the PIC computation, dated by customer invoice.
+    pic = pic_dashboard_payload(fd, td)
+    split = pic.get("inet_subcon") or {}
+
+    po = frappe.db.sql(
+        f"""
+        SELECT COALESCE(SUM(il.line_amount), 0) AS value, COUNT(*) AS line_count
+        FROM `tabPO Intake Line` il
+        LEFT JOIN `tabPO Dispatch` pd
+               ON pd.po_intake = il.parent AND pd.po_line_no = il.po_line_no
+        WHERE IFNULL(il.po_line_status, 'New') <> 'Cancelled'
+          AND IFNULL(pd.is_dummy_po, 0) = 0
+          AND IFNULL(pd.is_internal_work, 0) = 0
+          AND DATE({_po_line_published_on()}) BETWEEN %s AND %s
+        """, (fd, td), as_dict=True)[0]
+
+    payload = {
+        "from_date": str(fd), "to_date": str(td),
+        "revenue_by_im": rows,
+        "invoiced": {
+            "total": flt((pic.get("kpi") or {}).get("total_invoiced")),
+            "inet_total": flt(split.get("inet_total")),
+            "subcon_total": flt(split.get("subcon_total")),
+            "total_ms1": flt(split.get("total_ms1")),
+            "total_ms2": flt(split.get("total_ms2")),
+        },
+        "po_received": {"value": flt(po.value), "lines": cint(po.line_count)},
+        # Lines still to forecast, company-wide and as of now: Pending /
+        # Dispatched with no target month (internal work left out) — the IM
+        # dashboard's "Lines to forecast" for every IM, and exactly the rows
+        # Rollout Planning lists for the same filters.
+        "to_forecast": frappe.db.sql(
+            """SELECT COUNT(*) AS n, COALESCE(SUM(line_amount), 0) AS value
+                 FROM `tabPO Dispatch`
+                WHERE IFNULL(dispatch_status, '') IN ('Pending', 'Dispatched')
+                  AND IFNULL(target_month, '') = ''
+                  AND IFNULL(is_internal_work, 0) = 0""", as_dict=True)[0],
+        # Every Work Done in the range — field, Direct Close and Backend, open
+        # or already closed in PIC — counted by the Work Done page itself with
+        # finished rows shown, so the tile and the page it opens agree. The
+        # Command payload's workdone_activities hides the finished ones.
+        "work_done": list_work_done_rows(
+            filters={"tab": "all", "from_date": str(fd), "to_date": str(td), "include_finished": 1},
+            _count=1) or {},
+        "etag": current_etag,
+    }
+    frappe.cache().set_value(_cache_key, payload, expires_in_sec=180)
+    return payload
 
 
 def _inhouse_contract_names():
@@ -15591,6 +15797,9 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
     # correct −641.1 (== total_achieved − inet_cost_today, verified equal).
     profit_loss = round(total_revenue_gross - total_cost_today, 2)
     coverage_pct = (total_revenue_gross / company_target * 100.0) if company_target else 0.0
+    # The same ratio against the target for the days gone so far — "are we on
+    # pace", where coverage_pct is "how much of the whole period is done".
+    coverage_today_pct = (total_revenue_gross / total_target_today * 100.0) if total_target_today else 0.0
 
     # ---- Top 5 teams + IM performance -------------------------------------
     # Both come straight from the report functions the Reports page serves,
@@ -15723,11 +15932,15 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
                 "status": "Recover",
             }
         )
-    if sub_gap > 0:
+    # To date, like the INET gap above. It was the whole period's gap, so on
+    # the 2nd of the month it read SAR 492,500 short (the full commitment)
+    # beside an INET gap of 42,543 for the same two days.
+    sub_gap_today = round(sub_target_today - sub_revenue, 2)
+    if sub_gap_today > 0:
         watchlist.append(
             {
-                "indicator": "Subcontractor revenue gap",
-                "current": sub_gap,
+                "indicator": "Subcontractor revenue gap (to date vs prorated target)",
+                "current": sub_gap_today,
                 "unit": "sar",
                 "target": None,
                 "status": "Recover",
@@ -15792,6 +16005,11 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "sub_expense": sub_expense,
             "inet_margin_sub": inet_margin_sub,
             "sub_gap": sub_gap,
+            # The pro-rated pair, like inet_target_today / inet_gap_today:
+            # the share of the commitment due for the part of the period gone
+            # so far, and how far revenue is short of it (negative = ahead).
+            "sub_target_today": sub_target_today,
+            "sub_gap_today": sub_gap_today,
             "contracts_with_activity": sub_contracts_active,
             # The un-scaled monthly commitment, so the UI can say whether the
             # target is unset (0) rather than just showing a scaled zero.
@@ -15841,12 +16059,17 @@ def get_command_dashboard(from_date=None, to_date=None, etag=None):
             "total_revenue": total_revenue_gross,
             "total_achieved": total_achieved,
             "company_gap": company_gap,
+            # Short of the target to date (negative = ahead) — the fair gap
+            # while the period is still running; company_gap is the whole
+            # period's.
+            "company_gap_today": round(total_target_today - total_revenue_gross, 2),
             "total_cost_today": total_cost_today,
             # Third parties paid through payout deductions — part of the cost
             # above, shown on its own so the breakdown still adds up.
             "deduction_paid_out": deduction_paid_out,
             "profit_loss": profit_loss,
             "coverage_pct": coverage_pct,
+            "coverage_today_pct": coverage_today_pct,
         },
         "top_teams": top_teams,
         "im_performance": im_perf,
@@ -17800,7 +18023,13 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
     _sc_de, _sp_de = _im_scope_cond("de.im", im_ids)
     fd_date = getdate(fd)
     td_date = getdate(td)
-    period_days = (td_date - fd_date).days + 1
+    # Cost and utilization stop at today. A range running into the future
+    # ("This Month" on the 2nd) charged every team the whole month's salary
+    # against two days of work, so every team read as a loss of ~SAR 30k.
+    # Same rule as get_command_dashboard's pro-rated cost and
+    # im_team_cost_attribution: a day that has not happened costs nothing.
+    cost_td = min(td_date, getdate(nowdate()))
+    period_days = max(0, (cost_td - fd_date).days + 1)
 
     # Realized value per plan, attributed to the team(s) on that plan.
     #
@@ -17820,53 +18049,84 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
     # "a submitted, invoiced or closed line is work already carried out" rule
     # the project reports settled on. It is then split across the plan's teams
     # by Rollout Plan Team.assigned_amount, which exists for that purpose.
-    plan_value_rows = frappe.db.sql(
-        f"""
-        SELECT rp.name AS plan, rp.plan_status,
+    # DATED BY EXECUTION, like Work Done, the IM reports and the company
+    # revenue: a Work Done counts in the period its execution happened, and a
+    # completed plan with no Work Done (legacy) on its last execution day,
+    # else its plan date. It used to be the plan date, so a plan dated in
+    # November but worked in October put its money in November — on the copy,
+    # SAR 8,619 for Attaullah Khan while every other screen had it in October.
+    # Assigned / Completed below stay plan-dated: they count the plans set for
+    # the period.
+    _plan_value_cols = f"""
+               rp.name AS plan, rp.plan_status,
                COALESCE(pd.line_amount, 0) AS line_amount,
                IFNULL(sm.sub_payout_pct, 0) AS payout_pct,
                {payout_reduction_sql("IFNULL(sm.sub_payout_pct, 0)", None, "1",
                                      sm_name=None, share_sql="1")} AS ded_reduction,
-               {paid_out_sql(None, "1", sm_name=None, share_sql="1")} AS ded_paid,
-               (SELECT COALESCE(SUM(wd.revenue_sar), 0)
-                  FROM `tabWork Done` wd
-                  JOIN `tabDaily Execution` de ON de.name = wd.execution
-                 WHERE de.rollout_plan = rp.name) AS wd_revenue
+               {paid_out_sql(None, "1", sm_name=None, share_sql="1")} AS ded_paid"""
+    plan_value_rows = frappe.db.sql(
+        f"""
+        SELECT {_plan_value_cols},
+               COALESCE(SUM(wd.revenue_sar), 0) AS wd_revenue
+        FROM `tabWork Done` wd
+        JOIN `tabDaily Execution` de ON de.name = wd.execution
+        JOIN `tabRollout Plan` rp ON rp.name = de.rollout_plan
+        LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
+        LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
+        WHERE DATE(de.execution_date) BETWEEN %s AND %s
+          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+          {_sc_rp}
+        GROUP BY rp.name
+        """,
+        (fd, td, *_sp_rp), as_dict=True,
+    ) + frappe.db.sql(
+        f"""
+        SELECT {_plan_value_cols}, 0 AS wd_revenue
         FROM `tabRollout Plan` rp
         LEFT JOIN `tabPO Dispatch` pd ON pd.name = rp.po_dispatch
         LEFT JOIN `tabSubcontract Master` sm ON sm.name = pd.contract
-        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
+        WHERE rp.plan_status = 'Completed'
+          AND NOT EXISTS (SELECT 1 FROM `tabWork Done` wd0
+                            JOIN `tabDaily Execution` de0 ON de0.name = wd0.execution
+                           WHERE de0.rollout_plan = rp.name)
+          AND COALESCE((SELECT MAX(DATE(de1.execution_date)) FROM `tabDaily Execution` de1
+                         WHERE de1.rollout_plan = rp.name
+                           AND IFNULL(de1.execution_status, '') <> 'Cancelled'),
+                       DATE(rp.plan_date)) BETWEEN %s AND %s
           {_sc_rp}
         """,
         (fd, td, *_sp_rp), as_dict=True,
     )
+    # The plans carrying value in the period, for the team lookups below —
+    # plan-dated lookups would miss a plan worked in it but dated elsewhere.
+    _value_plans = tuple({r.plan for r in plan_value_rows}) or ("",)
     # The split child table where a plan has one (it carries the prorated
     # assigned_amount), else the plan's own lead team.
-    split_rows = frappe.db.sql(
-        f"""
-        SELECT rpt.parent AS plan, rpt.team,
-               COALESCE(rpt.assigned_amount, 0) AS assigned_amount
-        FROM `tabRollout Plan Team` rpt
-        JOIN `tabRollout Plan` rp ON rp.name = rpt.parent
-        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
-          AND rpt.team IS NOT NULL AND rpt.team != ''
-          {_sc_rp}
-        """,
-        (fd, td, *_sp_rp), as_dict=True,
-    )
-    lead_rows = frappe.db.sql(
-        f"""
-        SELECT rp.name AS plan, rp.team
-        FROM `tabRollout Plan` rp
-        WHERE DATE(rp.plan_date) BETWEEN %s AND %s
-          AND IFNULL(rp.plan_status, '') NOT IN ('Cancelled')
-          AND rp.team IS NOT NULL AND rp.team != ''
-          {_sc_rp}
-        """,
-        (fd, td, *_sp_rp), as_dict=True,
-    )
+    # In chunks: a year's range carries thousands of plans, and one huge IN
+    # list trips the query-size limits (see _chunked in 77d2f11).
+    split_rows, lead_rows = [], []
+    _vp = list(_value_plans)
+    for _i in range(0, len(_vp), 1000):
+        _chunk = tuple(_vp[_i:_i + 1000])
+        split_rows += frappe.db.sql(
+            """
+            SELECT rpt.parent AS plan, rpt.team,
+                   COALESCE(rpt.assigned_amount, 0) AS assigned_amount
+            FROM `tabRollout Plan Team` rpt
+            WHERE rpt.parent IN %(plans)s
+              AND rpt.team IS NOT NULL AND rpt.team != ''
+            """,
+            {"plans": _chunk}, as_dict=True,
+        )
+        lead_rows += frappe.db.sql(
+            """
+            SELECT rp.name AS plan, rp.team
+            FROM `tabRollout Plan` rp
+            WHERE rp.name IN %(plans)s
+              AND rp.team IS NOT NULL AND rp.team != ''
+            """,
+            {"plans": _chunk}, as_dict=True,
+        )
     splits_by_plan = {}
     for _s in split_rows:
         splits_by_plan.setdefault(_s.plan, []).append(_s)
@@ -17938,7 +18198,10 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
               {_sc_rp}
         ) x GROUP BY team
         """,
-        (fd, td, *_sp_de, fd, td, *_sp_rp), as_dict=True,
+        # Days up to today only, the same window as the utilization
+        # denominator — a completed plan dated in the future is not a day
+        # worked yet, and counted one pushed utilization past 100%.
+        (fd, cost_td, *_sp_de, fd, cost_td, *_sp_rp), as_dict=True,
     )
     for _d in day_rows:
         _tt_bucket(_d.team).days_worked = cint(_d.days_worked)
@@ -18028,7 +18291,8 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
     team_info_rows = frappe.db.sql(
         """
         SELECT name, team_name, COALESCE(daily_cost, 0) AS daily_cost, team_type,
-               start_date, end_date, status
+               start_date, end_date, status,
+               IFNULL(daily_cost_applies, 0) AS daily_cost_applies
         FROM `tabINET Team`
         WHERE IFNULL(team_category, '') != 'Backend Team'
         """,
@@ -18072,8 +18336,11 @@ def _top_teams_report(from_date=None, to_date=None, im_ids=None):
             # No daily cost on a SUB team; its cost is the payout owed.
             team_cost   = round(flt(r.subcon_payout), 0)
         else:
-            daily_cost = flt(ti.daily_cost if ti else 0)
-            cost_days  = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None, fd, td)
+            # daily_cost_applies honoured as get_command_dashboard and the
+            # IM report do, or the three disagree on a team with it unticked.
+            daily_cost = flt(ti.daily_cost if ti else 0) if cint(ti.daily_cost_applies if ti else 0) else 0.0
+            cost_days  = _team_cost_days(ti.start_date if ti else None, ti.end_date if ti else None,
+                                         fd, cost_td) if cost_td >= fd_date else 0
             team_cost  = round(daily_cost * cost_days, 0)
 
         profit          = round(revenue - team_cost, 0)
@@ -19700,8 +19967,13 @@ EXECUTION_ATTENTION_BUCKETS = {
     },
     "dummy_unmapped": {
         "target": "plans",
-        "label": "Dummy PO not mapped", "tone": "warn",
-        "hint": "Still a placeholder — never mapped to a real PO line",
+        # Plans, mostly already worked (154 of 201 completed on the copy), not
+        # the dummy POs themselves — several pages also count open dummy POs
+        # (planned or not, Rollout Planning › Dummy POs), so the label says
+        # which one this is.
+        "label": "Plans on dummy PO · not mapped", "tone": "warn",
+        "hint": "Plans (most already worked) whose PO is still a placeholder — map it to the real PO line. "
+                "Every open dummy PO, planned or not, is on Rollout Planning › Dummy POs.",
         # is_dummy_po, NOT was_dummy_po: mapping clears the former and leaves
         # the latter set forever.
         "cond": "IFNULL(pd.is_dummy_po, 0) = 1",
@@ -23512,9 +23784,18 @@ def start_execution_timer(rollout_plan):
 
     _assert_rollout_plan_access_field_team(team_id, rollout_plan)
 
-    plan_status = frappe.db.get_value("Rollout Plan", rollout_plan, "plan_status")
+    plan_status, plan_date = frappe.db.get_value("Rollout Plan", rollout_plan, ["plan_status", "plan_date"])
     if plan_status in ("Completed", "Cancelled"):
         frappe.throw("Cannot start a timer on a completed or cancelled plan.")
+    # The same rule update_execution enforces: work cannot start before the
+    # plan's date. Starting the timer creates the execution dated today, and
+    # this path had no check at all.
+    if plan_date and getdate(nowdate()) < getdate(plan_date):
+        frappe.throw(
+            f"This plan starts on {getdate(plan_date)}. Ask your IM to move the "
+            f"plan date if the team is starting early.",
+            title="Before the plan date",
+        )
 
     existing = frappe.get_all(
         "Execution Time Log",

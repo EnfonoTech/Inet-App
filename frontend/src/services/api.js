@@ -324,6 +324,7 @@ export const pmApi = {
   // ── Command Center APIs ────────────────────────────────────
   getProjectSummary:    (projectCode) => call("inet_app.api.command_center.get_project_summary", { project_code: projectCode }),
   getCommandDashboard:  (args = {})  => call("inet_app.api.command_center.get_command_dashboard", { ...args, etag: args?.etag || "" }),
+  getExecutiveExtras:   (args = {})  => call("inet_app.api.command_center.get_executive_extras", { from_date: args?.from_date || "", to_date: args?.to_date || "" }),
   // Daily team idle / project-domain grid (the report handed to the domains).
   getTeamDomainUtilization: (args = {}) => call("inet_app.api.command_center.get_team_domain_utilization", {
     month:           args?.month || "",

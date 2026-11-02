@@ -144,8 +144,9 @@ export function TopTable({ rows, cols, rowKey, empty = "Nothing to show" }) {
           {rows.length === 0 ? (
             <tr><td colSpan={cols.length + 1} className="rdash-muted" style={{ textAlign: "center", padding: 18 }}>{empty}</td></tr>
           ) : rows.map((r, i) => (
-            <tr key={rowKey ? r[rowKey] : i}>
-              <td>{i + 1}</td>
+            <tr key={rowKey ? r[rowKey] : i} style={r.total ? { fontWeight: 700, background: "#f8fafd" } : undefined}>
+              {/* A `total` row (a page's own sum line) gets no rank number. */}
+              <td>{r.total ? "" : i + 1}</td>
               {cols.map((c) => (
                 <td key={c.key} className={c.pct ? `pct ${heat(r[c.key])}` : c.num ? "num" : ""} title={c.num || c.pct ? undefined : String(r[c.key] ?? "")}>
                   {c.render ? c.render(r) : c.pct ? fmt(r[c.key], "pct") : c.num ? fmt(r[c.key], c.format || "int") : (r[c.key] || "—")}

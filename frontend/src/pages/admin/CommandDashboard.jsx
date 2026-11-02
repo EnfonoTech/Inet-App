@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
 import MiniTable from "../../components/MiniTable";
 import { BarChart, DonutChart } from "../../components/Charts";
@@ -67,10 +67,10 @@ function dotColor(status) {
 }
 
 /* ── Compact stat card (inside section cards) ───────────────────── */
-function Stat({ label, value, sub, color = "", onClick, hint, textValue = false }) {
+function Stat({ label, value, sub, color = "", onClick, hint, textValue = false, className = "" }) {
   return (
     <div
-      className={`dash-stat${onClick ? " clickable" : ""}`}
+      className={`dash-stat${onClick ? " clickable" : ""}${className ? ` ${className}` : ""}`}
       onClick={onClick}
       // `hint` explains a figure that isn't self-evident (the pro-rated
       // "as of today" ones); it wins over the navigation tooltip.
@@ -157,7 +157,9 @@ export default function CommandDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
-  const [range, setRange] = useState(defaultRange);
+  // Executive opens this on the range it was showing.
+  const _navRange = useLocation().state?.range;
+  const [range, setRange] = useState(() => (_navRange?.from && _navRange?.to ? { from: _navRange.from, to: _navRange.to } : defaultRange()));
   const intervalRef = useRef(null);
 
   async function fetchData(r = range) {
@@ -284,7 +286,13 @@ export default function CommandDashboard() {
 
       {/* ── Company Financial Summary ────────────────────────────── */}
       <Section title="Company Financial Summary" accent="company" style={{ marginBottom: 14 }}>
-        <div className="dash-kpi-grid dash-kpi-grid--7">
+        {/* The old order, read left to right as a story: what we must earn,
+            what is due so far, what we earned, how far short, what it cost,
+            what is left, how much of the target that is. Each "as of today"
+            card sits beside its whole-period twin. One row of 8 on a wide
+            screen (1920), four per row below that — a ninth card wraps the
+            amounts at 1920, which is why the whole-period Gap was dropped. */}
+        <div className="dash-kpi-grid dash-kpi-grid--8">
           {/* Built from the whole active-team population (INET cost x 1.25
               plus the SUB contracts' own full targets), so the team list is
               its drill-down. Its pro-rated twin and the gap/coverage figures
@@ -292,6 +300,7 @@ export default function CommandDashboard() {
           <Stat label="Total Target"  value={sar(company.company_target)}
             hint="What the company has committed to earn this period: the field teams' cost plus 25%, and each subcontract's agreed monthly target. Click to see the teams."
             onClick={() => goTeams({})} />
+
           <Stat label="Target (as of today)"   value={sar(company.total_target_today)}
             hint={`The share of the target that falls in the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far, so earnings to date are compared fairly.`} />
           {/* True gross top-line: every SAR of work recognized this period,
@@ -300,21 +309,30 @@ export default function CommandDashboard() {
               Coverage % are all measured against this same gross figure. */}
           <Stat label="Total Revenue"      value={sar(company.total_revenue)}   color="text-green"
             hint="Everything earned this period. The sections below add up to exactly this figure. Our own work counts on the day it is done; subcontracted work counts on the day the customer is invoiced, so its cost lands in the same month as its income." />
-          <Stat label="Gap"                value={sar(company.company_gap)}
-            hint="How far the company is short of its target for the period."
-            color={(company.company_gap ?? 0) > 0 ? "text-red" : "text-green"} />
+          {/* The pro-rated twin, signed like the INET section's: earned minus
+              the target for the days gone so far. */}
+          <Stat label="Gap (as of today)"  value={sar(-(company.company_gap_today ?? 0))}
+            color={(company.company_gap_today ?? 0) <= 0 ? "text-green" : "text-red"}
+            sub={(company.company_gap_today ?? 0) <= 0 ? "Ahead of target" : "Behind target"}
+            hint={`Total Revenue against the target for the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far.`} />
           <Stat label="Cost (as of today)"     value={sar(company.total_cost_today)}
             hint={`Field-team salary for the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far, plus what is owed to subcontractors on the work invoiced in it`
               + (company.deduction_paid_out ? `, plus ${sar(company.deduction_paid_out)} paid to third parties through payout deductions` : "")
               + ". Click to see the teams."}
             onClick={() => goTeams({})} />
           <Stat label="Profit / Loss"      value={sar(company.profit_loss)}
+            sub={(company.total_revenue ?? 0) ? `margin ${((company.profit_loss / company.total_revenue) * 100).toFixed(1)}%` : undefined}
             hint="What is left after the costs beside it — the company's margin for the period."
             color={profitColor(company.profit_loss)} />
           <Stat label="Coverage %"
             value={`${Number(company.coverage_pct ?? 0).toFixed(1)}%`}
-            hint="How much of the target has been earned so far."
+            hint="How much of the whole period's target has been earned so far."
             color={(company.coverage_pct ?? 0) >= 50 ? "text-green" : (company.coverage_pct ?? 0) >= 20 ? "text-amber" : "text-red"} />
+          <Stat label="Coverage (as of today)"
+            value={`${Number(company.coverage_today_pct ?? 0).toFixed(1)}%`}
+            sub={(company.coverage_today_pct ?? 0) >= 100 ? "on pace" : "behind pace"}
+            hint="Total Revenue as a share of the target for the days gone so far — 100% means exactly on pace."
+            color={(company.coverage_today_pct ?? 0) >= 100 ? "text-green" : (company.coverage_today_pct ?? 0) >= 80 ? "text-amber" : "text-red"} />
         </div>
       </Section>
 
@@ -483,7 +501,16 @@ export default function CommandDashboard() {
                   anyway. The company-level Gap tile has never been
                   clickable, for the same reason. */}
               <Stat label="Gap"           value={sar(subcon.sub_gap)}        color="text-red"
-                hint="How far subcontract revenue is short of the agreed monthly commitment." />
+                hint="How far subcontract revenue is short of the agreed commitment for the whole period." />
+              {/* The pro-rated pair, as the INET section has: the commitment
+                  is earned as the period passes, so the fair comparison
+                  while it runs is against the share due so far. */}
+              <Stat label="Target (as of today)" value={sar(subcon.sub_target_today)}
+                hint={`The share of the agreed commitment that falls in the ${Number(company.day_progress_pct ?? 0).toFixed(1)}% of the period gone so far.`} />
+              <Stat label="Gap (as of today)"    value={sar(-(subcon.sub_gap_today ?? 0))}
+                color={(subcon.sub_gap_today ?? 0) <= 0 ? "text-green" : "text-red"}
+                sub={(subcon.sub_gap_today ?? 0) <= 0 ? "Ahead of target" : "Behind target"}
+                hint="How far ahead of, or behind, the commitment for the days gone so far." />
             </div>
             {/* Sub-Con revenue vs target progress */}
             {(() => {

@@ -195,7 +195,7 @@ export default function TeamAllocationApprovals() {
 
       {imOnly.length > 0 && (
         <div className="notice info" style={{ margin: "0 16px 8px", display: "flex", alignItems: "center", gap: 10 }}>
-          <span>Showing only requests of {imOnly.join(", ")}, as counted on IM View.</span>
+          <span>Showing only requests of {imOnly.join(", ")}, as counted on the dashboard.</span>
           <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }}
             onClick={() => setImOnly([])}>Show all</button>
         </div>

@@ -737,6 +737,11 @@
 .dashboard .dash-kpi-grid--3 { grid-template-columns: repeat(3, 1fr); }
 .dashboard .dash-kpi-grid--4 { grid-template-columns: repeat(4, 1fr); }
 .dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(7, 1fr); }
+.dashboard .dash-kpi-grid--8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+/* Eight amounts like "SAR 1,130,638.00" only fit side by side from ~1800px. */
+@media (max-width: 1800px) {
+  .dashboard .dash-kpi-grid--8 { grid-template-columns: repeat(4, 1fr); }
+}
 
 /* Individual compact stat */
 .dashboard .dash-stat {
@@ -921,6 +926,7 @@
 @media (max-width: 720px) {
   .dashboard .dash-mid-grid { grid-template-columns: 1fr; }
   .dashboard .dash-kpi-grid--7 { grid-template-columns: repeat(2, 1fr); }
+  .dashboard .dash-kpi-grid--8 { grid-template-columns: repeat(2, 1fr); }
   .dashboard .dash-kpi-grid--4 { grid-template-columns: repeat(2, 1fr); }
   .dashboard .dash-kpi-grid--3 { grid-template-columns: repeat(2, 1fr); }
 }

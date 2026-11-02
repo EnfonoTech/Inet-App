@@ -139,7 +139,7 @@ export default function RolloutPlanning() {
   const searchDebounced = useDebounced(search, 300);
   const [metaRows, setMetaRows] = useState([]);
   const [projectFilter, setProjectFilter] = useState([]);
-  // A figure clicked on IM View lands here with its IM, scope and the exact
+  // A figure clicked on a dashboard (IM View, Projects & Operations) lands here with its IM, scope and the exact
   // extra conditions it counted, so the list shows the same lines.
   const _navPlan = location.state?.planFilters;
   const [imFilter, setImFilter] = useState(_navPlan?.imFilter ?? []);
@@ -683,7 +683,7 @@ export default function RolloutPlanning() {
       {/* ── Notices ─────────────────────────────────────────── */}
       {navPortal && (
         <div className="notice info" style={{ margin: "0 28px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-          <span>Showing {navLabel || "the lines counted on IM View"}, as counted on IM View.</span>
+          <span>Showing {navLabel || "the lines behind that figure"}, as counted on the dashboard.</span>
           <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }}
             onClick={() => setNavPortal(null)}>Show all</button>
         </div>

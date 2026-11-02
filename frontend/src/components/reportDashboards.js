@@ -262,6 +262,14 @@ const BUILDERS = {
   top_teams(rows, totals) {
     const revenue = sum(rows, "revenue");
     const profit = sum(rows, "profit");
+    // Teams with no revenue, no cost and no plans rank between the earners
+    // and the loss-makers on profit (they sit at exactly 0), so they filled
+    // the "Top 5 by profit" table. Rankings use the teams that did something
+    // or cost something; the table below still lists every team.
+    const active = rows.filter((r) => n(r.revenue) || n(r.team_cost) || n(r.assigned_lines));
+    const best = top(active, "profit", 5);
+    const worst = top(active, "profit", 5, true).filter((r) => !best.includes(r));
+    const profitBars = [...best, ...[...worst].reverse()];
     const cols = [["team_name", "Team"], ["im", "IM"], ["revenue", "Revenue", "money"], ["profit", "Profit", "money"], ["completion_pct", "Compl. %", "pct"]];
     return {
       tiles: [
@@ -273,13 +281,13 @@ const BUILDERS = {
         tile("Utilization", totals?.utilization_pct ?? 0, "pct", "days worked ÷ days available", "blue", "avg"),
       ],
       charts: [
-        chart("bar", "Revenue vs cost, top 8 teams", top(rows, "revenue", 8), [["revenue", "Revenue", "#163a7a"], ["team_cost", "Cost", "#e08a2c"]], "team_name", "money"),
-        chart("hbar", "Profit by team", top(rows, "profit", 10), [["profit", "Profit"]], "team_name", "money", { sub: "top 10" }),
-        chart("hbar", "Utilization by team", top(rows, "utilization_pct", 10), [["utilization_pct", "Utilization"]], "team_name", "pct", { sub: "top 10" }),
+        chart("bar", "Revenue vs cost, top 8 teams", top(active, "revenue", 8), [["revenue", "Revenue", "#163a7a"], ["team_cost", "Cost", "#e08a2c"]], "team_name", "money"),
+        chart("hbar", "Profit by team", profitBars, [["profit", "Profit"]], "team_name", "money", { sub: "best 5 · worst 5" }),
+        chart("hbar", "Utilization by team", top(active.filter((r) => n(r.utilization_pct) > 0), "utilization_pct", 10), [["utilization_pct", "Utilization"]], "team_name", "pct", { sub: "top 10" }),
       ],
       tops: [
-        topTable("Top 5 by profit", top(rows, "profit"), cols),
-        topTable("Bottom 5 by profit", top(rows, "profit", 5, true), cols),
+        topTable("Top 5 by profit", best, cols),
+        topTable("Bottom 5 by profit", top(active, "profit", 5, true), cols),
       ],
     };
   },

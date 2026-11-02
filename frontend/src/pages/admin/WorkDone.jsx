@@ -1193,7 +1193,7 @@ export default function WorkDone() {
       <div className="page-content">
         {includeFinished && (
           <div className="notice info" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
-            <span>Showing finished Work Done too, as counted on IM View.</span>
+            <span>Showing finished Work Done too, as counted on the dashboard.</span>
             <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem", padding: "3px 10px" }}
               onClick={() => setIncludeFinished(false)}>Hide finished</button>
           </div>

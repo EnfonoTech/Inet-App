@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { pmApi } from "../../services/api";
+import DashHeader from "../../components/DashHeader";
 import { useAuth } from "../../context/AuthContext";
 import DateRangePicker, { DATE_PRESETS } from "../../components/DateRangePicker";
 import { Card, ChartCard, Tile, TopTable, fmt } from "../../components/ReportDashboard";
@@ -67,7 +68,7 @@ function ActionRow({ count, label, sub, tone, onClick }) {
   );
 }
 
-export default function IMDashboard({ overrideIm }) {
+export default function IMDashboard({ overrideIm, headerLeft }) {
   const navigate = useNavigate();
   const { imName: authIm } = useAuth();
   const isPmView = Boolean(overrideIm);
@@ -252,16 +253,10 @@ export default function IMDashboard({ overrideIm }) {
 
   return (
     <div className="nd-dashboard" style={{ padding: isPmView ? 0 : 16 }}>
-      <div className="page-header" style={{ padding: 0, marginBottom: 12 }}>
-        <div>
-          <h1 className="page-title">{title}{data?.im_name ? ` · ${data.im_name}` : ""}</h1>
-          <div className="page-subtitle">All the work — rollout, Direct Close and Backend — and what is waiting. Click any figure to open its list.</div>
-        </div>
-        <div className="page-actions" style={{ gap: 8 }}>
-          <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
-          <button type="button" className="btn-secondary" disabled={loading} onClick={() => setReload((x) => x + 1)}>{loading ? "Loading…" : "Refresh"}</button>
-        </div>
-      </div>
+      <DashHeader left={headerLeft} title={`${title}${data?.im_name ? ` · ${data.im_name}` : ""}`} hint="All the work — rollout, Direct Close and Backend — and what is waiting. Click any figure to open its list." lastUpdated={data?.last_updated}>
+        <DateRangePicker value={range} onChange={(r) => setRange({ from: r.from, to: r.to })} />
+        <button type="button" className="btn-secondary" disabled={loading} onClick={() => setReload((x) => x + 1)}>{loading ? "Loading…" : "Refresh"}</button>
+      </DashHeader>
 
       {error && <div className="notice error"><span>⚠</span> {error}</div>}
       {data?.message && <div className="notice warning"><span>⚠</span> {data.message}</div>}
@@ -389,7 +384,6 @@ export default function IMDashboard({ overrideIm }) {
               }} />
             </div>
           )}
-          {data.last_updated && <div className="rdash-muted">Last updated {String(data.last_updated).replace("T", " ").slice(0, 16)}</div>}
         </div>
       )}
     </div>
